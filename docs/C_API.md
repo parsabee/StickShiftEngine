@@ -102,7 +102,10 @@ can detect at once: a bad argument, a full handle table, a busy context.
 
 Destroying a resource invalidates its handle at once. GPU memory is released only after every
 submitted frame that used it has finished (command buffers retain what they reference).
-Destroying a pending resource cancels its work; its `StickShiftData` is still released (see
+Destroying a pending resource cancels its work and reports no event for it. A model's parse stops
+at its next stage: after the file is read, after its buffers load, or before the next image decode
+or mesh primitive. Its `StickShiftData` is still released, by the next `stickshift_poll_events`
+or `stickshift_context_flush` once the parse has let go of it (see
 [Data ownership](#data-ownership)).
 
 ### Events and completion callbacks

@@ -15,7 +15,8 @@ use stickshift_assets::scene::{
     textured_vertex_layout, DEFAULT_IMPORT_COLOR, RENDER_VERTEX_STRIDE, TEXTURED_VERTEX_STRIDE,
 };
 use stickshift_assets::{
-    import_gltf, import_slice, render_vertex_layout, AssetCache, ImportError, MeshAsset, SceneAsset,
+    import_gltf, import_gltf_cancellable, import_slice, import_slice_cancellable,
+    render_vertex_layout, AssetCache, ImportError, MeshAsset, SceneAsset,
 };
 use stickshift_render_api::{MeshData, MeshHandle, NullRenderer, RenderDevice, VertexFormat};
 
@@ -879,4 +880,102 @@ fn a_very_deep_hierarchy_imports_without_overflowing_the_stack() {
     let deepest = scene.nodes.last().unwrap();
     assert_eq!(translation_of(deepest), [0.0, DEPTH as f32, 0.0]);
     assert_eq!(deepest.parent, Some(DEPTH - 2));
+}
+
+/// A GLB with one mesh made of `count` copies of a one-quad primitive.
+fn many_primitives_glb(count: usize) -> Vec<u8> {
+    let bin = le_bytes(&QUAD, f32::to_le_bytes);
+    let primitive = r#"{"attributes": {"POSITION": 0}, "indices": 1}"#;
+    let primitives = vec![primitive; count].join(", ");
+    let indices = u32_indices(&[0, 1, 2, 2, 1, 3]);
+    let mut all = bin.clone();
+    all.extend_from_slice(&indices);
+    let json = format!(
+        r#"{{
+  "asset": {{"version": "2.0"}},
+  "buffers": [{{"byteLength": {}}}],
+  "bufferViews": [
+    {{"buffer": 0, "byteOffset": 0, "byteLength": {}}},
+    {{"buffer": 0, "byteOffset": {}, "byteLength": {}}}
+  ],
+  "accessors": [
+    {{"bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3",
+      "min": [0,0,0], "max": [1,1,0]}},
+    {{"bufferView": 1, "componentType": 5125, "count": 6, "type": "SCALAR"}}
+  ],
+  "meshes": [{{"primitives": [{primitives}]}}],
+  "nodes": [{{"mesh": 0}}],
+  "scenes": [{{"nodes": [0]}}],
+  "scene": 0
+}}"#,
+        all.len(),
+        bin.len(),
+        bin.len(),
+        indices.len(),
+    );
+    glb(&json, &all)
+}
+
+/// How many times a slice import of `doc` asks whether it is cancelled, when
+/// the answer is always no.
+fn cancel_checks(doc: &[u8]) -> usize {
+    let asked = std::cell::Cell::new(0);
+    import_slice_cancellable(doc, &|| {
+        asked.set(asked.get() + 1);
+        false
+    })
+    .expect("imports when never cancelled");
+    asked.get()
+}
+
+#[test]
+fn a_cancelled_import_stops_with_cancelled() {
+    let dir = std::env::temp_dir().join(format!("stickshift-assets-cancel-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("cube.gltf");
+    std::fs::write(&path, CUBE_GLTF).unwrap();
+    let by_path = import_gltf_cancellable(&path, &|| true);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        matches!(by_path, Err(ImportError::Cancelled)),
+        "{by_path:?}"
+    );
+    let from_memory = import_slice_cancellable(CUBE_GLTF, &|| true);
+    assert!(
+        matches!(from_memory, Err(ImportError::Cancelled)),
+        "{from_memory:?}"
+    );
+    assert!(!ImportError::Cancelled.is_io());
+}
+
+#[test]
+fn cancellation_is_asked_before_every_primitive_and_image() {
+    const PRIMITIVES: usize = 50;
+    let many = many_primitives_glb(PRIMITIVES);
+    // Before the read, after it, after the buffers, then once per primitive.
+    assert_eq!(cancel_checks(&many), 3 + PRIMITIVES);
+    // The textured cube adds one check for its image.
+    assert_eq!(
+        cancel_checks(TEXTURED_CUBE_GLTF),
+        cancel_checks(CUBE_GLTF) + 1
+    );
+}
+
+#[test]
+fn an_import_cancelled_at_any_stage_stops_there() {
+    for doc in [CUBE_GLTF, TEXTURED_CUBE_GLTF, &many_primitives_glb(5)] {
+        let checks = cancel_checks(doc);
+        for stop_at in 0..checks {
+            let asked = std::cell::Cell::new(0);
+            let result = import_slice_cancellable(doc, &|| {
+                asked.set(asked.get() + 1);
+                asked.get() > stop_at
+            });
+            assert!(
+                matches!(result, Err(ImportError::Cancelled)),
+                "cancelled at check {stop_at}: {result:?}"
+            );
+            assert_eq!(asked.get(), stop_at + 1, "nothing is asked after a yes");
+        }
+    }
 }

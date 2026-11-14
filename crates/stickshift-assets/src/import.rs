@@ -31,11 +31,29 @@ use crate::scene::{
 /// primitive is missing, malformed or not made of triangles. Malformed input
 /// never panics.
 pub fn import_gltf(path: impl AsRef<Path>) -> Result<SceneAsset, ImportError> {
+    import_gltf_cancellable(path, &|| false)
+}
+
+/// [`import_gltf`] that gives up early once `cancelled` returns `true`.
+///
+/// `cancelled` is asked between the stages of the import: before the file is
+/// opened, after the document is read, after its buffers load, before each
+/// image is decoded and before each mesh primitive is imported. A stage already
+/// running finishes first, so the import stops within one stage of the request.
+///
+/// # Errors
+/// [`ImportError::Cancelled`] once `cancelled` returns `true`, or any error
+/// [`import_gltf`] returns.
+pub fn import_gltf_cancellable(
+    path: impl AsRef<Path>,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<SceneAsset, ImportError> {
     let path = path.as_ref();
     let base = path.parent().unwrap_or_else(|| Path::new("./"));
+    check(cancelled)?;
     let file = std::fs::File::open(path).map_err(gltf::Error::Io)?;
     let gltf = gltf::Gltf::from_reader(std::io::BufReader::new(file))?;
-    import_document(gltf, Some(base))
+    import_document(gltf, Some(base), cancelled)
 }
 
 /// Import a glTF/GLB document from an in-memory byte slice.
@@ -48,17 +66,46 @@ pub fn import_gltf(path: impl AsRef<Path>) -> Result<SceneAsset, ImportError> {
 /// Returns [`ImportError`] on a parse failure, an external file reference, or a
 /// missing, malformed or non-triangle primitive. Malformed input never panics.
 pub fn import_slice(bytes: &[u8]) -> Result<SceneAsset, ImportError> {
-    import_document(gltf::Gltf::from_slice(bytes)?, None)
+    import_slice_cancellable(bytes, &|| false)
+}
+
+/// [`import_slice`] that gives up early once `cancelled` returns `true`. It is
+/// asked at the same points as in [`import_gltf_cancellable`].
+///
+/// # Errors
+/// [`ImportError::Cancelled`] once `cancelled` returns `true`, or any error
+/// [`import_slice`] returns.
+pub fn import_slice_cancellable(
+    bytes: &[u8],
+    cancelled: &dyn Fn() -> bool,
+) -> Result<SceneAsset, ImportError> {
+    check(cancelled)?;
+    import_document(gltf::Gltf::from_slice(bytes)?, None, cancelled)
+}
+
+/// [`ImportError::Cancelled`] if the caller has asked the import to stop.
+fn check(cancelled: &dyn Fn() -> bool) -> Result<(), ImportError> {
+    if cancelled() {
+        Err(ImportError::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
 /// Load a parsed document's buffers and images, then build the scene.
 ///
 /// `base` is the directory external files resolve against; `None` for a slice.
-fn import_document(gltf: gltf::Gltf, base: Option<&Path>) -> Result<SceneAsset, ImportError> {
+fn import_document(
+    gltf: gltf::Gltf,
+    base: Option<&Path>,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<SceneAsset, ImportError> {
     let gltf::Gltf { document, blob } = gltf;
+    check(cancelled)?;
     let buffers = gltf::import_buffers(&document, base, blob)?;
-    let images = import_images(&document, &buffers, base)?;
-    build_scene(&document, &buffers, &images)
+    check(cancelled)?;
+    let images = import_images(&document, &buffers, base, cancelled)?;
+    build_scene(&document, &buffers, &images, cancelled)
 }
 
 /// Decode every image the document declares.
@@ -73,10 +120,12 @@ fn import_images(
     document: &gltf::Document,
     buffers: &[gltf::buffer::Data],
     base: Option<&Path>,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<Vec<gltf::image::Data>, ImportError> {
     document
         .images()
         .map(|image| {
+            check(cancelled)?;
             let source = image.source();
             let base = match &source {
                 gltf::image::Source::Uri { uri, .. } if uri.starts_with("data:") => {
@@ -111,6 +160,7 @@ fn build_scene(
     document: &gltf::Document,
     buffers: &[gltf::buffer::Data],
     images: &[gltf::image::Data],
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<SceneAsset, ImportError> {
     // 1. Import every unique mesh once (deduplicated by glTF mesh index). A glTF
     //    "mesh" may hold several primitives; each becomes its own MeshAsset, and
@@ -123,6 +173,7 @@ fn build_scene(
     for mesh in document.meshes() {
         let start = scene.meshes.len();
         for primitive in mesh.primitives() {
+            check(cancelled)?;
             let asset = import_primitive(&primitive, buffers, images)?;
             scene.meshes.push(asset);
         }

@@ -1150,8 +1150,10 @@ StickShiftResult stickshift_model_load_memory(struct StickShiftContext *ctx,
                                               struct StickShiftModel *out);
 
 /**
- * Destroy a model. A pending load is cancelled (its borrowed bytes are still
- * released, once the parse in progress lets go of them).
+ * Destroy a model. A pending load is cancelled: its parse stops at the next
+ * stage (after the read, after the buffers load, before each image decode or
+ * mesh primitive), and its borrowed bytes are released by the housekeeping
+ * after that, with no event for the model.
  *
  * # Safety
  * `ctx` must be NULL or a live context.

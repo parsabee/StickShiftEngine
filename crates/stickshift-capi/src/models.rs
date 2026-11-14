@@ -53,6 +53,9 @@ pub(crate) struct ModelEntry {
     /// `(part, node world matrix)` for every node that draws a part.
     pub(crate) instances: Vec<(usize, Mat4)>,
     bounds: (Vec3, Vec3),
+    /// Set to stop this model's parse; shared with its job until the parse
+    /// has finished.
+    cancel: Arc<AtomicBool>,
 }
 
 /// Where a model's bytes come from.
@@ -74,6 +77,8 @@ unsafe impl Send for Source {}
 struct Job {
     model: u64,
     source: Source,
+    /// Set when the model is destroyed before its parse finishes.
+    cancel: Arc<AtomicBool>,
 }
 
 /// A parsed model, ready to upload.
@@ -92,6 +97,7 @@ struct JobResult {
 pub(crate) struct Loader {
     jobs: Option<mpsc::Sender<Job>>,
     results: mpsc::Receiver<JobResult>,
+    /// Set when the context shuts down, to stop every parse at once.
     cancel: Arc<AtomicBool>,
     threads: Vec<JoinHandle<()>>,
     in_flight: u32,
@@ -150,8 +156,8 @@ impl Loader {
         self.in_flight
     }
 
-    /// Stop the workers (a parse in progress finishes, queued ones are
-    /// skipped) and return every borrowed buffer for release.
+    /// Stop the workers (a parse in progress stops at its next stage, queued
+    /// ones are skipped) and return every borrowed buffer for release.
     pub(crate) fn shutdown(mut self) -> Vec<StickShiftData> {
         self.cancel.store(true, Ordering::SeqCst);
         drop(self.jobs.take());
@@ -170,11 +176,8 @@ fn worker(
     loop {
         let job = jobs.lock().unwrap_or_else(PoisonError::into_inner).recv();
         let Ok(job) = job else { return };
-        let outcome = if cancel.load(Ordering::SeqCst) {
-            Err(Error::wrong_state("the context was destroyed"))
-        } else {
-            parse(&job.source)
-        };
+        let cancelled = || cancel.load(Ordering::SeqCst) || job.cancel.load(Ordering::SeqCst);
+        let outcome = parse(&job.source, &cancelled);
         if results
             .send(JobResult {
                 model: job.model,
@@ -196,19 +199,24 @@ fn import_error(e: &ImportError) -> Error {
     Error::new(code, e.to_string())
 }
 
-/// Read and decode a model, off the host thread.
-fn parse(source: &Source) -> Result<Parsed, Error> {
+/// Read and decode a model, off the host thread, giving up between import
+/// stages once `cancelled` returns `true`.
+fn parse(source: &Source, cancelled: &dyn Fn() -> bool) -> Result<Parsed, Error> {
     let imported = catch_unwind(AssertUnwindSafe(|| match source {
-        Source::File(path) => stickshift_assets::import_gltf(path),
-        Source::Owned(bytes) => stickshift_assets::import_slice(bytes),
+        Source::File(path) => stickshift_assets::import_gltf_cancellable(path, cancelled),
+        Source::Owned(bytes) => stickshift_assets::import_slice_cancellable(bytes, cancelled),
         // SAFETY: see `Source`'s `Send` impl: the bytes stay valid until this
         // job's result has been processed.
-        Source::Borrowed { ptr, len } => {
-            stickshift_assets::import_slice(unsafe { std::slice::from_raw_parts(*ptr, *len) })
-        }
+        Source::Borrowed { ptr, len } => stickshift_assets::import_slice_cancellable(
+            unsafe { std::slice::from_raw_parts(*ptr, *len) },
+            cancelled,
+        ),
     }));
     let scene = match imported {
         Ok(Ok(scene)) => scene,
+        Ok(Err(ImportError::Cancelled)) => {
+            return Err(Error::wrong_state("the load was cancelled"))
+        }
         Ok(Err(e)) => return Err(import_error(&e)),
         Err(_) => {
             return Err(Error::new(
@@ -340,6 +348,7 @@ fn start_load(
     borrowed: Option<StickShiftData>,
     completion: Option<StickShiftCompletion>,
 ) -> Result<u64, Error> {
+    let cancel = Arc::new(AtomicBool::new(false));
     let id = inner
         .models
         .insert(ModelEntry {
@@ -348,20 +357,28 @@ fn start_load(
             parts: Vec::new(),
             instances: Vec::new(),
             bounds: (Vec3::ZERO, Vec3::ZERO),
+            cancel: Arc::clone(&cancel),
         })
         .map_err(|_| Error::new(STICKSHIFT_ERROR_LIMIT_EXCEEDED, "too many live models"))?;
     let loader = inner.loader.get_or_insert_with(Loader::new);
-    if let Err(e) = loader.submit(Job { model: id, source }, borrowed) {
+    let job = Job {
+        model: id,
+        source,
+        cancel,
+    };
+    if let Err(e) = loader.submit(job, borrowed) {
         inner.models.remove(id);
         return Err(e);
     }
     Ok(id)
 }
 
-/// Destroy a model's GPU resources (if uploaded) and its handle.
+/// Destroy a model's GPU resources (if uploaded) and its handle, and stop its
+/// parse if that is still running or queued.
 pub(crate) fn destroy(inner: &mut Inner, id: u64) -> bool {
     match inner.models.remove(id) {
         Some(model) => {
+            model.cancel.store(true, Ordering::SeqCst);
             destroy_parts(inner.backend.as_mut(), &model.parts);
             true
         }
@@ -428,8 +445,10 @@ pub unsafe extern "C" fn stickshift_model_load_memory(
     })
 }
 
-/// Destroy a model. A pending load is cancelled (its borrowed bytes are still
-/// released, once the parse in progress lets go of them).
+/// Destroy a model. A pending load is cancelled: its parse stops at the next
+/// stage (after the read, after the buffers load, before each image decode or
+/// mesh primitive), and its borrowed bytes are released by the housekeeping
+/// after that, with no event for the model.
 ///
 /// # Safety
 /// `ctx` must be NULL or a live context.
