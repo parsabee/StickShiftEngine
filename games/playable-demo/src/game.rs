@@ -189,7 +189,7 @@ impl CarRunner {
             buildings: Vec::new(),
             chase: ChaseController::new(config::CHASE_DISTANCE, config::CHASE_HEIGHT)
                 .with_look_at_height(config::CHASE_LOOK_AT_HEIGHT)
-                .with_smoothing(config::CHASE_SMOOTHING),
+                .with_half_life(config::CHASE_HALF_LIFE),
             state: GameState::Ready,
             font: None,
             music: None,
@@ -635,7 +635,7 @@ impl Game for CarRunner {
             }
             let player_pos = self.player_position();
             self.chase
-                .follow(ctx.camera_mut(), player_pos, config::FORWARD);
+                .follow(ctx.camera_mut(), player_pos, config::FORWARD, dt);
             return;
         }
 
@@ -647,7 +647,7 @@ impl Game for CarRunner {
             }
             let player_pos = self.player_position();
             self.chase
-                .follow(ctx.camera_mut(), player_pos, config::FORWARD);
+                .follow(ctx.camera_mut(), player_pos, config::FORWARD, dt);
             return;
         }
 
@@ -723,7 +723,7 @@ impl Game for CarRunner {
         // No rebase special-case here: the camera was already carried through the
         // coordinate change above, so ordinary smoothing applies every frame.
         self.chase
-            .follow(ctx.camera_mut(), player_pos, config::FORWARD);
+            .follow(ctx.camera_mut(), player_pos, config::FORWARD, dt);
 
         // Then stream ahead / despawn behind, with the player as the focus.
         let tile_depth = ctx.scene().config().spawn_interval;

@@ -28,7 +28,8 @@
 //! let chase = ChaseController::new(8.0, 4.0);
 //!
 //! // Each frame: point the chase camera at the moving target.
-//! chase.follow(&mut camera, Vec3::new(0.0, 0.0, -50.0), Vec3::new(0.0, 0.0, -1.0));
+//! let dt = 1.0 / 60.0;
+//! chase.follow(&mut camera, Vec3::new(0.0, 0.0, -50.0), Vec3::new(0.0, 0.0, -1.0), dt);
 //! let view_projection = camera.view_projection_matrix();
 //! assert!(view_projection.is_finite());
 //! ```

@@ -256,7 +256,9 @@ pub fn drive_frame<G: Game>(
     // game records its frame. The seam value is sticky, so the game's
     // own `begin_frame` inside `render` preserves it and every draw this frame is
     // drawn from the camera the game last positioned (e.g. a chase controller in
-    // `update`). The backend below the seam owns no camera — only this matrix.
+    // `update`). A game that moves the camera in `render` instead gets it pushed
+    // again by `EngineCtx::renderer`, before the draws it then records. The
+    // backend below the seam owns no camera — only this matrix.
     renderer.set_view_projection(lp.camera.view_projection_matrix());
     // The camera's world position goes with it: view-dependent shading
     // (specular) needs to know where the eye is, and the matrix alone does not say
@@ -421,6 +423,73 @@ mod tests {
         // still holds exactly the engine camera's view-projection.
         let expected = lp.camera.view_projection_matrix();
         assert_eq!(renderer.view_projection(), Some(expected));
+    }
+
+    /// A game that positions the camera in `render` (as `EngineCtx::camera_mut`
+    /// suggests) draws with that camera in the same frame, not the frame after.
+    #[test]
+    fn a_camera_moved_in_render_is_used_by_that_frames_draws() {
+        use stickshift_math::glam::{Mat4, Vec3};
+        use stickshift_math::Transform;
+        use stickshift_render_api::{
+            MaterialParams, MeshData, MeshHandle, PipelineDescriptor, PipelineHandle, PipelineKind,
+        };
+
+        /// Moves the camera to `x = frame` each render, then draws one mesh.
+        #[derive(Default)]
+        struct MovesCameraInRender {
+            frame: f32,
+            mesh: Option<(MeshHandle, PipelineHandle)>,
+            /// The engine camera's view-projection after each render's move.
+            expected: Vec<Mat4>,
+        }
+        impl Game for MovesCameraInRender {
+            fn init(&mut self, ctx: &mut EngineCtx) {
+                let layout = PipelineKind::VertexColor.vertex_layout();
+                let vertices = vec![0u8; 3 * layout.stride as usize];
+                let r = ctx.renderer();
+                let mesh = r.create_mesh(&MeshData {
+                    vertices: &vertices,
+                    indices: &[0, 1, 2],
+                    layout,
+                });
+                let pipeline =
+                    r.create_pipeline(&PipelineDescriptor::new(PipelineKind::VertexColor));
+                self.mesh = Some((mesh, pipeline));
+            }
+            fn update(&mut self, _ctx: &mut EngineCtx, _dt: f32) {}
+            fn render(&mut self, ctx: &mut EngineCtx) {
+                self.frame += 1.0;
+                let camera = ctx.camera_mut();
+                camera.set_position(Vec3::new(self.frame, 2.0, 10.0));
+                camera.set_target(Vec3::new(self.frame, 0.0, 0.0));
+                self.expected.push(ctx.camera().view_projection_matrix());
+                let (mesh, pipeline) = self.mesh.unwrap();
+                let r = ctx.renderer();
+                r.begin_frame();
+                r.set_pipeline(pipeline);
+                r.draw_mesh(mesh, &Transform::identity(), &MaterialParams::default());
+                r.submit();
+            }
+        }
+
+        let mut lp = Loop::new();
+        let mut renderer = NullRenderer::new();
+        let mut game = MovesCameraInRender::default();
+        lp.init_once(&mut game, &mut renderer);
+        for _ in 0..3 {
+            drive_frame(
+                &mut lp,
+                &mut game,
+                &mut renderer,
+                Duration::from_secs_f64(f64::from(FIXED_DT)),
+            );
+        }
+
+        let used: Vec<Option<Mat4>> = renderer.draws().iter().map(|d| d.view_projection).collect();
+        let expected: Vec<Option<Mat4>> = game.expected.iter().copied().map(Some).collect();
+        assert_eq!(used, expected, "each frame drew from the camera it set");
+        assert_eq!(renderer.camera_position(), Some(lp.camera.position()));
     }
 
     /// The loop owns the audio layer and hands it to the game through

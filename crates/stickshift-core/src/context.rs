@@ -66,9 +66,10 @@ impl<T: RenderDevice + FrameRecorder> Renderer for T {}
 ///   ([`RenderDevice`] + [`FrameRecorder`]). The game records draws here in
 ///   [`render`](crate::Game::render); it never sees a Metal type.
 /// - The [`Camera`] — [`camera`](Self::camera) / [`camera_mut`](Self::camera_mut).
-///   The game positions it (e.g. a chase camera following the player); the engine
-///   pushes its view-projection across the render seam each frame before
-///   [`render`](crate::Game::render), so the backend stays camera-free.
+///   The game positions it (e.g. a chase camera following the player) in
+///   [`update`](crate::Game::update) or [`render`](crate::Game::render); the
+///   engine pushes its view-projection across the render seam, so the backend
+///   stays camera-free.
 /// - The [`InputState`] snapshot — [`input`](Self::input) (read-only; the engine
 ///   owns input).
 /// - The [`Audio`] layer — [`audio`](Self::audio). Load sounds in
@@ -92,6 +93,9 @@ pub struct EngineCtx<'a> {
     graphics: &'a mut GraphicsState,
     perf: PerfSnapshot,
     alpha: f32,
+    /// The camera was handed out mutably since it was last pushed across the
+    /// render seam, so [`renderer`](Self::renderer) must push it again.
+    camera_moved: bool,
 }
 
 impl<'a> EngineCtx<'a> {
@@ -124,6 +128,7 @@ impl<'a> EngineCtx<'a> {
             graphics,
             perf,
             alpha,
+            camera_moved: false,
         }
     }
 
@@ -178,8 +183,17 @@ impl<'a> EngineCtx<'a> {
     /// backend is [`NullRenderer`](stickshift_render_api::NullRenderer) headless and
     /// the Metal backend in a window — the game code is identical either
     /// way because it only ever sees the trait object.
+    ///
+    /// If the camera was moved through [`camera_mut`](Self::camera_mut) since it
+    /// last crossed the seam, its view-projection and position are pushed first,
+    /// so draws recorded through the returned handle use the camera as it is now.
     #[must_use]
     pub fn renderer(&mut self) -> &mut dyn Renderer {
+        if std::mem::take(&mut self.camera_moved) {
+            self.renderer
+                .set_view_projection(self.camera.view_projection_matrix());
+            self.renderer.set_camera_position(self.camera.position());
+        }
         self.renderer
     }
 
@@ -196,15 +210,17 @@ impl<'a> EngineCtx<'a> {
     ///
     /// Position it here — typically by driving a
     /// [`stickshift_camera::ChaseController`] toward the player each frame in
-    /// [`render`](crate::Game::render) (or [`update`](crate::Game::update)). The
-    /// engine reads `camera().view_projection_matrix()` and pushes it across the
-    /// render seam **before** the game's `render` runs, so whatever pose the game
-    /// last set is the pose the frame is drawn from. The game never touches the
-    /// render backend's camera (there isn't one) — the view crosses the seam as a
-    /// plain matrix, accompanied by `camera().position()` for view-dependent
-    /// shading.
+    /// [`update`](crate::Game::update) or [`render`](crate::Game::render). The
+    /// engine pushes `camera().view_projection_matrix()` across the render seam
+    /// before the game's `render` runs, and again on the next
+    /// [`renderer`](Self::renderer) call after the camera is moved here. So a
+    /// camera positioned in `render` before its draws are recorded is the camera
+    /// those draws use. The game never touches the render backend's camera
+    /// (there isn't one) — the view crosses the seam as a plain matrix,
+    /// accompanied by `camera().position()` for view-dependent shading.
     #[must_use]
     pub fn camera_mut(&mut self) -> &mut Camera {
+        self.camera_moved = true;
         self.camera
     }
 

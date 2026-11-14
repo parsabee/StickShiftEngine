@@ -25,11 +25,20 @@
 //!
 //! # Smoothing
 //!
-//! With a `smoothing` factor in `0.0..=1.0`, each [`follow`](ChaseController::follow)
-//! lerps the camera's current pose toward the freshly-computed desired pose by
-//! that fraction, so the camera eases in rather than snapping. `0.0` disables
-//! smoothing (the camera jumps straight to the desired pose); `1.0` also snaps.
-//! Values in between trail the target with an exponential ease.
+//! With a **half-life** in seconds, each [`follow`](ChaseController::follow)
+//! closes part of the gap between the camera's current pose and the desired
+//! pose: half of it for every half-life of `dt` that passes. The fraction moved
+//! in one call is
+//!
+//! ```text
+//! t = 1 - 2^(-dt / half_life)
+//! ```
+//!
+//! so the ease depends only on elapsed time, not on how often `follow` is
+//! called: two calls of `dt / 2` land where one call of `dt` does, and the
+//! camera trails identically at 30, 60 or 120 Hz. A half-life of `0.0` (the
+//! default) disables smoothing and the camera snaps to the desired pose; small
+//! half-lives approach that snap continuously.
 
 use stickshift_math::glam::Vec3;
 
@@ -50,8 +59,9 @@ pub struct ChaseController {
     look_at_height: f32,
     /// World up axis used for the height offset and the look-at up vector.
     up: Vec3,
-    /// Per-follow ease factor in `0.0..=1.0` (`0.0` snaps; smaller trails more).
-    smoothing: f32,
+    /// Seconds for the camera to close half the gap to its desired pose
+    /// (`0.0` snaps; larger trails more).
+    half_life: f32,
 }
 
 impl ChaseController {
@@ -75,7 +85,7 @@ impl ChaseController {
             height,
             look_at_height: 0.0,
             up: Vec3::Y,
-            smoothing: 0.0,
+            half_life: 0.0,
         }
     }
 
@@ -94,15 +104,28 @@ impl ChaseController {
         self
     }
 
-    /// Set the per-follow ease factor in `0.0..=1.0` (default `0.0`, i.e. snap).
+    /// Set the smoothing half-life in seconds (default `0.0`, i.e. snap).
     ///
-    /// Each [`follow`](Self::follow) moves the camera this fraction of the way to
-    /// the desired pose, so smaller values trail the target more loosely. The
-    /// value is clamped into `0.0..=1.0`. Returns `self` for chaining.
+    /// The camera closes half of the gap to its desired pose every
+    /// `half_life` seconds, whatever the frame rate (see the
+    /// [module docs](self#smoothing)), so larger values trail the target more
+    /// loosely. A negative or NaN value is treated as `0.0`. Returns `self` for
+    /// chaining.
     #[must_use]
-    pub fn with_smoothing(mut self, smoothing: f32) -> Self {
-        self.smoothing = smoothing.clamp(0.0, 1.0);
+    pub fn with_half_life(mut self, half_life: f32) -> Self {
+        self.half_life = half_life.max(0.0);
         self
+    }
+
+    /// The fraction of the gap to the desired pose that one
+    /// [`follow`](Self::follow) of `dt` seconds closes, in `0.0..=1.0`.
+    #[must_use]
+    pub fn follow_fraction(&self, dt: f32) -> f32 {
+        if self.half_life <= 0.0 {
+            return 1.0;
+        }
+        let dt = dt.max(0.0);
+        (1.0 - (-dt / self.half_life).exp2()).clamp(0.0, 1.0)
     }
 
     /// The desired camera position for a target at `target` facing `forward`.
@@ -121,11 +144,16 @@ impl ChaseController {
         target + self.up * self.look_at_height
     }
 
-    /// Place `camera` to follow a target at `target` facing `forward`.
+    /// Place `camera` to follow a target at `target` facing `forward`, `dt`
+    /// seconds after the previous call.
     ///
-    /// Computes the desired behind-and-above pose, then (with smoothing) eases the
-    /// camera's current position/target toward it, or (with no smoothing) snaps to
-    /// it. `forward` need not be normalized; a zero `forward` falls back to `-Z`.
+    /// Computes the desired behind-and-above pose, then (with a half-life) eases
+    /// the camera's current position/target toward it by
+    /// [`follow_fraction`](Self::follow_fraction)`(dt)`, or (with none) snaps to
+    /// it. Pass the time step the call covers: the fixed `dt` when following from
+    /// a game's `update`, or the time since the last frame when following from
+    /// `render`. `forward` need not be normalized; a zero `forward` falls back to
+    /// `-Z`.
     ///
     /// # Example
     ///
@@ -135,20 +163,20 @@ impl ChaseController {
     ///
     /// let mut camera = Camera::new(16.0 / 9.0);
     /// let chase = ChaseController::new(8.0, 4.0);
-    /// // Target at the origin moving toward -Z.
-    /// chase.follow(&mut camera, Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0));
+    /// // Target at the origin moving toward -Z, one 60 Hz step later.
+    /// chase.follow(&mut camera, Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), 1.0 / 60.0);
     /// // Camera sits behind (+Z) and above (+Y) the target.
     /// assert!(camera.position().z > 0.0);
     /// assert!(camera.position().y > 0.0);
     /// ```
-    pub fn follow(&self, camera: &mut Camera, target: Vec3, forward: Vec3) {
+    pub fn follow(&self, camera: &mut Camera, target: Vec3, forward: Vec3, dt: f32) {
         let desired_pos = self.desired_position(target, forward);
         let desired_target = self.desired_target(target);
 
-        let (new_pos, new_target) = if self.smoothing <= 0.0 {
+        let t = self.follow_fraction(dt);
+        let (new_pos, new_target) = if t >= 1.0 {
             (desired_pos, desired_target)
         } else {
-            let t = self.smoothing;
             (
                 camera.position().lerp(desired_pos, t),
                 camera.target().lerp(desired_target, t),
@@ -175,6 +203,9 @@ fn normalize_or(v: Vec3, fallback: Vec3) -> Vec3 {
 mod tests {
     use super::*;
 
+    /// One 60 Hz step.
+    const STEP: f32 = 1.0 / 60.0;
+
     #[test]
     fn places_camera_behind_and_above_target() {
         let chase = ChaseController::new(8.0, 4.0);
@@ -192,6 +223,7 @@ mod tests {
             &mut cam,
             Vec3::new(0.0, 0.0, -20.0),
             Vec3::new(0.0, 0.0, -1.0),
+            STEP,
         );
         assert!((cam.position() - Vec3::new(0.0, 5.0, -10.0)).length() < 1e-5);
         assert!((cam.target() - Vec3::new(0.0, 0.0, -20.0)).length() < 1e-5);
@@ -201,12 +233,13 @@ mod tests {
     fn follow_tracks_target_movement() {
         let mut cam = Camera::new(1.0);
         let chase = ChaseController::new(6.0, 3.0);
-        chase.follow(&mut cam, Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0));
+        chase.follow(&mut cam, Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), STEP);
         let first = cam.position();
         chase.follow(
             &mut cam,
             Vec3::new(0.0, 0.0, -10.0),
             Vec3::new(0.0, 0.0, -1.0),
+            STEP,
         );
         // The camera followed the target along -Z.
         assert!(cam.position().z < first.z);
@@ -217,17 +250,63 @@ mod tests {
         let mut cam = Camera::new(1.0);
         cam.set_position(Vec3::ZERO);
         cam.set_target(Vec3::ZERO);
-        let chase = ChaseController::new(10.0, 5.0).with_smoothing(0.5);
+        let chase = ChaseController::new(10.0, 5.0).with_half_life(STEP);
         let desired = chase.desired_position(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0));
-        chase.follow(&mut cam, Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0));
-        // Moved halfway toward the desired pose, not all the way.
+        chase.follow(&mut cam, Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), STEP);
+        // One half-life closed half the gap, not all of it.
         let halfway = Vec3::ZERO.lerp(desired, 0.5);
         assert!((cam.position() - halfway).length() < 1e-5);
         // Repeated follows converge on the desired pose.
         for _ in 0..40 {
-            chase.follow(&mut cam, Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0));
+            chase.follow(&mut cam, Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), STEP);
         }
         assert!((cam.position() - desired).length() < 1e-3);
+    }
+
+    /// Where the camera is after following a still target for `seconds`, in
+    /// calls of `dt`.
+    fn eased_for(chase: &ChaseController, seconds: f32, dt: f32) -> Vec3 {
+        let mut cam = Camera::new(1.0);
+        cam.set_position(Vec3::ZERO);
+        cam.set_target(Vec3::ZERO);
+        let calls = (seconds / dt).round() as u32;
+        for _ in 0..calls {
+            chase.follow(&mut cam, Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), dt);
+        }
+        cam.position()
+    }
+
+    #[test]
+    fn smoothing_does_not_depend_on_the_frame_rate() {
+        let chase = ChaseController::new(10.0, 5.0).with_half_life(0.1);
+        let at_30 = eased_for(&chase, 0.2, 1.0 / 30.0);
+        let at_60 = eased_for(&chase, 0.2, 1.0 / 60.0);
+        let at_120 = eased_for(&chase, 0.2, 1.0 / 120.0);
+        assert!((at_30 - at_60).length() < 1e-4, "{at_30} vs {at_60}");
+        assert!((at_60 - at_120).length() < 1e-4, "{at_60} vs {at_120}");
+        // Two half-lives close three quarters of the gap.
+        let desired = chase.desired_position(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0));
+        let expected = desired * 0.75;
+        assert!((at_60 - expected).length() < 1e-4, "{at_60} vs {expected}");
+    }
+
+    #[test]
+    fn a_tiny_half_life_is_almost_a_snap() {
+        // No jump between "off" and "on": the ease shrinks to a snap smoothly.
+        let snap = ChaseController::new(10.0, 5.0);
+        let tiny = ChaseController::new(10.0, 5.0).with_half_life(1e-4);
+        assert_eq!(snap.follow_fraction(STEP), 1.0);
+        assert!(tiny.follow_fraction(STEP) > 0.999);
+        // No time passing moves nothing; a negative half-life snaps.
+        let eased = ChaseController::new(10.0, 5.0).with_half_life(0.1);
+        assert_eq!(eased.follow_fraction(0.0), 0.0);
+        assert_eq!(eased.follow_fraction(-1.0), 0.0);
+        assert_eq!(
+            ChaseController::new(1.0, 1.0)
+                .with_half_life(-1.0)
+                .follow_fraction(STEP),
+            1.0
+        );
     }
 
     #[test]
