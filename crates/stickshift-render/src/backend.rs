@@ -53,10 +53,11 @@
 //! ring: one [`UNIFORM_RING_STRIDE`]-byte slot per in-flight frame, selected by
 //! `frame_index % MAX_FRAMES_IN_FLIGHT`, so the frames-in-flight semaphore proves
 //! the CPU never rewrites a slot the GPU is still reading (see
-//! [`write_light_to_ring`](MetalRenderer)). It is written in `begin_frame`, before
-//! the sky pass, and the resulting offset is bound at fragment `[[buffer(0)]]` for
-//! the sky *and* every draw in the frame — one sun per frame, shared by the sky
-//! disc and the shading.
+//! [`write_light_to_ring`](MetalRenderer)). It is written once per frame, at the
+//! frame's first draw (or at `submit` for a frame with no draws), so a camera or
+//! sun set after `begin_frame` still applies to this frame. The resulting offset
+//! is bound at fragment `[[buffer(0)]]` for the sky *and* every draw in the frame
+//! — one sun per frame, shared by the sky disc and the shading.
 //!
 //! It is a separate buffer from `uniform_ring` deliberately: the uniform ring may
 //! *reallocate* mid-frame when a frame exceeds its capacity, which would leave the
@@ -623,14 +624,14 @@ pub struct MetalRenderer {
     // The frame's shared fragment uniforms (sun + look + camera), kept CPU-side
     // and uploaded **once per frame** into `light_ring`. Sticky: the
     // sun/sky half is replaced by `set_sun_sky`, the camera half is refreshed from
-    // `view_projection` / `camera_position` as each frame opens.
+    // `view_projection` / `camera_position` at each frame's first draw.
     light: LightUniforms,
     // Per-frame ring for `light`, partitioned exactly like `uniform_ring`: one
     // `UNIFORM_RING_STRIDE`-byte slot per in-flight frame, selected by
     // `frame_index % MAX_FRAMES_IN_FLIGHT`. See `write_light_to_ring` for why that
     // is enough to never stomp a slot the GPU is still reading. A separate buffer
-    // from `uniform_ring` on purpose: the light is written once at `begin_frame`
-    // and bound for the whole frame, whereas `uniform_ring` may *reallocate*
+    // from `uniform_ring` on purpose: the light is written once per frame and
+    // bound for the whole frame, whereas `uniform_ring` may *reallocate*
     // mid-frame when it grows, which would leave a frame-long binding dangling at
     // a stale offset in a dead buffer.
     light_ring: metal::Buffer,
@@ -838,19 +839,26 @@ struct FrameState {
     /// The base-color texture most recently bound by `bind_texture`, recorded into
     /// each subsequent draw (the deferred equivalent of a sticky encoder binding).
     bound_texture: Option<metal::Texture>,
-    /// Byte offset into `light_ring` of *this* frame's light upload.
-    /// Captured when the frame opens so the sky pass and every later `draw_mesh`
-    /// bind the identical bytes — the sun cannot change mid-frame.
+    /// Byte offset into `light_ring` of *this* frame's light upload, reserved
+    /// when the frame opens. The light is written there once, by
+    /// [`capture_shading`](MetalRenderer::capture_shading), and the sky pass and
+    /// every draw bind the identical bytes — the sun cannot change mid-frame.
     light_offset: u64,
-    /// Whether this frame runs the shadow pass, and the map it renders and
-    /// samples. Captured with the light block (whose shadow strength and fit
-    /// match them), so a settings change before `submit` applies from the next
-    /// frame instead of half-way through this one.
-    casts_shadows: bool,
-    shadow_map: metal::Texture,
+    /// The frame's shading state, captured with its light block at the first
+    /// draw (or at `submit` for a frame with no draws). `None` until then.
+    shading: Option<FrameShading>,
     /// A requested read-back: the buffer the pixels are copied into at submit,
     /// and the flag the completion handler sets when they are there.
     readback: Option<(metal::Buffer, Arc<AtomicBool>)>,
+}
+
+/// Whether a frame runs the shadow pass, and the map it renders and samples.
+/// Captured together with the frame's light block (whose shadow strength and fit
+/// match them), so a settings change later in the frame applies from the next
+/// frame instead of half-way through this one.
+struct FrameShading {
+    casts_shadows: bool,
+    shadow_map: metal::Texture,
 }
 
 impl MetalRenderer {
@@ -1759,12 +1767,46 @@ impl MetalRenderer {
         offset
     }
 
-    /// Fold this frame's camera into the light block, write it into the light
-    /// ring, and return the **256-byte-aligned byte offset** to bind at.
+    /// The **256-byte-aligned byte offset** in the light ring of the slot for
+    /// the frame being opened (`frame_index % MAX_FRAMES_IN_FLIGHT`).
+    fn light_slot_offset(&self) -> u64 {
+        (self.frame_index % MAX_FRAMES_IN_FLIGHT) * UNIFORM_RING_STRIDE
+    }
+
+    /// Capture the open frame's shading state, once: fold the camera into the
+    /// light block, fit the shadow frustum to it, write the block into the
+    /// frame's light-ring slot, and record whether the frame casts shadows and
+    /// into which map. A no-op without an open frame or once captured.
     ///
-    /// Called once per frame from [`begin_frame`](FrameRecorder::begin_frame); the
-    /// returned offset is bound for the sky pass and every draw in the frame, so
-    /// one frame shades with exactly one sun.
+    /// Called at the frame's first draw, and from `submit` for a frame that drew
+    /// nothing. Not at [`begin_frame`](FrameRecorder::begin_frame): the seam lets
+    /// a caller set the camera (and the sun) after opening the frame, and
+    /// capturing at the open would light, sky and shadow the frame from the
+    /// previous frame's camera while its draws project with the new one. At the
+    /// first draw the camera is the one that draw, and normally the whole frame,
+    /// projects with. A camera switched mid-frame still moves later draws, but
+    /// the frame keeps the light it was captured with.
+    fn capture_shading(&mut self) {
+        let offset = match &self.frame {
+            Some(frame) if frame.shading.is_none() => frame.light_offset,
+            _ => return,
+        };
+        self.write_light_to_ring(offset);
+        let shading = FrameShading {
+            casts_shadows: self.render_settings.shadows.casts_shadows(),
+            shadow_map: self.shadow_map.clone(),
+        };
+        if let Some(frame) = &mut self.frame {
+            frame.shading = Some(shading);
+        }
+    }
+
+    /// Fold the current camera into the light block, fit the shadow frustum, and
+    /// write the block into the light ring at `offset`.
+    ///
+    /// Called once per frame, by [`capture_shading`](Self::capture_shading); the
+    /// offset is bound for the sky pass and every draw in the frame, so one frame
+    /// shades with exactly one sun.
     ///
     /// # Why this cannot race a frame the GPU is still reading
     ///
@@ -1780,7 +1822,7 @@ impl MetalRenderer {
     /// also keeps the per-frame path allocation-free: the buffer is created
     /// once at construction and never grows — a `LightUniforms` is asserted to fit
     /// one slot by `light_uniforms_fits_one_uniform_ring_slot`.
-    fn write_light_to_ring(&mut self) -> u64 {
+    fn write_light_to_ring(&mut self, offset: u64) {
         // The camera half of the block is refreshed here, from the sticky seam
         // values, so it always matches the matrix this frame's draws project with.
         self.light
@@ -1801,7 +1843,6 @@ impl MetalRenderer {
         );
         self.light.apply_shadow_fit(&fit);
 
-        let offset = (self.frame_index % MAX_FRAMES_IN_FLIGHT) * UNIFORM_RING_STRIDE;
         // SAFETY: the ring is `MAX_FRAMES_IN_FLIGHT * UNIFORM_RING_STRIDE` bytes and
         // a `LightUniforms` fits one stride (asserted in `vertex.rs`), so the write
         // is in bounds; the buffer is CPU-visible and `LightUniforms` is POD.
@@ -1809,7 +1850,6 @@ impl MetalRenderer {
             let dst = (self.light_ring.contents() as *mut u8).add(offset as usize);
             std::ptr::write(dst as *mut LightUniforms, self.light);
         }
-        offset
     }
 
     /// Double the per-frame ring capacity and reallocate the backing buffer.
@@ -1908,8 +1948,8 @@ impl MetalRenderer {
         self.light
     }
 
-    /// Byte offset in the light ring that the **open** frame's light was written
-    /// to and is bound at, or `None` with no frame open. Test aid: proves the
+    /// Byte offset in the light ring that the **open** frame's light is written
+    /// to and bound at, or `None` with no frame open. Test aid: proves the
     /// light rotates through one slot per in-flight frame, `0, 256, 512, 0, …`,
     /// instead of being overwritten in place while the GPU may still be reading it.
     #[must_use]
@@ -1991,9 +2031,9 @@ impl MetalRenderer {
     /// nearer the sun than the fitted near plane is flattened onto it and still
     /// casts. Faces are not culled: single-sided geometry (the road, the backdrop)
     /// must cast too.
-    fn encode_shadow_pass(&self, frame: &FrameState) {
+    fn encode_shadow_pass(&self, frame: &FrameState, shading: &FrameShading) {
         let descriptor = metal::RenderPassDescriptor::new();
-        configure_shadow_depth_attachment(descriptor, &frame.shadow_map);
+        configure_shadow_depth_attachment(descriptor, &shading.shadow_map);
         let encoder = frame.command_buffer.new_render_command_encoder(descriptor);
         encoder.set_label("Shadow pass");
         encoder.set_depth_stencil_state(&self.depth_stencil_state);
@@ -2027,7 +2067,7 @@ impl MetalRenderer {
     /// into its color target. This is the original single pass, unchanged except
     /// that it binds the shadow map at fragment `[[texture(1)]]` for the lit
     /// shaders and replays the recorded draw list instead of encoding immediately.
-    fn encode_scene_pass(&mut self, frame: &FrameState) {
+    fn encode_scene_pass(&mut self, frame: &FrameState, shading: &FrameShading) {
         let render_pass_descriptor = metal::RenderPassDescriptor::new();
 
         // MSAA: render into a multisampled color attachment and resolve
@@ -2072,7 +2112,7 @@ impl MetalRenderer {
         // flat clear. Geometry drawn afterward depth-tests against the cleared
         // depth buffer normally. Bind the light (fragment(0)) for the sky colors,
         // the sun disc and the camera's inverse view-projection, which all live in
-        // the same `LightUniforms` uploaded when the frame opened.
+        // the same `LightUniforms` captured at the frame's first draw.
         encoder.set_render_pipeline_state(&self.sky_pipeline_state);
         encoder.set_depth_stencil_state(&self.sky_depth_stencil_state);
         encoder.set_fragment_buffer(0, Some(&self.light_ring), frame.light_offset);
@@ -2082,7 +2122,7 @@ impl MetalRenderer {
         // drew its sun from, and the shadow pass fitted with) and the shadow map
         // the pass above just stored.
         encoder.set_depth_stencil_state(&self.depth_stencil_state);
-        encoder.set_fragment_texture(1, Some(&frame.shadow_map));
+        encoder.set_fragment_texture(1, Some(&shading.shadow_map));
         let mut bound_textured: Option<bool> = None;
         for draw in &self.draws {
             if bound_textured != Some(draw.textured) {
@@ -2150,12 +2190,13 @@ impl MetalRenderer {
 
         let command_buffer = self.command_queue.new_command_buffer().to_owned();
 
-        // Upload this frame's light before anything is recorded: the sky
-        // needs the sun's direction to place its disc, the geometry needs the
-        // identical bytes, and the shadow pass needs the light
-        // view-projection fitted to this frame's camera. The frame's whole shading
-        // state is written once here and bound at the same offset everywhere.
-        let light_offset = self.write_light_to_ring();
+        // Reserve this frame's light slot. The light itself is written later,
+        // once, by `capture_shading` (at the first draw or at submit), because
+        // the caller may still set the camera and sun after opening the frame:
+        // the sky needs the sun's direction to place its disc, the geometry needs
+        // the identical bytes, and the shadow pass needs the light
+        // view-projection fitted to the camera the frame is drawn with.
+        let light_offset = self.light_slot_offset();
 
         // Reset the uniform-ring cursor and select this frame's disjoint region:
         // `(frame_index % MAX_FRAMES_IN_FLIGHT) * ring_draws_per_frame`
@@ -2186,8 +2227,7 @@ impl MetalRenderer {
             textured_pipeline: false,
             bound_texture: None,
             light_offset,
-            casts_shadows: self.render_settings.shadows.casts_shadows(),
-            shadow_map: self.shadow_map.clone(),
+            shading: None,
             readback: None,
         });
     }
@@ -2301,17 +2341,20 @@ impl MetalRenderer {
     /// Encode, commit and (on a layer) present the open frame; on an offscreen
     /// target, wait for the GPU when `wait_offscreen`. Returns the frame number.
     fn submit_frame(&mut self, wait_offscreen: bool) -> Option<u64> {
+        // A frame that drew nothing still has a sky to light.
+        self.capture_shading();
         let frame = self.frame.take()?;
+        let shading = frame.shading.as_ref().expect("captured above");
         autoreleasepool(|| {
             // Pass order: the depth-only shadow pass first (every recorded
             // draw as a caster, into the stored shadow map), then the scene pass
             // (sky, lit draws sampling that map, and the 2D overlay on top).
             // With shadows off the pass is skipped outright: the light block's
             // zero `shadow_strength` makes the lit shaders ignore the map.
-            if frame.casts_shadows {
-                self.encode_shadow_pass(&frame);
+            if shading.casts_shadows {
+                self.encode_shadow_pass(&frame, shading);
             }
-            self.encode_scene_pass(&frame);
+            self.encode_scene_pass(&frame, shading);
 
             // Offscreen: synchronize the Managed color texture so `read_pixels`
             // sees this frame, and copy it into the read-back buffer if one was
@@ -2403,6 +2446,9 @@ impl MetalRenderer {
     /// [`rejected_draw_count`](Self::rejected_draw_count): the pipeline's vertex
     /// descriptor would fetch at the wrong stride, past the end of the buffer.
     fn record_draw(&mut self, mesh: MeshHandle, model: Mat4, material: &MaterialParams) {
+        // The frame's first draw fixes its light, sky and shadow fit to the
+        // camera in effect now (see `capture_shading`).
+        self.capture_shading();
         let Some(frame) = self.frame.as_ref() else {
             return;
         };
@@ -2702,10 +2748,9 @@ impl FrameRecorder for MetalRenderer {
 
     fn set_camera_position(&mut self, position: Vec3) {
         // The eye position for view-dependent shading. Sticky, like the
-        // matrix it accompanies; both are folded into the frame's light block when
-        // the frame opens (`write_light_to_ring`), so a push that lands *after*
-        // `begin_frame` applies from the next frame — which is why the engine loop
-        // pushes the camera before the game records.
+        // matrix it accompanies; both are folded into the frame's light block at
+        // the frame's first draw (`capture_shading`), so a push before that, even
+        // after `begin_frame`, lights this frame.
         self.camera_position = position;
     }
 

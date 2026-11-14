@@ -185,7 +185,7 @@ fit transforms that place a model on the ground) and
 The render seam is two traits, handed to you as one `&mut dyn Renderer` from `ctx.renderer()`:
 [`RenderDevice`](../crates/stickshift-render-api/src/device.rs#L98) for resources (and
 `surface_size` / `safe_area_insets`) and
-[`FrameRecorder`](../crates/stickshift-render-api/src/recorder.rs#L63) for the frame. The frame
+[`FrameRecorder`](../crates/stickshift-render-api/src/recorder.rs#L66) for the frame. The frame
 protocol is `begin_frame` → `set_pipeline` / `bind_texture` / `draw_mesh` /
 `draw_overlay_quad` → `submit`, exactly once per `render` call.
 

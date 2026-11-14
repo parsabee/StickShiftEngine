@@ -67,6 +67,12 @@ boundary. `draw_mesh` takes a [`stickshift-math`] `Transform` and a plain-data
 callers that hold one (a baked glTF node may be sheared, which a `Transform`
 cannot express).
 
+The camera (`set_view_projection` + `set_camera_position`) and the sun
+(`set_sun_sky`) are sticky and may be set before or after `begin_frame`. Each
+draw projects with the camera in effect when it is recorded. The frame's
+lighting (sky, specular and the shadow fit) uses the camera and sun in effect at
+its first draw, or at `submit` for a frame with no draws.
+
 ### Plain-data descriptors
 
 `VertexFormat`, `VertexAttribute`, `VertexLayout` describe vertex memory layout;

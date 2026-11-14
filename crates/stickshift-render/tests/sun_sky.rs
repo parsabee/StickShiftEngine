@@ -22,10 +22,14 @@
 //! Like the other backend tests these **skip** when no Metal device is available
 //! (GPU-less CI) and run + assert on a real Mac.
 
-use stickshift_math::glam::Vec3;
+use stickshift_math::glam::{Mat4, Vec3};
+use stickshift_math::Transform;
 use stickshift_render::backend::MAX_FRAMES_IN_FLIGHT;
-use stickshift_render::MetalRenderer;
-use stickshift_render_api::{FrameRecorder, SunSky};
+use stickshift_render::{LightUniforms, MetalRenderer};
+use stickshift_render_api::{
+    FrameRecorder, MaterialParams, MeshData, MeshHandle, PipelineDescriptor, PipelineHandle,
+    PipelineKind, RenderDevice, SunSky,
+};
 
 mod common;
 
@@ -93,21 +97,22 @@ fn camera_reaches_the_fragment_shader_and_the_sun_is_sticky() {
     r.set_sun_sky(&sun);
     r.set_camera_position(eye);
 
-    // The camera block is folded in as each frame opens, so it is the frame — not
+    // The camera block is folded in when the frame captures its light (at its
+    // first draw, or at submit for a frame with none), so it is the frame — not
     // the push — that publishes it.
     r.begin_frame();
+    r.submit();
     assert_eq!(
         r.light_for_test().camera_position,
         eye.to_array(),
         "specular needs the eye position; it must reach the light block"
     );
-    r.submit();
 
     // The sun survives the frame boundary: a game with a fixed sun pushes once at
     // load and every later frame is still lit by it.
     r.begin_frame();
-    assert_eq!(r.light_for_test().direction, sun.direction().to_array());
     r.submit();
+    assert_eq!(r.light_for_test().direction, sun.direction().to_array());
 }
 
 #[test]
@@ -163,13 +168,12 @@ fn shadow_distance_follows_the_draw_distance_unless_overridden() {
         let l = r.light_for_test();
         shadow_distance_for_fog(l.fog_start, l.fog_density)
     };
-    // The slab depth a frame actually fits (folded into the light block as the
-    // frame opens).
+    // The slab depth a frame actually fits (folded into the light block when
+    // the frame captures its light).
     let frame_shadow_distance = |r: &mut MetalRenderer| {
         r.begin_frame();
-        let d = r.light_for_test().shadow_distance;
         r.submit();
-        d
+        r.light_for_test().shadow_distance
     };
 
     // Default: "match draw distance" — the slab is the fog's 165 units.
@@ -221,4 +225,134 @@ fn per_frame_light_upload_allocates_nothing() {
         delta, 0,
         "per-frame light upload allocated {delta} buffers; expected 0"
     );
+}
+
+/// A camera, as the seam carries it: a view-projection and the eye position.
+#[derive(Clone, Copy)]
+struct SeamCamera {
+    view_projection: Mat4,
+    position: Vec3,
+}
+
+impl SeamCamera {
+    fn looking_from(position: Vec3) -> Self {
+        Self {
+            view_projection: Mat4::perspective_rh(60f32.to_radians(), 1.0, 0.3, 300.0)
+                * Mat4::look_at_rh(position, Vec3::ZERO, Vec3::Y),
+            position,
+        }
+    }
+
+    fn push(self, r: &mut MetalRenderer) {
+        r.set_view_projection(self.view_projection);
+        r.set_camera_position(self.position);
+    }
+}
+
+/// A renderer with one drawable triangle and its pipeline.
+fn renderer_with_a_triangle() -> Option<(MetalRenderer, MeshHandle, PipelineHandle)> {
+    let Some(mut r) = MetalRenderer::new_offscreen(WIDTH, HEIGHT) else {
+        common::no_gpu();
+        return None;
+    };
+    let kind = PipelineKind::VertexColor;
+    let mut vertices = Vec::new();
+    for corner in [[-0.5f32, 0.0, -0.5], [0.5, 0.0, -0.5], [0.0, 0.0, 0.5]] {
+        let vertex = [
+            corner[0], corner[1], corner[2], 0.0, 1.0, 0.0, 1.0, 1.0, 1.0,
+        ];
+        vertices.extend(vertex.iter().flat_map(|f| f.to_ne_bytes()));
+    }
+    let mesh = r.create_mesh(&MeshData {
+        vertices: &vertices,
+        indices: &[0, 1, 2],
+        layout: kind.vertex_layout(),
+    });
+    let pipeline = r.create_pipeline(&PipelineDescriptor::new(kind));
+    Some((r, mesh, pipeline))
+}
+
+/// The camera-dependent half of a light block: what the sky, specular and the
+/// shadow fit take from the camera.
+fn camera_half(l: &LightUniforms) -> ([f32; 3], [[f32; 4]; 4], [[f32; 4]; 4]) {
+    (
+        l.camera_position,
+        l.inverse_view_projection,
+        l.light_view_projection,
+    )
+}
+
+/// The light a frame drawn from `camera`, pushed before `begin_frame` as the
+/// engine loop does, ends up with.
+fn reference_light(camera: SeamCamera) -> Option<LightUniforms> {
+    let (mut r, mesh, pipeline) = renderer_with_a_triangle()?;
+    camera.push(&mut r);
+    r.begin_frame();
+    r.set_pipeline(pipeline);
+    r.draw_mesh(mesh, &Transform::identity(), &MaterialParams::default());
+    r.submit();
+    Some(r.light_for_test())
+}
+
+#[test]
+fn a_camera_set_after_begin_frame_lights_and_shadows_that_frame() {
+    let camera = SeamCamera::looking_from(Vec3::new(4.0, 6.0, 12.0));
+    let Some(expected) = reference_light(camera) else {
+        return;
+    };
+    let Some((mut r, mesh, pipeline)) = renderer_with_a_triangle() else {
+        return;
+    };
+    // The documented order: open the frame, then set the camera. This is also
+    // the renderer's first frame, so a light captured at `begin_frame` would be
+    // fitted to the identity matrix.
+    r.begin_frame();
+    camera.push(&mut r);
+    r.set_pipeline(pipeline);
+    r.draw_mesh(mesh, &Transform::identity(), &MaterialParams::default());
+    r.submit();
+    let light = r.light_for_test();
+    assert_eq!(
+        camera_half(&light),
+        camera_half(&expected),
+        "the sky, specular and shadow fit use the camera the frame drew with"
+    );
+    assert_eq!(light.shadow_distance, expected.shadow_distance);
+}
+
+#[test]
+fn a_frame_keeps_the_light_of_its_first_draw() {
+    let first = SeamCamera::looking_from(Vec3::new(4.0, 6.0, 12.0));
+    let second = SeamCamera::looking_from(Vec3::new(-20.0, 3.0, -2.0));
+    let Some(expected) = reference_light(first) else {
+        return;
+    };
+    let Some((mut r, mesh, pipeline)) = renderer_with_a_triangle() else {
+        return;
+    };
+    r.begin_frame();
+    first.push(&mut r);
+    r.set_pipeline(pipeline);
+    r.draw_mesh(mesh, &Transform::identity(), &MaterialParams::default());
+    // A mid-frame switch moves the draws after it, not the frame's light.
+    second.push(&mut r);
+    r.draw_mesh(mesh, &Transform::identity(), &MaterialParams::default());
+    r.submit();
+    assert_eq!(camera_half(&r.light_for_test()), camera_half(&expected));
+}
+
+#[test]
+fn a_frame_with_no_draws_is_lit_by_the_camera_at_submit() {
+    let camera = SeamCamera::looking_from(Vec3::new(4.0, 6.0, 12.0));
+    let Some(expected) = reference_light(camera) else {
+        return;
+    };
+    let Some((mut r, _, _)) = renderer_with_a_triangle() else {
+        return;
+    };
+    // Only the sky is drawn, and it still needs the camera's view rays.
+    r.begin_frame();
+    camera.push(&mut r);
+    r.submit();
+    assert_eq!(camera_half(&r.light_for_test()), camera_half(&expected));
 }
