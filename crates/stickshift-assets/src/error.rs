@@ -25,6 +25,9 @@ pub enum ImportError {
     /// requires: a node is its own ancestor (a cycle), has two parents, or is
     /// both a scene root and another node's child. The string says which node.
     InvalidHierarchy(String),
+    /// The caller cancelled the import before it finished (see
+    /// [`import_gltf_cancellable`](crate::import_gltf_cancellable)).
+    Cancelled,
 }
 
 impl fmt::Display for ImportError {
@@ -42,6 +45,7 @@ impl fmt::Display for ImportError {
             ImportError::InvalidHierarchy(why) => {
                 write!(f, "malformed glTF node hierarchy: {why}")
             }
+            ImportError::Cancelled => write!(f, "glTF import was cancelled"),
         }
     }
 }

@@ -74,6 +74,16 @@ no functional changes. The known limitations of 0.1.0-beta.1 still apply.
   (`stickshift_context_create` then returns `STICKSHIFT_ERROR_LIMIT_EXCEEDED`), and a slot retires
   after 16.7 million reuses instead of 4.3 billion. Handles stay opaque 64-bit values, so this is
   not an ABI change.
+- **Destroying a pending model cancels its load**
+  ([#27](https://github.com/parsabee/StickShiftEngine/issues/27)). `stickshift_model_destroy`
+  documented that it cancels a pending load, but it only freed the handle. The worker still read,
+  parsed and decoded the whole file before the result was thrown away. The only cancel flag was
+  the one set when the context shut down. A host that changed its mind therefore paid the full IO
+  and CPU cost, and its borrowed bytes stayed held until the parse finished. Each load now has its
+  own cancel flag, which `destroy` sets. The parse checks it between stages: after the read, after
+  the buffers load, and before each image decode and mesh primitive. Destroying a context now
+  stops the parse in progress the same way, instead of letting it finish. The importer gains
+  `import_gltf_cancellable`, `import_slice_cancellable` and `ImportError::Cancelled` for this.
 
 ## [0.1.0-beta.1] - 2026-11-13
 

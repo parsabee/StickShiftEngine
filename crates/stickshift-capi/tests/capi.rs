@@ -991,6 +991,103 @@ fn destroying_a_context_releases_borrowed_model_bytes() {
     assert_eq!(releases.load(Ordering::SeqCst), 1);
 }
 
+/// A GLB that is slow to parse: one mesh of `PRIMITIVES` primitives, each a
+/// non-indexed soup of `TRIANGLES` triangles without normals (so every one is
+/// flat-shaded on import). Each primitive is its own import stage.
+fn slow_model_glb() -> Vec<u8> {
+    const PRIMITIVES: usize = 300;
+    const TRIANGLES: usize = 1_000;
+    let positions: Vec<u8> = (0..TRIANGLES * 3)
+        .flat_map(|v| {
+            let (t, corner) = ((v / 3) as f32, v % 3);
+            let p = [
+                t + (corner == 1) as u8 as f32,
+                (corner == 2) as u8 as f32,
+                0.0,
+            ];
+            p.into_iter().flat_map(f32::to_le_bytes)
+        })
+        .collect();
+    let primitive = r#"{"attributes": {"POSITION": 0}}"#;
+    let json = format!(
+        r#"{{"asset": {{"version": "2.0"}},
+"buffers": [{{"byteLength": {len}}}],
+"bufferViews": [{{"buffer": 0, "byteOffset": 0, "byteLength": {len}}}],
+"accessors": [{{"bufferView": 0, "componentType": 5126, "count": {count}, "type": "VEC3",
+  "min": [0,0,0], "max": [{TRIANGLES},1,0]}}],
+"meshes": [{{"primitives": [{primitives}]}}],
+"nodes": [{{"mesh": 0}}], "scenes": [{{"nodes": [0]}}], "scene": 0}}"#,
+        len = positions.len(),
+        count = TRIANGLES * 3,
+        primitives = vec![primitive; PRIMITIVES].join(", "),
+    );
+    let mut json = json.into_bytes();
+    json.resize(json.len().next_multiple_of(4), b' ');
+    let total = 12 + 8 + json.len() + 8 + positions.len();
+    let mut glb = Vec::with_capacity(total);
+    for word in [*b"glTF", 2u32.to_le_bytes(), (total as u32).to_le_bytes()] {
+        glb.extend_from_slice(&word);
+    }
+    glb.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    glb.extend_from_slice(b"JSON");
+    glb.extend_from_slice(&json);
+    glb.extend_from_slice(&(positions.len() as u32).to_le_bytes());
+    glb.extend_from_slice(b"BIN\0");
+    glb.extend_from_slice(&positions);
+    glb
+}
+
+#[test]
+fn destroying_a_pending_model_stops_its_parse() {
+    use std::time::Instant;
+    let doc = slow_model_glb();
+    let ctx = Ctx::null(8, 8);
+    let load = |releases: &AtomicUsize| {
+        let mut model = StickShiftModel::default();
+        // SAFETY: `doc` outlives the context's use of it: the release callback
+        // has run by the time each `flush` below returns.
+        let r = unsafe {
+            stickshift_model_load_memory(ctx.0, borrowed(&doc, releases), null(), &mut model)
+        };
+        assert_eq!(r, STICKSHIFT_OK);
+        model
+    };
+
+    // How long the whole load takes.
+    let releases = AtomicUsize::new(0);
+    let start = Instant::now();
+    let model = load(&releases);
+    ctx.flush();
+    let whole = start.elapsed();
+    assert_eq!(ctx.state(model.id), STICKSHIFT_RESOURCE_STATE_READY);
+    // SAFETY: a live context.
+    assert_eq!(
+        unsafe { stickshift_model_destroy(ctx.0, model) },
+        STICKSHIFT_OK
+    );
+    ctx.poll();
+
+    let releases = AtomicUsize::new(0);
+    let start = Instant::now();
+    let model = load(&releases);
+    // SAFETY: a live context.
+    assert_eq!(
+        unsafe { stickshift_model_destroy(ctx.0, model) },
+        STICKSHIFT_OK
+    );
+    ctx.flush();
+    let cancelled = start.elapsed();
+    assert_eq!(releases.load(Ordering::SeqCst), 1, "released once");
+    assert!(
+        ctx.poll().iter().all(|e| e.object != model.id),
+        "a destroyed model reports nothing"
+    );
+    assert!(
+        cancelled * 4 < whole,
+        "the cancelled load took {cancelled:?}, the whole load {whole:?}"
+    );
+}
+
 #[test]
 fn readbacks_complete_or_fail_with_their_frame() {
     let ctx = Ctx::null(4, 2);
