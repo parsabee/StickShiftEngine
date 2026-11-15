@@ -19,6 +19,11 @@ API**.
     for backends without a GPU;
   - `PerfSnapshot::avg_gpu_time`, which the `stickshift-core` loop fills each frame;
   - the C API's `stickshift_context_gpu_frame_time`.
+- **A renderer benchmark** (`cargo run --release -p stickshift-render --example bench`). It renders
+  fixed synthetic scenes offscreen at 1920 × 1080 with 4× MSAA: 100 to 5,000 draws, shadows on or
+  off, and a million-triangle scene. It reports CPU and GPU frame times (mean and 95th
+  percentile) and throughput. `docs/BENCHMARKS.md` records the results on an Apple M3 Max and what
+  they show.
 
 ### Fixed
 
