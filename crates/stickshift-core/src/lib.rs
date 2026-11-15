@@ -6,9 +6,10 @@
 //!
 //! `stickshift-core` owns the engine loop and defines the seam every game plugs into.
 //! It sits at the top of the engine stack: it depends on `stickshift-ecs`,
-//! `stickshift-render-api`, `stickshift-perf`, `stickshift-math`, and `winit`, but **never** on
-//! `metal` or the concrete renderer — all rendering goes through the
-//! `stickshift-render-api` traits (ARCHITECTURE §2). Game concepts (vehicles, tracks,
+//! `stickshift-scene`, `stickshift-camera`, `stickshift-audio`, `stickshift-render-api`,
+//! `stickshift-perf`, `stickshift-math`, and `winit`, but **never** on `metal` or the
+//! concrete renderer — all rendering goes through the `stickshift-render-api` traits
+//! (ARCHITECTURE §2). Game concepts (vehicles, tracks,
 //! tallies, …) never enter this crate; a test enforces that (see the crate's
 //! no-game-symbols guard).
 //!
@@ -20,10 +21,12 @@
 //!   ([`init`](Game::init), [`update`](Game::update), [`render`](Game::render))
 //!   with a fixed call order; all game-specific code lives behind it.
 //! - [`EngineCtx`] — the narrow handle passed into each hook. It exposes only
-//!   engine services (the ECS [`World`](stickshift_ecs::hecs::World), the render seam,
-//!   an [`InputState`], the [`Audio`] layer, and a
-//!   [`PerfSnapshot`](stickshift_perf::PerfSnapshot)) through short-lived accessors, so
-//!   a game can neither reach engine internals nor alias engine state.
+//!   engine services (the [`Scene`](stickshift_scene::Scene) and its ECS
+//!   [`World`](stickshift_ecs::hecs::World), the render seam, the
+//!   [`Camera`](stickshift_camera::Camera), an [`InputState`], the [`Audio`] layer,
+//!   the graphics settings, a [`PerfSnapshot`](stickshift_perf::PerfSnapshot), and a
+//!   request to exit) through short-lived accessors, so a game can neither reach
+//!   engine internals nor alias engine state.
 //!
 //! # Two drivers, one loop
 //!
@@ -35,9 +38,11 @@
 //!   layer, driven by a synthetic clock. This is what the `--smoke` oracle and
 //!   tests use; it runs on headless CI.
 //! - [`run`] — a `winit` window on macOS driving the identical hook sequence off
-//!   a real monotonic clock, with per-frame drawing behind an isolated function
-//!   that the Metal backend fills, and the audio layer bound to the
-//!   system's default output.
+//!   a real monotonic clock, with the audio layer bound to the system's default
+//!   output. [`run_with_backend`] takes a [`BackendFactory`] the game binary
+//!   provides, which builds the real render backend (the Metal renderer) once the
+//!   window exists; that is how this crate draws through Metal without
+//!   depending on it. [`run`] itself draws into a [`NullRenderer`](stickshift_render_api::NullRenderer).
 //!
 //! # Fixed timestep
 //!

@@ -72,7 +72,9 @@ pub struct BaseColorTexture {
 /// attributes retained for later use.
 ///
 /// The [`vertices`](Self::vertices) bytes are tightly interleaved on
-/// [`layout`](Self::layout) (`[pos,normal,color]`, 36-byte stride) and, together
+/// [`layout`](Self::layout) — `[pos,normal,color]` (36-byte stride), or
+/// `[pos,normal,uv]` (32-byte stride) for a mesh with a base-colour texture
+/// (see [`is_textured`](Self::is_textured)) — and, together
 /// with [`indices`](Self::indices), are ready to hand to
 /// [`MeshData`](stickshift_render_api::MeshData). The per-vertex
 /// [`uvs`](Self::uvs) are retained (not in the packed bytes) so the
@@ -80,12 +82,14 @@ pub struct BaseColorTexture {
 /// source file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MeshAsset {
-    /// Tightly-packed `[pos,normal,color]` vertex bytes for the render seam.
+    /// Tightly-packed vertex bytes for the render seam, on
+    /// [`layout`](Self::layout).
     pub vertices: Vec<u8>,
     /// 32-bit triangle indices into the packed vertex array.
     pub indices: Vec<u32>,
-    /// The layout describing [`vertices`](Self::vertices) — the canonical
-    /// `[pos,normal,color]` render layout.
+    /// The layout describing [`vertices`](Self::vertices): the canonical
+    /// `[pos,normal,color]` render layout, or the `[pos,normal,uv]` textured
+    /// layout when the mesh has a base-colour texture.
     pub layout: VertexLayout,
     /// Per-vertex model-space positions, one per packed vertex (parsed source).
     pub positions: Vec<[f32; 3]>,

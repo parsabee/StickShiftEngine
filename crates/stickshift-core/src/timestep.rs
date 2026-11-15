@@ -138,6 +138,14 @@ impl Default for Accumulator {
 mod tests {
     use super::*;
 
+    /// The engine's fixed step is the physics step, which `stickshift-physics`
+    /// defines separately to avoid a dependency cycle
+    /// (`Scene::fixed_dt` is `stickshift_physics::FIXED_DT`).
+    #[test]
+    fn fixed_dt_matches_the_physics_step() {
+        assert_eq!(FIXED_DT, stickshift_scene::Scene::fixed_dt());
+    }
+
     /// One exact fixed step of real time yields exactly one update, no leftover.
     #[test]
     fn one_fixed_dt_is_one_step() {

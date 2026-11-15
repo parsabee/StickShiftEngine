@@ -15,7 +15,8 @@
 //! - Dynamic and static rigid bodies
 //! - Box and sphere colliders
 //! - Gravity simulation (default: -9.81 m/s² on Y axis)
-//! - Transform synchronization with the ECS
+//! - Body transform reads (syncing them into the ECS is `stickshift-scene`'s
+//!   `Scene::step_physics`; this crate knows nothing of the ECS)
 //! - Velocity control
 //! - **Body/collider removal** with stale-handle safety
 //! - **Floating-origin shift** of the whole world ([`PhysicsWorld::shift_origin`])
@@ -55,8 +56,9 @@
 //! engine-wide single source of truth per ARCHITECTURE §4). It is redefined
 //! locally rather than imported to avoid a dependency cycle: `stickshift-core`
 //! depends on the ECS/scene layers that will depend on `stickshift-physics`, so
-//! `stickshift-physics` must not depend on `stickshift-core`. A test asserts the two
-//! constants match once both crates are in the same build.
+//! `stickshift-physics` must not depend on `stickshift-core`. A test in
+//! `stickshift-core` (`timestep::tests::fixed_dt_matches_the_physics_step`) asserts
+//! the two are equal.
 //!
 //! # Example
 //!
@@ -112,7 +114,8 @@ pub use rapier3d::prelude::ColliderHandle;
 /// `stickshift_core::FIXED_DT`, the engine-wide fixed-update rate (ARCHITECTURE §4).
 /// It is defined here — rather than imported from `stickshift-core` — to avoid a
 /// dependency cycle (`stickshift-core` sits above the physics/scene layers). The
-/// equality is asserted by a test in any build that includes both crates.
+/// equality is asserted by `stickshift-core`'s
+/// `timestep::tests::fixed_dt_matches_the_physics_step`.
 pub const FIXED_DT: f32 = 1.0 / 60.0;
 
 /// A physics simulation world managing rigid bodies and colliders.

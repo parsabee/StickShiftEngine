@@ -28,7 +28,7 @@ The engine owns the loop. A game is any type implementing
 | `update(&mut EngineCtx, dt)` | 0..N times per frame, `dt` always `FIXED_DT` | [game.rs:622](../games/playable-demo/src/game.rs#L622) |
 | `render(&mut EngineCtx)` | exactly once per frame, after that frame's updates | [game.rs:743](../games/playable-demo/src/game.rs#L743) → [render.rs:38](../games/playable-demo/src/render.rs#L38) |
 
-[`EngineCtx`](../crates/stickshift-core/src/context.rs#L87) is the only channel into the engine. It
+[`EngineCtx`](../crates/stickshift-core/src/context.rs#L89) is the only channel into the engine. It
 is built fresh by the driver for each hook call and dropped immediately after, so a game cannot
 stash it across frames. Its whole surface is: the [`Scene`](../crates/stickshift-scene/src/lib.rs#L143)
 (`scene`/`scene_mut`), the ECS world (`world`/`world_mut`, delegating to the scene), the render
@@ -247,7 +247,7 @@ distance field that [`load_font`](../games/playable-demo/src/hud.rs#L101) parses
 ### Recording a frame
 
 The seam is two traits in `stickshift-render-api`, bundled for the game as one
-`&mut dyn Renderer` ([context.rs:46](../crates/stickshift-core/src/context.rs#L46)):
+`&mut dyn Renderer` ([context.rs:48](../crates/stickshift-core/src/context.rs#L48)):
 
 - [`RenderDevice`](../crates/stickshift-render-api/src/device.rs#L98) — load-time resource ownership:
   `create_mesh` / `create_texture` / `create_pipeline` (and their `destroy_*`), plus
@@ -457,9 +457,9 @@ Five crates carry a self-scanning **guard test** that embeds the crate's own sou
 
 | Guard test | Crate |
 |---|---|
-| `boundary_tests::no_game_specific_symbols` ([lib.rs:104](../crates/stickshift-core/src/lib.rs#L104)) | `stickshift-core` |
+| `boundary_tests::no_game_specific_symbols` ([lib.rs:122](../crates/stickshift-core/src/lib.rs#L122)) | `stickshift-core` |
 | `tests::no_game_specific_symbols` ([lib.rs:1102](../crates/stickshift-scene/src/lib.rs#L1102)) | `stickshift-scene` |
-| `guard_tests::no_game_specific_symbols` ([lib.rs:72](../crates/stickshift-assets/src/lib.rs#L72)) | `stickshift-assets` |
+| `guard_tests::no_game_specific_symbols` ([lib.rs:74](../crates/stickshift-assets/src/lib.rs#L74)) | `stickshift-assets` |
 | `guard_tests::no_game_specific_symbols` ([lib.rs](../crates/stickshift-audio/src/lib.rs)) | `stickshift-audio` |
 | `tests::test_no_game_specific_symbols` ([lib.rs:723](../crates/stickshift-ecs/src/lib.rs#L723)) | `stickshift-ecs` |
 

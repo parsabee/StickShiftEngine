@@ -58,7 +58,7 @@ once; `update` runs 0..N times per frame with `dt` always equal to
 frame after that frame's updates. Advance state in `update`, record draws in `render`, and don't
 cross the two — that split is what makes the simulation framerate-independent.
 
-Everything the engine offers arrives through the [`EngineCtx`](../crates/stickshift-core/src/context.rs#L87)
+Everything the engine offers arrives through the [`EngineCtx`](../crates/stickshift-core/src/context.rs#L89)
 argument: the `Scene` (ECS world + physics + streaming), the ECS world, the render seam, the
 `Camera`, an input snapshot, frame timing. There is nothing else to reach for, and no way to reach
 past it.
