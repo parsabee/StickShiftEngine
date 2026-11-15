@@ -234,8 +234,6 @@ if (stickshift_frame_acquire(ctx, &frame) == STICKSHIFT_OK) {  /* never waits */
 It is also the **reference example** for building a game on this engine: it touches nothing but
 the engine's public API.
 
-<img src="docs/images/demo.png" alt="A still from the playable demo: a yellow sports car weaving through traffic on an elevated three-lane freeway between city buildings, with real-time shadows and horizon fog" width="880">
-
 ```sh
 cargo run -p playable-demo             # windowed, Metal backend (macOS)
 cargo run -p playable-demo -- --smoke  # headless oracle: 120 frames, prints "smoke: 120 frames OK", exits 0
