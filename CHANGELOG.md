@@ -1,7 +1,6 @@
 # Changelog
 
-All notable changes to Stick Shift Engine (formerly KamanEngine) are documented in this file.
-Entries before the rename keep the names they shipped with.
+All notable changes to Stick Shift Engine are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). While the version is below
@@ -201,70 +200,71 @@ API**.
 
 ## [0.1.0-beta.2] - 2026-11-14
 
-The project is renamed from KamanEngine to **Stick Shift Engine**. Every public name changes
-(crates, the C API, environment variables, Homebrew, the repository and the docs site); there are
-no functional changes. The known limitations of 0.1.0-beta.1 still apply.
+The project takes the name **Stick Shift Engine**. Every public name changes (crates, the C API,
+environment variables, Homebrew, the repository and the docs site); there are no functional
+changes. The known limitations of 0.1.0-beta.1 still apply.
 
 ### Changed
 
-- **The project is renamed from KamanEngine to Stick Shift Engine (breaking).** Every public name
-  moves; nothing else changes:
-  - **Crates:** `kaman-*` → `stickshift-*` (directories `crates/stickshift-*`; Rust paths
-    `stickshift_core`, `stickshift_render`, …). Types such as `KamanMenuTarget` follow.
-  - **C API:** `kaman_*` functions → `stickshift_*`, `Kaman*` types → `StickShift*`, `KAMAN_*`
-    constants → `STICKSHIFT_*`. The library is `libstickshift` (`@rpath/libstickshift.dylib`), the
-    header `stickshift.h`, the Swift module `StickShift` and the pkg-config file `stickshift.pc`.
-    `STICKSHIFT_API_VERSION` is **3**, so a context refuses a header from before the rename.
-  - **Environment variables:** `KAMAN_*` → `STICKSHIFT_*` (for example `STICKSHIFT_DEMO_ASSETS`,
+- **The project is renamed to Stick Shift Engine (breaking).** Every public name moves; nothing
+  else changes:
+  - **Crates:** `stickshift-*` (directories `crates/stickshift-*`; Rust paths `stickshift_core`,
+    `stickshift_render`, …).
+  - **C API:** `stickshift_*` functions, `StickShift*` types and `STICKSHIFT_*` constants. The
+    library is `libstickshift` (`@rpath/libstickshift.dylib`), the header `stickshift.h`, the Swift
+    module `StickShift` and the pkg-config file `stickshift.pc`. `STICKSHIFT_API_VERSION` is **3**,
+    so a context refuses a header from before the rename.
+  - **Environment variables:** `STICKSHIFT_*` (for example `STICKSHIFT_DEMO_ASSETS`,
     `STICKSHIFT_REQUIRE_GPU`).
   - **macOS settings:** the Graphics menu stores its choices under `StickShiftEngine.graphics.*`
     in `NSUserDefaults`, so saved Graphics settings reset once.
-  - **Homebrew:** the formula `kaman-engine` → `stickshift-engine`, the tap
-    `parsabee/homebrew-kaman` → `parsabee/homebrew-stickshift`, the demo command `kaman-demo` →
-    `stickshift-demo`, and the release tarball `stickshift-engine-<version>-aarch64-apple-darwin.tar.gz`.
-    The tap records the rename in `formula_renames.json`, so `brew upgrade` moves existing installs.
+  - **Homebrew:** the formula `stickshift-engine` in the tap `parsabee/homebrew-stickshift`, the
+    demo command `stickshift-demo`, and the release tarball
+    `stickshift-engine-<version>-aarch64-apple-darwin.tar.gz`. The tap maps the previous formula to
+    the new one, so `brew upgrade` moves existing installs.
   - **Repository and docs:** `github.com/parsabee/StickShiftEngine`, API docs at
     `parsabee.github.io/StickShiftEngine`.
-  - **CI:** a new check (`scripts/check-renamed.sh`) fails if the old name returns outside this
-    changelog and the documented migration notes.
+  - **CI:** a new check (`scripts/check-renamed.sh`) fails if the previous name returns anywhere in
+    the repository.
 
 ## [0.1.0-beta.1] - 2026-11-13
 
-The first beta. KamanEngine is now a rasterization-only Metal graphics library for Apple Silicon
-with a **C API** that is asynchronous in shape: calls return at once with a handle or a result,
-resources become ready later, and completions arrive as events. The beta also decodes colour
+The first beta. Stick Shift Engine is now a rasterization-only Metal graphics library for Apple
+Silicon with a **C API** that is asynchronous in shape: calls return at once with a handle or a
+result, resources become ready later, and completions arrive as events. The beta also decodes colour
 textures from sRGB, fixes normals under non-uniform scale and for meshes without them, makes the
-docs match the code, and fixes the bugs and test gaps a full audit found. The C API and the Rust
-API both have breaking changes; see Changed and Removed.
+docs match the code, and fixes the bugs and test gaps a full audit found. The C API and the Rust API
+both have breaking changes; see Changed and Removed.
 
 ### Added
 
-- **The C API.** A new `kaman-capi` crate builds `libkaman.a` and `libkaman.dylib` with a
-  cbindgen-generated `kaman.h` and a Swift `module.modulemap`; the contract is
+- **The C API.** A new `stickshift-capi` crate builds `libstickshift.a` and `libstickshift.dylib`
+  with a cbindgen-generated `stickshift.h` and a Swift `module.modulemap`; the contract is
   [docs/C_API.md](docs/C_API.md). The API is **asynchronous in shape**:
   - calls return at once with a handle or a result code;
   - resources go `PENDING` → `READY` / `FAILED`;
-  - completions arrive as events, through `kaman_poll_events` or per-call callbacks that run on
+  - completions arrive as events, through `stickshift_poll_events` or per-call callbacks that run on
     the host's thread;
-  - glTF models are parsed on worker threads, and `kaman_frame_acquire` never waits.
+  - glTF models are parsed on worker threads, and `stickshift_frame_acquire` never waits.
 
   Under the hood:
   - Handles are typed 64-bit ids with 32-bit generations and are never reissued.
-  - A context is used by one thread at a time; an overlapping call returns `KAMAN_ERROR_BUSY`.
+  - A context is used by one thread at a time; an overlapping call returns `STICKSHIFT_ERROR_BUSY`.
   - No panic crosses the boundary.
   - The library is graphics-only: no windowing, audio, ECS or physics crate links into it, and
     CI checks that.
-- **A null backend** for the C API (`KAMAN_BACKEND_NULL`), so the API and host-side tests run
+- **A null backend** for the C API (`STICKSHIFT_BACKEND_NULL`), so the API and host-side tests run
   without a GPU. It is the only backend off Apple platforms.
-- **C programs in CI.** `crates/kaman-capi/tests/c/smoke.c` and `examples/c/offscreen.c` are
+- **C programs in CI.** `crates/stickshift-capi/tests/c/smoke.c` and `examples/c/offscreen.c` are
   compiled with `-std=c11 -pedantic -Werror` against the header and run on the macOS runner's
   Metal device (`scripts/test-c-api.sh`). CI also fails if the committed header no longer
   matches the Rust sources (`scripts/gen-header.sh --check`).
 - **The release ships the C library.** The tarball and the Homebrew formula now install
-  `lib/libkaman.a`, `lib/libkaman.dylib` (install name `@rpath/libkaman.dylib`),
-  `include/kaman/kaman.h`, `include/kaman/module.modulemap` and `lib/pkgconfig/kaman.pc`.
-  Packaging builds and runs the C programs against the unpacked tarball.
-- **`kaman-render`: fallible and non-blocking entry points**, alongside the existing ones:
+  `lib/libstickshift.a`, `lib/libstickshift.dylib` (install name `@rpath/libstickshift.dylib`),
+  `include/stickshift/stickshift.h`, `include/stickshift/module.modulemap` and
+  `lib/pkgconfig/stickshift.pc`. Packaging builds and runs the C programs against the unpacked
+  tarball.
+- **`stickshift-render`: fallible and non-blocking entry points**, alongside the existing ones:
   - `try_new`, `try_new_offscreen` and `try_from_layer` return a `RenderError` instead of
     panicking; `try_from_layer` takes a `CAMetalLayer` the host owns.
   - `try_create_mesh` and `try_create_texture` validate their input strictly.
@@ -272,37 +272,37 @@ API both have breaking changes; see Changed and Removed.
   - `submit_async` never waits.
   - `request_readback` returns a `Readback` with a frame's own pixels.
   - `discard_frame`, frame completion counts, and `draw_mesh_matrix`.
-- **`PipelineKind`** (`VertexColor`, `Textured`) in `kaman-render-api`: the single source of truth
-  for the two built-in pipelines and their vertex layouts.
+- **`PipelineKind`** (`VertexColor`, `Textured`) in `stickshift-render-api`: the single source of
+  truth for the two built-in pipelines and their vertex layouts.
 
 ### Changed
 
-- **Imported nodes keep their exact world matrix (breaking, Rust).** `kaman_assets::Node`
+- **Imported nodes keep their exact world matrix (breaking, Rust).** `stickshift_assets::Node`
   replaces `transform: Transform` with `world: Mat4`, and `FrameRecorder` gains
   `draw_mesh_matrix(mesh, Mat4, material)` (moved up from the Metal backend) so a sheared matrix
   can be drawn through the seam. `NullRenderer`'s `RecordedDraw` records `model: Mat4` instead
   of `transform`. `spawn_scene` bakes a sheared node's matrix into the entity's vertices, since
   an ECS `TransformComponent` cannot hold shear. The per-draw `Uniforms` block grows from 128 to
   192 bytes (a normal matrix); it still fits one 256-byte ring slot.
-- **Textures carry a colour space (breaking, Rust and C).** `TextureData` gains
-  `color_space: ColorSpace` (`Srgb` or `Linear`), and the C API's `KamanTextureDesc` gains
-  `color_space` (`KAMAN_COLOR_SPACE_SRGB` = 0, `KAMAN_COLOR_SPACE_LINEAR`), so
-  `KAMAN_API_VERSION` is now 2. sRGB textures upload as `RGBA8Unorm_sRGB` and are decoded to
-  linear when sampled; linear ones are sampled as stored. glTF base-colour images (Rust
-  `kaman-assets` users and C API models alike) are sRGB. SDF font atlases must be linear: the C
-  API refuses an sRGB atlas or `KAMAN_FILL_SDF` texture with `KAMAN_ERROR_INVALID_ARGUMENT`.
-  HUD quads show the colours a texture stores in either colour space.
+- **Textures carry a colour space (breaking, Rust and C).** `TextureData` gains `color_space:
+  ColorSpace` (`Srgb` or `Linear`), and the C API's `StickShiftTextureDesc` gains `color_space`
+  (`STICKSHIFT_COLOR_SPACE_SRGB` = 0, `STICKSHIFT_COLOR_SPACE_LINEAR`), so `STICKSHIFT_API_VERSION`
+  is now 2. sRGB textures upload as `RGBA8Unorm_sRGB` and are decoded to linear when sampled; linear
+  ones are sampled as stored. glTF base-colour images (Rust `stickshift-assets` users and C API
+  models alike) are sRGB. SDF font atlases must be linear: the C API refuses an sRGB atlas or
+  `STICKSHIFT_FILL_SDF` texture with `STICKSHIFT_ERROR_INVALID_ARGUMENT`. HUD quads show the colours
+  a texture stores in either colour space.
 - **CI fails on unformatted code.** A new `cargo fmt --all -- --check` step runs first in the
   macOS CI job, and the whole workspace was reformatted with rustfmt's defaults (a
   formatting-only change). Run `cargo fmt --all` before pushing.
 - **Pipelines and materials say what they do.** `PipelineDescriptor` is now
   `{ kind: PipelineKind }`; the shader-name strings it used to carry were ignored by the backend.
   `MaterialParams` keeps only `base_color`.
-- **`kaman-render` no longer waits on the CPU for texture mipmaps.** The mip blit runs on the
+- **`stickshift-render` no longer waits on the CPU for texture mipmaps.** The mip blit runs on the
   same queue as every later frame. Frame opening, submission and the mip blit now run inside
   autorelease pools.
-- **`kaman-assets`' ECS spawn helper is behind a default `ecs` feature.** `kaman-render` drops
-  its unused `winit` dependency.
+- **`stickshift-assets`' ECS spawn helper is behind a default `ecs` feature.** `stickshift-render`
+  drops its unused `winit` dependency.
 - **A new roadmap.** `docs/ROADMAP.md` now lists what v0.1 (beta.1, then 0.1.0) and v0.2 contain,
   replacing the phase/OKR plan. The native scene editor is no longer planned for this repository.
 - **The docs match the code.** Docs and doc comments that described things the code does not do
@@ -311,7 +311,7 @@ API both have breaking changes; see Changed and Removed.
   - how `MaterialParams` is used: only `base_color`, and only by the textured pipeline;
   - that bloom, ASTC transcoding and an iOS path do not exist yet;
   - that CI's macOS runner runs the GPU pixel-hash tests, rather than skipping them;
-  - workspace-tree entries (`shaders/`, `platform/`, Ray/AABB/Frustum in `kaman-math`) that do
+  - workspace-tree entries (`shaders/`, `platform/`, Ray/AABB/Frustum in `stickshift-math`) that do
     not exist;
   - that there is no golden physics-trajectory test or coverage tooling yet.
 - **`NullRenderer` accepts exactly the calls the Metal backend acts on.** A draw or HUD quad
@@ -320,28 +320,28 @@ API both have breaking changes; see Changed and Removed.
   each is listed in the new `protocol_violations()`. `live_*_count` counts live handles, so a
   double destroy no longer hides a leak.
 - **GPU tests no longer pass silently without a GPU.** A skipped test prints a visible `SKIPPED`
-  line, and with `KAMAN_REQUIRE_GPU=1` (set in CI) a missing Metal device fails it. `BLESS`
+  line, and with `STICKSHIFT_REQUIRE_GPU=1` (set in CI) a missing Metal device fails it. `BLESS`
   re-records the golden images only when set to `1` or `true`.
 - **`ImportError` is `#[non_exhaustive]`** and gains `UnsupportedPrimitiveMode` and
   `InvalidPrimitive`.
-- **`$KAMAN_DEMO_ASSETS` is strict.** When set it is the only place the demo looks, and one that
-  holds no assets is an error rather than a silent fall-through. Every candidate must hold
+- **`$STICKSHIFT_DEMO_ASSETS` is strict.** When set it is the only place the demo looks, and one
+  that holds no assets is an error rather than a silent fall-through. Every candidate must hold
   `road.gltf`, so an unrelated `assets/` beside the binary is skipped.
-- **`kaman-core` builds warning-free off macOS.**
+- **`stickshift-core` builds warning-free off macOS.**
 
 ### Removed
 
 - **The in-repo ticket system.** `tickets/`, `scripts/check-tickets.py` and the CI ticket-format
   lint are gone, and code comments no longer cite ticket IDs, phases or key results. Open work is
   tracked in GitHub issues, starting with
-  [#2 iOS support (v0.2)](https://github.com/parsabee/KamanEngine/issues/2).
+  [#2 iOS support (v0.2)](https://github.com/parsabee/StickShiftEngine/issues/2).
 
 - **`MaterialParams::metallic` and `roughness`**, and `PipelineDescriptor`'s
   `vertex_shader` / `fragment_shader` / `vertex_layout` fields. No pipeline read any of them.
 
-- **The `raytracer` feature.** KamanEngine is rasterization-only. The off-by-default
-  `kaman-render` feature, its `raytracer` module (a CPU `trace_ray` and GPU triangle layouts that
-  nothing called) and `shaders/raytracing.metal` (which no build ever compiled or loaded) are
+- **The `raytracer` feature.** Stick Shift Engine is rasterization-only. The off-by-default
+  `stickshift-render` feature, its `raytracer` module (a CPU `trace_ray` and GPU triangle layouts
+  that nothing called) and `shaders/raytracing.metal` (which no build ever compiled or loaded) are
   gone, along with the CI step that built them. Default builds are unchanged.
 
 ### Fixed
@@ -389,7 +389,7 @@ API both have breaking changes; see Changed and Removed.
   VEC2 `POSITION` accessor, a stride shorter than one element, an accessor or image past the end
   of its buffer, an index past the last vertex. All are now `ImportError::InvalidPrimitive`.
 - **A textured `.gltf` with `data:` images could not be loaded from memory** (`import_slice`,
-  `kaman_model_load_memory`). Embedded images now decode; external file references are still
+  `stickshift_model_load_memory`). Embedded images now decode; external file references are still
   refused.
 - **One bad mesh index shifted every later triangle.** The upload skipped just that index; it
   now drops the whole triangle it belongs to.
@@ -416,15 +416,15 @@ API both have breaking changes; see Changed and Removed.
 ### Known limitations
 
 - **macOS on Apple Silicon only.** iOS is planned for v0.2
-  ([#2](https://github.com/parsabee/KamanEngine/issues/2)).
+  ([#2](https://github.com/parsabee/StickShiftEngine/issues/2)).
 - **Shaders still compile at runtime.** Precompiled, embedded `.metallib` shaders come in 0.1.0;
   until then the `precompiled-shaders` feature is off by default.
-- **Some C API calls still do work on the caller's thread.** `kaman_frame_submit` encodes the
+- **Some C API calls still do work on the caller's thread.** `stickshift_frame_submit` encodes the
   frame there and can briefly wait for a drawable; mesh, texture and font creation upload before
-  returning; context creation, destruction and `kaman_context_flush` wait. Later releases move
+  returning; context creation, destruction and `stickshift_context_flush` wait. Later releases move
   this onto engine threads without API changes. See "What may wait in the beta" in
   [docs/C_API.md](docs/C_API.md).
-- **No ABI stability before 1.0.** `KAMAN_API_VERSION` is 2; a context refuses a header from a
+- **No ABI stability before 1.0.** `STICKSHIFT_API_VERSION` is 2; a context refuses a header from a
   different API version.
 - **Performance has not been measured yet.** GPU timing and benchmarks come in 0.1.0. Known costs
   today: no frustum culling or instancing, and indexed meshes are expanded to one vertex per index
@@ -436,22 +436,22 @@ API both have breaking changes; see Changed and Removed.
 
 ### Added
 
-- **Homebrew install (Apple Silicon).** `brew install parsabee/kaman/kaman-engine` installs a
-  prebuilt `kaman-demo` (the playable demo), its assets, and the engine source under
-  `share/kaman-engine/src` for use as Cargo path dependencies. The formula
-  (`packaging/homebrew/kaman-engine.rb`) requires arm64 macOS and refuses Intel Macs.
+- **Homebrew install (Apple Silicon).** `brew install parsabee/stickshift/stickshift-engine`
+  installs a prebuilt `stickshift-demo` (the playable demo), its assets, and the engine source under
+  `share/stickshift-engine/src` for use as Cargo path dependencies. The formula
+  (`packaging/homebrew/stickshift-engine.rb`) requires arm64 macOS and refuses Intel Macs.
 - **Release workflow.** `.github/workflows/release.yml` runs on every `v*` tag (or by hand for an
   existing tag): it builds `playable-demo` in release mode with the pinned toolchain, checks the
   binary is arm64 and passes `--smoke`, packages
-  `kaman-engine-<version>-aarch64-apple-darwin.tar.gz` plus a `.sha256` with
+  `stickshift-engine-<version>-aarch64-apple-darwin.tar.gz` plus a `.sha256` with
   `scripts/package-release.sh`, and attaches both to the GitHub release.
-- **`kaman-demo --print-assets-dir`** prints where the demo found its assets.
+- **`stickshift-demo --print-assets-dir`** prints where the demo found its assets.
 
 ### Changed
 
 - **The demo finds its assets at runtime** instead of through compile-time `CARGO_MANIFEST_DIR`
   paths, so an installed binary works without a source checkout. It tries, in order,
-  `$KAMAN_DEMO_ASSETS`, `<exe dir>/../share/kaman-engine/assets` (Homebrew and the release
+  `$STICKSHIFT_DEMO_ASSETS`, `<exe dir>/../share/stickshift-engine/assets` (Homebrew and the release
   tarball), `<exe dir>/assets`, then the crate's own `assets/` (so `cargo run` is unchanged). If
   none exists it prints what it tried and exits 1.
 
@@ -463,27 +463,27 @@ workspace version and are not published to crates.io.
 
 ### Added
 
-- **Workspace and CI (Phase 0).** A Cargo workspace of focused `kaman-*` crates plus
+- **Workspace and CI (Phase 0).** A Cargo workspace of focused `stickshift-*` crates plus
   `games/playable-demo`, built with Rust 1.91 (pinned in `rust-toolchain.toml`; MSRV enforced
   through `rust-version`). A macOS CI oracle builds, tests, lints (clippy `-D warnings`), checks
   rustdoc, lints the ticket format and runs the headless smoke oracle. `scripts/preflight.sh`
   checks the required toolchain. The engine was migrated from an earlier prototype, with its
   identifiers removed from shipped code.
 - **Engine/game boundary and loop (Phases 1-2).** The `Game` trait and `EngineCtx` in
-  `kaman-core`; a fixed-timestep loop that drives both the windowed (winit) app and a headless
+  `stickshift-core`; a fixed-timestep loop that drives both the windowed (winit) app and a headless
   driver, with `Game::update` on a fixed cadence.
-- **Render seam and raw-Metal renderer (Phase 1).** `kaman-render-api` defines the
+- **Render seam and raw-Metal renderer (Phase 1).** `stickshift-render-api` defines the
   backend-agnostic `RenderDevice` / `FrameRecorder` traits, opaque handles and a `NullRenderer`
-  test double; it never depends on `metal`, and CI enforces that. `kaman-render` implements the
+  test double; it never depends on `metal`, and CI enforces that. `stickshift-render` implements the
   seam in raw Metal, with persistent mesh buffers behind a generational handle registry, a
   uniform ring (no per-frame allocations), triple-buffered frames in flight, offscreen rendering
   with pixel read-back, and an off-by-default `raytracer` feature.
-- **ECS, physics and streaming (Phase 2).** `kaman-ecs` (a `hecs` wrapper and shared
-  components), `kaman-physics` (a `rapier3d` wrapper with a body/collider removal API),
-  `kaman-scene` (world streaming with spawn-ahead / despawn-behind and a floating-origin rebase)
-  and `kaman-camera` (perspective camera and chase controller).
+- **ECS, physics and streaming (Phase 2).** `stickshift-ecs` (a `hecs` wrapper and shared
+  components), `stickshift-physics` (a `rapier3d` wrapper with a body/collider removal API),
+  `stickshift-scene` (world streaming with spawn-ahead / despawn-behind and a floating-origin
+  rebase) and `stickshift-camera` (perspective camera and chase controller).
 - **Look and content (Phase 4).**
-  - Static glTF (`.gltf` / `.glb`) import and an asset cache in `kaman-assets`, with a flexible
+  - Static glTF (`.gltf` / `.glb`) import and an asset cache in `stickshift-assets`, with a flexible
     vertex layout.
   - Base-color textures with mipmaps (RGBA8; ASTC is behind an off-by-default feature).
   - A modern look stack: MSAA, a gradient sky with a drivable sun disc, specular lighting,
@@ -491,9 +491,9 @@ workspace version and are not published to crates.io.
   - Real fitted shadow maps with PCF filtering (4096² at the High setting). The shadow maps
     follow the draw distance.
   - A 2D HUD overlay seam with SDF text.
-  - Audio in `kaman-audio` over `kira`: load-once sounds, one-shots, looping music and master
+  - Audio in `stickshift-audio` over `kira`: load-once sounds, one-shots, looping music and master
     volume.
-  - `kaman-perf` frame-timing instrumentation with an injectable clock.
+  - `stickshift-perf` frame-timing instrumentation with an injectable clock.
 - **The playable demo (Phase 7).** `games/playable-demo`, an endless three-lane freeway runner
   and the reference example for building a game on the engine's public API. It has discrete lane
   control, title, game-over and replay states, and a score. Content: CC0 Quaternius car models,
@@ -515,7 +515,7 @@ workspace version and are not published to crates.io.
     `Game::graphics_settings_changed` hook.
   - The render seam gains `RenderSettings`, `set_render_settings` and `resize_surface`.
 - **Documentation.** Every engine crate compiles under `#![deny(missing_docs)]`, and the rustdoc
-  API reference is published to <https://parsabee.github.io/KamanEngine/>. Guides:
+  API reference is published to <https://parsabee.github.io/StickShiftEngine/>. Guides:
   `docs/GETTING_STARTED.md` (build your own game), `docs/PLAYABLE_DEMO.md` (the demo as a
   reference example), `docs/DESIGN.md` (Mermaid diagrams), `docs/ARCHITECTURE.md`,
   `docs/ROADMAP.md` and `docs/INTEGRATION.md`.
@@ -534,7 +534,7 @@ workspace version and are not published to crates.io.
 - **Source release only.** No prebuilt binaries. The demo resolves its assets through
   compile-time `CARGO_MANIFEST_DIR` paths, so it must be built and run from a clone of the
   repository (`cargo run -p playable-demo`).
-- **Phases 5 and 6 have not started.** Phase 5 was re-scoped from the KamanScript scripting
+- **Phases 5 and 6 have not started.** Phase 5 was re-scoped from the planned scripting
   layer to a native macOS scene editor for Apple Silicon. Phase 6 is the App Store release.
   Physics uses `rapier3d` for now; a custom arcade-physics layer is planned.
 - **The Graphics menu is macOS-only.** It is installed only in windowed runs. Headless runs,

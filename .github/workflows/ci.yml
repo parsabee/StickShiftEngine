@@ -67,8 +67,7 @@ jobs:
       - name: No prototype identifiers in shipped code
         run: "! grep -rniI projectrigor crates games"
 
-      # Rename guard. The project's pre-rename name may stay only in the few places the script
-      # lists (the changelog's history and the documented migration notes).
+      # Rename guard: the project's previous name must not appear anywhere in the repository.
       - name: No pre-rename names
         run: ./scripts/check-renamed.sh
 
