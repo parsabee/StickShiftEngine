@@ -95,6 +95,13 @@ API**.
   `StickShiftStats.draws_skipped` also mixed units: a refused model draw counted 1, but a model
   dropped at submit counted once per part, and text once per glyph. It now counts draw calls
   everywhere, as the header documents.
+- **The C example no longer writes uninitialised memory when its read-back fails**
+  ([#31](https://github.com/parsabee/StickShiftEngine/issues/31)). `examples/c/offscreen.c` ignored
+  the result of `stickshift_frame_read_pixels_async` and never checked the read-back's event, so a
+  rejected or failed read-back still wrote the uninitialised buffer to the `.ppm` and printed
+  success. It now checks the call's result, waits for the read-back's completion and writes the
+  image only on `READBACK_COMPLETE`, reporting the event's message otherwise. The buffer is
+  `calloc`ed, so a mistake shows up as black instead of noise.
 
 ## [0.1.0-beta.2] - 2026-11-14
 
