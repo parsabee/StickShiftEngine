@@ -1484,14 +1484,15 @@ fn the_c_api_renders_what_the_rust_api_renders() {
         .any(|e| e.kind == STICKSHIFT_EVENT_READBACK_COMPLETE));
     assert_eq!(pixels, expected, "the C API drew different pixels");
     assert_ne!(pixels, vec![0u8; pixels.len()], "the frame was drawn");
-    // The completed frame's GPU time is real work, well under a second.
-    let mut gpu_ns = 0;
+    // The completed frame's GPU time is known, and well under a second. (It
+    // can read zero on a virtualized GPU's coarse timestamps.)
+    let mut gpu_ns = u64::MAX;
     // SAFETY: a live context.
     assert_eq!(
         unsafe { stickshift_context_gpu_frame_time(ctx.0, number, &mut gpu_ns) },
         STICKSHIFT_OK
     );
-    assert!((1..1_000_000_000).contains(&gpu_ns), "{gpu_ns} ns");
+    assert!(gpu_ns < 1_000_000_000, "{gpu_ns} ns");
 
     trait IntoC {
         fn into_c(self) -> StickShiftMat4;
