@@ -40,8 +40,8 @@ API, so that any host app (C, C++, Swift) can drive it; see the [roadmap](docs/R
 reference title is the [playable demo](#the-playable-demo), an endless car runner on a freeway.
 
 > [!NOTE]
-> Stick Shift Engine is **pre-release and under active development**. The current release is
-> [`v0.1.0-beta.2`](https://github.com/parsabee/StickShiftEngine/releases/tag/v0.1.0-beta.2), a beta:
+> Stick Shift Engine is **under active development**. The current release is
+> [`v0.1.0`](https://github.com/parsabee/StickShiftEngine/releases/tag/v0.1.0), the first release:
 > each release ships a prebuilt Apple Silicon build (the C library, its header and the playable
 > demo), installable with [Homebrew](#install-with-homebrew). The public API may change between
 > releases (see [CHANGELOG.md](CHANGELOG.md)). macOS is the supported platform today; iOS support
@@ -275,8 +275,8 @@ and rustdoc. The prototype's provenance is recorded in [docs/ARCHITECTURE.md](do
 |---|---|
 | `v0.1.0-alpha.2` | macOS on Apple Silicon: the engine crates, the playable demo, and a Homebrew install |
 | `v0.1.0-beta.1` | The async-shaped C API (`libstickshift`, `stickshift.h`, a Swift module map), sRGB colour textures and correct normals, docs that match the code, and a test and bug-fix pass |
-| `v0.1.0-beta.2` (current) | The rename to Stick Shift Engine: crates, C API, Homebrew, repository and docs; no functional changes |
-| `v0.1.0` | Planned: precompiled `.metallib` shaders and benchmarking |
+| `v0.1.0-beta.2` | The rename to Stick Shift Engine: crates, C API, Homebrew, repository and docs; no functional changes |
+| `v0.1.0` (current) | GPU frame timing and a renderer benchmark, release builds with precompiled shaders, and fixes for every bug the beta audit found |
 | `v0.2` | Planned: iOS ([#2](https://github.com/parsabee/StickShiftEngine/issues/2)) |
 
 - Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md)
@@ -298,7 +298,7 @@ Guides and design docs:
 | Document | What it covers |
 |---|---|
 | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | Build your own game on the engine |
-| [docs/C_API.md](docs/C_API.md) | The C API: concepts, threading, what may wait in the beta, reference |
+| [docs/C_API.md](docs/C_API.md) | The C API: concepts, threading, what may wait in v0.1, reference |
 | [docs/PLAYABLE_DEMO.md](docs/PLAYABLE_DEMO.md) | The demo walked through as a reference example |
 | [docs/DESIGN.md](docs/DESIGN.md) | Diagrams: component, UML class and sequence diagrams (Mermaid) of the layers, the render seam, the frame loop, streaming, and asset load |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Intentional constraints, the render seam, and workspace layout |

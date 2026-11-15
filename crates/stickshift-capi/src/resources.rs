@@ -5,7 +5,7 @@
 //! Meshes and textures, the input validation every upload goes through, and
 //! resource states.
 //!
-//! Uploads are synchronous in the beta: the resource is `READY` when the create
+//! Uploads are synchronous in v0.1: the resource is `READY` when the create
 //! call returns, and its `RESOURCE_READY` event is queued (or its callback runs
 //! before the call returns).
 
@@ -158,7 +158,7 @@ pub(crate) fn state(inner: &Inner, id: u64) -> StickShiftResourceState {
     }
 }
 
-/// Upload a mesh. `READY` on return in the beta.
+/// Upload a mesh. `READY` on return in v0.1.
 ///
 /// # Safety
 /// `ctx` must be NULL or a live context; `desc`, `completion` and `out` NULL or
@@ -221,7 +221,7 @@ pub unsafe extern "C" fn stickshift_mesh_destroy(
     })
 }
 
-/// Upload an RGBA8 texture with a full mip chain. `READY` on return in the beta.
+/// Upload an RGBA8 texture with a full mip chain. `READY` on return in v0.1.
 ///
 /// # Safety
 /// `ctx` must be NULL or a live context; `desc`, `completion` and `out` NULL or

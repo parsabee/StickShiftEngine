@@ -10,7 +10,7 @@ autogen_warning = """/*
  * run scripts/gen-header.sh. The contract is docs/C_API.md.
  */"""
 header = """/*
- * stickshift.h: the Stick Shift Engine C API (v0.1.0-beta.1, asynchronous in shape).
+ * stickshift.h: the Stick Shift Engine C API (v0.1.0, asynchronous in shape).
  *
  * Copyright (c) 2026 Parsa Bagheri. Released under the Apache-2.0 License.
  */"""

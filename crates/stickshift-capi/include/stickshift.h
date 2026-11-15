@@ -1,5 +1,5 @@
 /*
- * stickshift.h: the Stick Shift Engine C API (v0.1.0-beta.1, asynchronous in shape).
+ * stickshift.h: the Stick Shift Engine C API (v0.1.0, asynchronous in shape).
  *
  * Copyright (c) 2026 Parsa Bagheri. Released under the Apache-2.0 License.
  */
@@ -940,7 +940,7 @@ StickShiftResourceState stickshift_resource_state(struct StickShiftContext *ctx,
 uint32_t stickshift_api_version(void);
 
 /**
- * The library's release, e.g. `"0.1.0-beta.1"`. Static; thread-safe.
+ * The library's release, e.g. `"0.1.0"`. Static; thread-safe.
  */
 const char *stickshift_version_string(void);
 
@@ -1204,7 +1204,7 @@ StickShiftResult stickshift_model_get_bounds(struct StickShiftContext *ctx,
                                              struct StickShiftVec3 *max);
 
 /**
- * Upload a mesh. `READY` on return in the beta.
+ * Upload a mesh. `READY` on return in v0.1.
  *
  * # Safety
  * `ctx` must be NULL or a live context; `desc`, `completion` and `out` NULL or
@@ -1224,7 +1224,7 @@ StickShiftResult stickshift_mesh_create(struct StickShiftContext *ctx,
 StickShiftResult stickshift_mesh_destroy(struct StickShiftContext *ctx, struct StickShiftMesh mesh);
 
 /**
- * Upload an RGBA8 texture with a full mip chain. `READY` on return in the beta.
+ * Upload an RGBA8 texture with a full mip chain. `READY` on return in v0.1.
  *
  * # Safety
  * `ctx` must be NULL or a live context; `desc`, `completion` and `out` NULL or
