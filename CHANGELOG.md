@@ -177,6 +177,18 @@ API**.
     another played whatever sound sat at that index, and callers could forge handles. A handle now
     carries the id of the `Audio` that issued it, which ignores anyone else's. Its fields are
     private, so handles come only from `Audio::load`.
+- **The camera stays finite in degenerate poses**
+  ([#42](https://github.com/parsabee/StickShiftEngine/issues/42)). `Camera::forward` and `right`,
+  and through them the view matrix, were NaN in three cases: when the position equalled the target,
+  when the view was parallel to `up` (looking straight down or up), and after
+  `ChaseController::with_up(Vec3::ZERO)`. The NaN blanked the frame.
+  - With no view direction the camera now looks along `-Z`.
+  - With a zero or parallel `up`, the view uses the world axis least aligned with it.
+  - `with_up` keeps `+Y` for an axis with no direction.
+  - `set_clip_planes` ignores an invalid range in release builds too, instead of only
+    `debug_assert`ing.
+
+  Every other pose gives exactly the matrices it always did.
 
 ## [0.1.0-beta.2] - 2026-11-14
 

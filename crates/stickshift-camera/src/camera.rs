@@ -22,6 +22,20 @@ use stickshift_math::glam::{Mat4, Vec3};
 /// projection / view-projection matrices the render seam carries, plus the
 /// forward / right basis vectors.
 ///
+/// # Degenerate poses
+///
+/// The basis and the view matrix stay finite in every pose, so a degenerate one
+/// can't turn the frame into NaN:
+///
+/// - With `position == target` there is no view direction; the camera looks
+///   along `-Z` (the engine's travel direction, as
+///   [`ChaseController`](crate::ChaseController) assumes for a zero facing).
+/// - With `up` zero, or parallel to the view direction (looking straight up or
+///   down), the view uses the world axis least aligned with the view instead,
+///   preferring `+Y`, then `-Z`, then `+X`.
+///
+/// Every other pose produces exactly the matrices and vectors it always did.
+///
 /// # Example
 ///
 /// ```rust
@@ -74,10 +88,14 @@ impl Camera {
         }
     }
 
-    /// The right-handed view matrix (world → view space).
+    /// The right-handed view matrix (world → view space). Finite in every pose
+    /// (see [Degenerate poses](Self#degenerate-poses)).
     #[must_use]
     pub fn view_matrix(&self) -> Mat4 {
-        Mat4::look_at_rh(self.position, self.target, self.up)
+        match self.basis() {
+            Basis::Regular => Mat4::look_at_rh(self.position, self.target, self.up),
+            Basis::Fallback { forward, up } => Mat4::look_to_rh(self.position, forward, up),
+        }
     }
 
     /// The right-handed perspective projection matrix (view → clip space).
@@ -104,7 +122,9 @@ impl Camera {
     /// The defaults (`0.1..100.0`) suit a small scene; a game that draws further
     /// out pushes `far` beyond its farthest visible geometry, and may raise `near`
     /// in proportion to keep the depth buffer's precision (which scales with
-    /// `near`) where it was. Both must be positive with `near < far`.
+    /// `near`) where it was. Both must be finite and positive with
+    /// `near < far`; an invalid range is ignored and the camera keeps its
+    /// previous planes, so the projection never goes non-finite.
     ///
     /// # Example
     ///
@@ -116,9 +136,10 @@ impl Camera {
     /// assert_eq!(camera.clip_planes(), (0.3, 300.0));
     /// ```
     pub fn set_clip_planes(&mut self, near: f32, far: f32) {
-        debug_assert!(near > 0.0 && far > near, "invalid clip range {near}..{far}");
-        self.near = near;
-        self.far = far;
+        if near.is_finite() && far.is_finite() && near > 0.0 && far > near {
+            self.near = near;
+            self.far = far;
+        }
     }
 
     /// The current `(near, far)` clip distances.
@@ -160,17 +181,59 @@ impl Camera {
         self.up
     }
 
-    /// The normalized forward direction (position → target).
+    /// The normalized forward direction (position → target), or `-Z` when the
+    /// position is the target.
     #[must_use]
     pub fn forward(&self) -> Vec3 {
-        (self.target - self.position).normalize()
+        (self.target - self.position)
+            .try_normalize()
+            .unwrap_or(Vec3::NEG_Z)
     }
 
-    /// The normalized right direction (perpendicular to forward and up).
+    /// The normalized right direction (perpendicular to forward and up). Finite
+    /// in every pose (see [Degenerate poses](Self#degenerate-poses)).
     #[must_use]
     pub fn right(&self) -> Vec3 {
-        self.forward().cross(self.up).normalize()
+        let forward = self.forward();
+        forward
+            .cross(self.up)
+            .try_normalize()
+            .unwrap_or_else(|| forward.cross(fallback_up(forward)).normalize())
     }
+
+    /// Whether the pose has a usable view direction and up axis, and the
+    /// replacements to use if not.
+    fn basis(&self) -> Basis {
+        let direction = self.target - self.position;
+        match direction.try_normalize() {
+            Some(forward) if forward.cross(self.up).try_normalize().is_some() => Basis::Regular,
+            forward => {
+                let forward = forward.unwrap_or(Vec3::NEG_Z);
+                let up = match forward.cross(self.up).try_normalize() {
+                    Some(_) => self.up,
+                    None => fallback_up(forward),
+                };
+                Basis::Fallback { forward, up }
+            }
+        }
+    }
+}
+
+/// How [`Camera::view_matrix`] orients the view.
+enum Basis {
+    /// `position`, `target` and `up` define it, as they always have.
+    Regular,
+    /// A degenerate pose: look along `forward` with `up`.
+    Fallback { forward: Vec3, up: Vec3 },
+}
+
+/// The world axis least aligned with unit `forward`: `+Y`, then `-Z`, then
+/// `+X` on a tie. Never parallel to `forward`, so it is always a usable up.
+fn fallback_up(forward: Vec3) -> Vec3 {
+    [Vec3::Y, Vec3::NEG_Z, Vec3::X]
+        .into_iter()
+        .min_by(|a, b| a.dot(forward).abs().total_cmp(&b.dot(forward).abs()))
+        .unwrap_or(Vec3::Y)
 }
 
 #[cfg(test)]
@@ -217,6 +280,79 @@ mod tests {
         cam.set_target(Vec3::ZERO);
         // Looking down -Z.
         assert!((cam.forward() - Vec3::new(0.0, 0.0, -1.0)).length() < 1e-5);
+    }
+
+    #[test]
+    fn a_regular_pose_keeps_its_exact_matrices() {
+        let mut cam = Camera::new(16.0 / 9.0);
+        cam.set_position(Vec3::new(1.5, 4.0, 9.0));
+        cam.set_target(Vec3::new(0.2, 1.0, -3.0));
+        let up = Vec3::new(0.0, 2.0, 0.1);
+        cam.set_up(up);
+        // Bit for bit what it always was, so nothing rendered changes.
+        assert_eq!(
+            cam.view_matrix(),
+            Mat4::look_at_rh(cam.position(), cam.target(), up)
+        );
+        assert_eq!(cam.forward(), (cam.target() - cam.position()).normalize());
+        assert_eq!(cam.right(), cam.forward().cross(up).normalize());
+    }
+
+    /// Every degenerate pose still yields a finite, orthonormal basis and a
+    /// finite view-projection.
+    #[test]
+    fn degenerate_poses_stay_finite() {
+        let finite = |cam: &Camera, what: &str| {
+            assert!(
+                cam.view_projection_matrix().is_finite(),
+                "{what}: view-projection"
+            );
+            let (forward, right) = (cam.forward(), cam.right());
+            assert!(
+                (forward.length() - 1.0).abs() < 1e-5,
+                "{what}: forward {forward}"
+            );
+            assert!((right.length() - 1.0).abs() < 1e-5, "{what}: right {right}");
+            assert!(forward.dot(right).abs() < 1e-5, "{what}: orthogonal");
+        };
+
+        // Position on the target: no view direction.
+        let mut cam = Camera::new(1.0);
+        cam.set_position(Vec3::new(3.0, 1.0, 2.0));
+        cam.set_target(Vec3::new(3.0, 1.0, 2.0));
+        finite(&cam, "position == target");
+        assert_eq!(cam.forward(), Vec3::NEG_Z);
+
+        // Looking straight down and straight up the up axis.
+        for target_y in [-10.0, 10.0] {
+            let mut cam = Camera::new(1.0);
+            cam.set_position(Vec3::ZERO);
+            cam.set_target(Vec3::new(0.0, target_y, 0.0));
+            finite(&cam, "parallel to up");
+        }
+
+        // A zero up axis.
+        let mut cam = Camera::new(1.0);
+        cam.set_up(Vec3::ZERO);
+        finite(&cam, "zero up");
+    }
+
+    #[test]
+    fn an_invalid_clip_range_is_ignored() {
+        let mut cam = Camera::new(1.0);
+        cam.set_clip_planes(0.3, 300.0);
+        for (near, far) in [
+            (0.0, 10.0),
+            (-1.0, 10.0),
+            (5.0, 5.0),
+            (5.0, 1.0),
+            (f32::NAN, 10.0),
+            (0.1, f32::INFINITY),
+        ] {
+            cam.set_clip_planes(near, far);
+            assert_eq!(cam.clip_planes(), (0.3, 300.0), "{near}..{far} ignored");
+        }
+        assert!(cam.projection_matrix().is_finite());
     }
 
     #[test]
