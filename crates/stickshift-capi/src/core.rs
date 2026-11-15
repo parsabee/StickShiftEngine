@@ -154,6 +154,7 @@ pub extern "C" fn stickshift_result_name(result: StickShiftResult) -> *const c_c
         STICKSHIFT_ERROR_PARSE => c"STICKSHIFT_ERROR_PARSE",
         STICKSHIFT_ERROR_LIMIT_EXCEEDED => c"STICKSHIFT_ERROR_LIMIT_EXCEEDED",
         STICKSHIFT_ERROR_INTERNAL => c"STICKSHIFT_ERROR_INTERNAL",
+        STICKSHIFT_ERROR_TIMEOUT => c"STICKSHIFT_ERROR_TIMEOUT",
         _ => c"STICKSHIFT_UNKNOWN_RESULT",
     };
     name.as_ptr()

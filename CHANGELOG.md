@@ -80,6 +80,13 @@ API**.
   cast) at the frame's first draw, or at `submit` for a frame with no draws. A camera or sun set
   before that, before or after `begin_frame`, lights the frame. `stickshift-core` and the C API
   already set the camera before opening the frame, so they are unaffected.
+- **`stickshift_context_flush` can no longer wait forever**
+  ([#29](https://github.com/parsabee/StickShiftEngine/issues/29)). It looped until every model load,
+  frame and read-back had finished, with no deadline, so a hung GPU or a load that never reported
+  back hung the caller. It now gives up after 60 seconds with the new
+  `STICKSHIFT_ERROR_TIMEOUT` (-11), and the last error message says what was still pending. Model
+  loader jobs also turn a panic anywhere in their work into a failed load (`RESOURCE_FAILED` with
+  `STICKSHIFT_ERROR_INTERNAL`), so a load always reports back.
 
 ## [0.1.0-beta.2] - 2026-11-14
 

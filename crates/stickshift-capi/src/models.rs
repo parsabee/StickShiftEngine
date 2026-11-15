@@ -177,7 +177,7 @@ fn worker(
         let job = jobs.lock().unwrap_or_else(PoisonError::into_inner).recv();
         let Ok(job) = job else { return };
         let cancelled = || cancel.load(Ordering::SeqCst) || job.cancel.load(Ordering::SeqCst);
-        let outcome = parse(&job.source, &cancelled);
+        let outcome = guarded(|| parse(&job.source, &cancelled));
         if results
             .send(JobResult {
                 model: job.model,
@@ -188,6 +188,19 @@ fn worker(
             return;
         }
     }
+}
+
+/// Run one job's work, turning a panic anywhere in it into a failed load. The
+/// job then always reports back, so housekeeping never waits on it forever.
+/// (`parse` already reports a panic inside the importer as a parse error; this
+/// covers the rest of the job.)
+fn guarded(work: impl FnOnce() -> Result<Parsed, Error>) -> Result<Parsed, Error> {
+    catch_unwind(AssertUnwindSafe(work)).unwrap_or_else(|_| {
+        Err(Error::new(
+            STICKSHIFT_ERROR_INTERNAL,
+            "the model loader panicked (an engine bug)",
+        ))
+    })
 }
 
 fn import_error(e: &ImportError) -> Error {
@@ -495,4 +508,24 @@ pub unsafe extern "C" fn stickshift_model_get_bounds(
             Ok(STICKSHIFT_OK)
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_panicking_job_still_reports_a_failure() {
+        let outcome = guarded(|| panic!("a bug in the loader"));
+        let error = outcome.err().expect("a failure, not an unwind");
+        assert_eq!(error.code, STICKSHIFT_ERROR_INTERNAL);
+        let ok = guarded(|| {
+            Ok(Parsed {
+                scene: SceneAsset::default(),
+                instances: Vec::new(),
+                bounds: (Vec3::ZERO, Vec3::ZERO),
+            })
+        });
+        assert!(ok.is_ok());
+    }
 }

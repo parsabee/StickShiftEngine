@@ -55,6 +55,9 @@ pub const STICKSHIFT_ERROR_PARSE: StickShiftResult = -8;
 pub const STICKSHIFT_ERROR_LIMIT_EXCEEDED: StickShiftResult = -9;
 /// A bug in the engine (a Rust panic caught at the boundary). Destroy the context.
 pub const STICKSHIFT_ERROR_INTERNAL: StickShiftResult = -10;
+/// A wait gave up before what it was waiting for finished (a hung GPU, or a
+/// load that never completed).
+pub const STICKSHIFT_ERROR_TIMEOUT: StickShiftResult = -11;
 
 // ---------------------------------------------------------------------------
 // Enum-like values

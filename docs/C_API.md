@@ -252,6 +252,7 @@ are non-error outcomes; negative values are errors:
 | `STICKSHIFT_ERROR_PARSE` | A glTF or image could not be decoded. |
 | `STICKSHIFT_ERROR_LIMIT_EXCEEDED` | An engine limit was hit (see [Limits](#limits)). |
 | `STICKSHIFT_ERROR_INTERNAL` | A bug in the engine (a Rust panic caught at the boundary). The context may be inconsistent; destroy it. |
+| `STICKSHIFT_ERROR_TIMEOUT` | A wait gave up before its work finished (a hung GPU, or a load that never completed). The work stays pending. |
 
 On any error the call has no effect, and `stickshift_last_error_message()` returns a description. That
 message is per-thread and valid until the next failing call on the same thread. It is never NULL
@@ -273,7 +274,7 @@ change.
 | `stickshift_frame_acquire` | Never waits. | Same. |
 | `stickshift_frame_submit` | Encodes the frame on the caller's thread (bounded CPU work) and takes the next drawable from the layer, which can wait (up to about a second if the window is hidden, then `STICKSHIFT_FRAME_SKIPPED`). Never waits for the GPU. | An engine render thread does the encoding and takes the drawable; submit only queues the frame, and the newest queued frame wins. |
 | `stickshift_poll_events` | Bounded housekeeping plus your callbacks. | Same. |
-| `stickshift_context_flush` | **Waits** for every load and every submitted frame to finish, then delivers their events. Tests and tools only. | Same. |
+| `stickshift_context_flush` | **Waits** for every load and every submitted frame to finish, then delivers their events. Gives up after 60 s with `STICKSHIFT_ERROR_TIMEOUT`. Tests and tools only. | Same. |
 | `stickshift_context_destroy` | **Waits** for submitted frames to finish and for a model parse in progress to end. | Same. |
 
 ## Versioning and ABI
@@ -338,7 +339,7 @@ Types: `StickShiftVec3 { x, y, z }`, `StickShiftQuat { x, y, z, w }`, `StickShif
 | `StickShiftResult stickshift_context_set_settings(StickShiftContext *ctx, const StickShiftRenderSettings *settings)` | Applies from the next frame. May reallocate the shadow map. |
 | `StickShiftResult stickshift_context_get_settings(StickShiftContext *ctx, StickShiftRenderSettings *out)` | |
 | `StickShiftResult stickshift_context_get_stats(StickShiftContext *ctx, StickShiftStats *out)` | Counters for diagnostics and tests. |
-| `StickShiftResult stickshift_context_flush(StickShiftContext *ctx)` | Waits for all work; delivers its events. Tests and tools only. |
+| `StickShiftResult stickshift_context_flush(StickShiftContext *ctx)` | Waits for all work, for at most 60 s; delivers its events. Tests and tools only. |
 | `const char *stickshift_context_device_name(StickShiftContext *ctx)` | The GPU's name; valid for the context's lifetime. Thread-safe. |
 | `void stickshift_render_settings_default(StickShiftRenderSettings *out)` | |
 
