@@ -166,7 +166,7 @@ through `rust-version`.
 
 ```sh
 git clone https://github.com/parsabee/StickShiftEngine.git
-cd Stick Shift Engine
+cd StickShiftEngine
 
 cargo build --workspace
 cargo run -p playable-demo                               # the demo, windowed (Metal)
