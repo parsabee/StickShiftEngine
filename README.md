@@ -21,9 +21,10 @@
 [Roadmap](docs/ROADMAP.md) ·
 [Contributing](#contributing)
 
-<img src="docs/images/demo.png" alt="The Stick Shift Engine playable demo: a yellow sports car weaving through traffic on an elevated three-lane freeway between city buildings, with real-time shadows and horizon fog" width="880">
+<img src="docs/images/demo.gif" alt="The Stick Shift Engine playable demo in motion: a yellow sports car changing lanes through traffic on an elevated three-lane freeway between city buildings, with real-time shadows and horizon fog" width="600">
 
-<sub>The playable demo, rendered offscreen by the engine's Metal backend at 1280×720.</sub>
+<sub>The playable demo, driven by a scripted autopilot and rendered offscreen by the engine's Metal
+backend (<a href="scripts/record-demo-gif.sh">scripts/record-demo-gif.sh</a> records it).</sub>
 
 </div>
 
@@ -232,6 +233,8 @@ if (stickshift_frame_acquire(ctx, &frame) == STICKSHIFT_OK) {  /* never waits */
 [`games/playable-demo`](games/playable-demo) is the first title, an endless 3-lane freeway runner.
 It is also the **reference example** for building a game on this engine: it touches nothing but
 the engine's public API.
+
+<img src="docs/images/demo.png" alt="A still from the playable demo: a yellow sports car weaving through traffic on an elevated three-lane freeway between city buildings, with real-time shadows and horizon fog" width="880">
 
 ```sh
 cargo run -p playable-demo             # windowed, Metal backend (macOS)
