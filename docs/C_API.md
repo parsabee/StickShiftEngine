@@ -342,6 +342,7 @@ Types: `StickShiftVec3 { x, y, z }`, `StickShiftQuat { x, y, z, w }`, `StickShif
 | `StickShiftResult stickshift_context_set_settings(StickShiftContext *ctx, const StickShiftRenderSettings *settings)` | Applies from the next frame. May reallocate the shadow map. |
 | `StickShiftResult stickshift_context_get_settings(StickShiftContext *ctx, StickShiftRenderSettings *out)` | |
 | `StickShiftResult stickshift_context_get_stats(StickShiftContext *ctx, StickShiftStats *out)` | Counters for diagnostics and tests. |
+| `StickShiftResult stickshift_context_gpu_frame_time(StickShiftContext *ctx, uint64_t frame_number, uint64_t *out_ns)` | How long the GPU spent on a completed frame, in nanoseconds. `NOT_READY` until it completes; kept for the last 64 completed frames. The null backend reports 0. |
 | `StickShiftResult stickshift_context_flush(StickShiftContext *ctx)` | Waits for all work, for at most 60 s; delivers its events. Tests and tools only. |
 | `const char *stickshift_context_device_name(StickShiftContext *ctx)` | The GPU's name; valid for the context's lifetime. Thread-safe. |
 | `void stickshift_render_settings_default(StickShiftRenderSettings *out)` | |

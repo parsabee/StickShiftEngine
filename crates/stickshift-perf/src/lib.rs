@@ -25,6 +25,11 @@
 //!   frame. With vsync on, a light scene has a short CPU time and a frame time
 //!   of one display refresh.
 //!
+//! A third, **GPU time**, is what the renderer reports for a completed frame
+//! (how long the GPU spent executing it), handed in with
+//! [`record_gpu_time`](PerfTracker::record_gpu_time). It describes a frame a
+//! few frames back, since the GPU finishes frames after the CPU records them.
+//!
 //! # Time source
 //!
 //! Timing is read through an injectable [`Clock`] rather than a hardcoded
@@ -59,6 +64,8 @@ struct FrameMetrics {
     frame_time: Duration,
     /// This frame's `begin_frame` to `end_frame`: the work inside it.
     cpu_time: Duration,
+    /// The GPU time of a newly completed frame reported during this frame.
+    gpu_time: Option<Duration>,
     physics_time: Duration,
     query_time: Duration,
     render_time: Duration,
@@ -96,6 +103,10 @@ pub struct PerfSnapshot {
     /// Average CPU time (the work between `begin_frame` and `end_frame`) over
     /// the window.
     pub avg_cpu_time: Duration,
+    /// Average GPU time of the completed frames reported over the window, or
+    /// zero if the renderer reports none (see
+    /// [`PerfTracker::record_gpu_time`]).
+    pub avg_gpu_time: Duration,
     /// Average physics-subsystem time over the window.
     pub avg_physics_time: Duration,
     /// Average spatial-query-subsystem time over the window.
@@ -137,6 +148,9 @@ pub struct PerfTracker<C: Clock = SystemClock> {
     frame_start: Option<Duration>,
     /// When the previous frame ended, for the next frame's frame time.
     last_frame_end: Option<Duration>,
+    /// The last frame number passed to `record_gpu_time`, so a frame is
+    /// counted once however often it is reported.
+    last_gpu_frame: Option<u64>,
     subsystem_start: Option<Duration>,
 
     // External state (passed in).
@@ -176,6 +190,7 @@ impl<C: Clock> PerfTracker<C> {
             current: FrameMetrics::default(),
             frame_start: None,
             last_frame_end: None,
+            last_gpu_frame: None,
             subsystem_start: None,
             triangle_count: 0,
             total_allocations: 0,
@@ -241,6 +256,18 @@ impl<C: Clock> PerfTracker<C> {
         self.total_frees += 1;
         self.total_bytes_freed += bytes;
         self.current_memory_bytes = self.current_memory_bytes.saturating_sub(bytes);
+    }
+
+    /// Record that the GPU spent `time` executing frame `frame` (a renderer's
+    /// frame number). Report the newest completed frame each frame; a frame
+    /// already recorded is ignored, so a frame with no new completion adds
+    /// nothing to the average.
+    pub fn record_gpu_time(&mut self, frame: u64, time: Duration) {
+        if self.last_gpu_frame == Some(frame) {
+            return;
+        }
+        self.last_gpu_frame = Some(frame);
+        self.current.gpu_time = Some(time);
     }
 
     /// Set the triangle count reported for the current frame.
@@ -311,6 +338,21 @@ impl<C: Clock> PerfTracker<C> {
         total / self.frames.len() as u32
     }
 
+    /// Average GPU time over the frames in the window that recorded one
+    /// ([`Duration::ZERO`] if none did).
+    pub fn avg_gpu_time(&self) -> Duration {
+        let (sum, count) = self
+            .frames
+            .iter()
+            .filter_map(|f| f.gpu_time)
+            .fold((Duration::ZERO, 0u32), |(sum, n), t| (sum + t, n + 1));
+        if count == 0 {
+            Duration::ZERO
+        } else {
+            sum / count
+        }
+    }
+
     /// Shortest and longest frame time in the window (for detecting
     /// stutter). Returns `(ZERO, ZERO)` if the window is empty.
     pub fn min_max_frame_time(&self) -> (Duration, Duration) {
@@ -360,6 +402,7 @@ impl<C: Clock> PerfTracker<C> {
             min_frame_time,
             max_frame_time,
             avg_cpu_time: self.avg_cpu_time(),
+            avg_gpu_time: self.avg_gpu_time(),
             avg_physics_time,
             avg_query_time,
             avg_render_time,
@@ -422,6 +465,10 @@ impl<C: Clock> PerfTracker<C> {
         println!(
             "  CPU Time:     {:<6.2} ms (avg)",
             self.avg_cpu_time().as_secs_f64() * 1000.0
+        );
+        println!(
+            "  GPU Time:     {:<6.2} ms (avg)",
+            self.avg_gpu_time().as_secs_f64() * 1000.0
         );
 
         println!(" ───────────────────────────────────────────────────────");
@@ -548,6 +595,19 @@ mod tests {
             snap.current_fps
         );
         assert_eq!(snap.max_frame_time, Duration::from_micros(16_667));
+    }
+
+    #[test]
+    fn gpu_times_average_each_reported_frame_once() {
+        let (mut tracker, _clock) = new_pair();
+        assert_eq!(tracker.snapshot().avg_gpu_time, Duration::ZERO);
+        // Frame 1 completes, then no new frame, then frame 2.
+        for (frame, ms) in [(1, 4), (1, 4), (2, 6)] {
+            tracker.begin_frame();
+            tracker.record_gpu_time(frame, MS * ms);
+            tracker.end_frame();
+        }
+        assert_eq!(tracker.snapshot().avg_gpu_time, MS * 5, "(4 + 6) / 2");
     }
 
     #[test]

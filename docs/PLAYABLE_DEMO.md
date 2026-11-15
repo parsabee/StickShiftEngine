@@ -249,7 +249,7 @@ distance field that [`load_font`](../games/playable-demo/src/hud.rs#L101) parses
 The seam is two traits in `stickshift-render-api`, bundled for the game as one
 `&mut dyn Renderer` ([context.rs:48](../crates/stickshift-core/src/context.rs#L48)):
 
-- [`RenderDevice`](../crates/stickshift-render-api/src/device.rs#L98) — load-time resource ownership:
+- [`RenderDevice`](../crates/stickshift-render-api/src/device.rs#L100) — load-time resource ownership:
   `create_mesh` / `create_texture` / `create_pipeline` (and their `destroy_*`), plus
   `surface_size` and `safe_area_insets`. Every call returns an **opaque handle** — a newtype over
   an id. No GPU type crosses the seam in either direction.
@@ -344,7 +344,7 @@ stack (overflow is dropped rather than panicking — HUD text is short and cosme
 per-frame HUD path is heap-free.
 
 **Safe area.** Positions are derived from `surface_size` shrunk by
-[`safe_area_insets`](../crates/stickshift-render-api/src/device.rs#L169) (`[top, right, bottom, left]`
+[`safe_area_insets`](../crates/stickshift-render-api/src/device.rs#L171) (`[top, right, bottom, left]`
 in pixels), so the HUD stays clear of notches, rounded corners and home indicators. A desktop
 window reports zeros; an iOS host (planned for v0.2) would report real insets. The score sits at
 `inset + HUD_MARGIN`, and the game-over banner is centered in the *safe* rectangle, not the raw

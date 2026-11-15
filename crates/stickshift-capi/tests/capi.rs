@@ -1435,6 +1435,7 @@ fn the_c_api_renders_what_the_rust_api_renders() {
         last_error()
     );
     let ctx = Ctx(ctx);
+    let mut number = 0;
     let mut c_mesh = StickShiftMesh::default();
     let mut pixels = vec![0u8; (W * H * 4) as usize];
     // SAFETY: valid pointers; `pixels` outlives the flush.
@@ -1472,7 +1473,7 @@ fn the_c_api_renders_what_the_rust_api_renders() {
             STICKSHIFT_OK
         );
         assert_eq!(
-            stickshift_frame_submit(frame, null(), null_mut()),
+            stickshift_frame_submit(frame, null(), &mut number),
             STICKSHIFT_OK
         );
     }
@@ -1483,6 +1484,14 @@ fn the_c_api_renders_what_the_rust_api_renders() {
         .any(|e| e.kind == STICKSHIFT_EVENT_READBACK_COMPLETE));
     assert_eq!(pixels, expected, "the C API drew different pixels");
     assert_ne!(pixels, vec![0u8; pixels.len()], "the frame was drawn");
+    // The completed frame's GPU time is real work, well under a second.
+    let mut gpu_ns = 0;
+    // SAFETY: a live context.
+    assert_eq!(
+        unsafe { stickshift_context_gpu_frame_time(ctx.0, number, &mut gpu_ns) },
+        STICKSHIFT_OK
+    );
+    assert!((1..1_000_000_000).contains(&gpu_ns), "{gpu_ns} ns");
 
     trait IntoC {
         fn into_c(self) -> StickShiftMat4;
@@ -1592,5 +1601,45 @@ fn destroying_a_context_gives_its_tag_back() {
     // succeeds only if each destroy returned its context tag.
     for _ in 0..5_000 {
         drop(Ctx::null(8, 8));
+    }
+}
+
+#[test]
+fn gpu_frame_times_follow_completed_frames() {
+    let ctx = Ctx::null(8, 8);
+    let mut ns = 7;
+    // SAFETY: a live context and valid pointers throughout.
+    unsafe {
+        assert_eq!(
+            stickshift_context_gpu_frame_time(ctx.0, 1, &mut ns),
+            STICKSHIFT_ERROR_INVALID_ARGUMENT,
+            "nothing submitted yet"
+        );
+        assert_eq!(ns, 0, "zeroed on failure");
+        let frame = ctx.acquire();
+        let mut number = 0;
+        assert_eq!(
+            stickshift_frame_submit(frame, null(), &mut number),
+            STICKSHIFT_OK
+        );
+        // The null backend has no GPU: every completed frame took zero.
+        ns = 7;
+        assert_eq!(
+            stickshift_context_gpu_frame_time(ctx.0, number, &mut ns),
+            STICKSHIFT_OK
+        );
+        assert_eq!(ns, 0);
+        assert_eq!(
+            stickshift_context_gpu_frame_time(ctx.0, 0, &mut ns),
+            STICKSHIFT_ERROR_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            stickshift_context_gpu_frame_time(ctx.0, number + 1, &mut ns),
+            STICKSHIFT_ERROR_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            stickshift_context_gpu_frame_time(ctx.0, number, null_mut()),
+            STICKSHIFT_ERROR_INVALID_ARGUMENT
+        );
     }
 }

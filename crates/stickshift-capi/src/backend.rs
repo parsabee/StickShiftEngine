@@ -83,6 +83,9 @@ pub(crate) trait Backend {
     fn frames_in_flight(&self) -> u64;
     fn submitted_frames(&self) -> u64;
     fn completed_frames(&self) -> u64;
+    /// How long the GPU spent executing completed frame `frame`, if that is
+    /// still known.
+    fn gpu_frame_time(&self, frame: u64) -> Option<std::time::Duration>;
     /// Encode and commit `frame` without waiting for the GPU, or `None` if the
     /// frame had to be skipped (no free frame slot, no drawable).
     fn submit(&mut self, frame: &FrameData<'_>) -> Option<Submitted>;
@@ -179,6 +182,13 @@ impl Backend for NullBackend {
 
     fn completed_frames(&self) -> u64 {
         self.submitted
+    }
+
+    /// No GPU, so no GPU time: every submitted frame took zero.
+    fn gpu_frame_time(&self, frame: u64) -> Option<std::time::Duration> {
+        (1..=self.submitted)
+            .contains(&frame)
+            .then_some(std::time::Duration::ZERO)
     }
 
     fn submit(&mut self, frame: &FrameData<'_>) -> Option<Submitted> {

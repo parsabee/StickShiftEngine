@@ -170,6 +170,10 @@ impl Backend for MetalBackend {
         self.renderer.completed_frame_count()
     }
 
+    fn gpu_frame_time(&self, frame: u64) -> Option<std::time::Duration> {
+        self.renderer.gpu_frame_time(frame)
+    }
+
     fn submit(&mut self, frame: &FrameData<'_>) -> Option<Submitted> {
         let r = &mut self.renderer;
         // The camera and sun are sticky in the renderer and folded into the

@@ -12,8 +12,9 @@
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use stickshift_render::backend::GPU_TIME_FRAMES;
 use stickshift_render::{FrameSkip, MetalRenderer};
-use stickshift_render_api::{FrameRecorder, OverlayQuad};
+use stickshift_render_api::{FrameRecorder, OverlayQuad, RenderDevice};
 
 mod common;
 
@@ -186,4 +187,39 @@ fn discarding_a_frame_returns_its_permit() {
             assert_eq!(submitted, 0, "a discarded frame is not submitted");
         }
     }
+}
+
+#[test]
+fn completed_frames_report_their_gpu_time() {
+    let Some(mut r) = renderer() else { return };
+    assert_eq!(r.gpu_frame_time(1), None, "nothing submitted yet");
+    assert_eq!(r.last_gpu_frame_time(), None);
+
+    let frames = GPU_TIME_FRAMES + 6;
+    for _ in 0..frames {
+        r.begin_frame();
+        r.draw_overlay_quad(&OverlayQuad::solid([0.0, 0.0, 8.0, 8.0], [1.0; 4]));
+        r.submit_async().expect("a frame was open");
+    }
+    assert!(wait_until(|| r.completed_frame_count() == frames));
+
+    // Every retained frame has a plausible GPU time: real work, well under a
+    // second for an 8 x 8 quad.
+    for frame in frames - GPU_TIME_FRAMES + 1..=frames {
+        let time = r
+            .gpu_frame_time(frame)
+            .expect("a completed frame's GPU time");
+        assert!(
+            time > Duration::ZERO && time < Duration::from_secs(1),
+            "frame {frame}: {time:?}"
+        );
+    }
+    // The newest is what the seam reports.
+    let last = r.last_gpu_frame_time().expect("a completed frame");
+    assert_eq!(last.frame, frames);
+    assert_eq!(Some(last.duration), r.gpu_frame_time(frames));
+    // Older frames, frame 0 and frames never submitted have none.
+    assert_eq!(r.gpu_frame_time(frames - GPU_TIME_FRAMES), None, "dropped");
+    assert_eq!(r.gpu_frame_time(0), None);
+    assert_eq!(r.gpu_frame_time(frames + 1), None, "not submitted");
 }

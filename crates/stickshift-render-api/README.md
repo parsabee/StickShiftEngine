@@ -53,6 +53,8 @@ It also owns the surface and the quality settings:
   setting.
 - `surface_scale` reports drawable pixels per window point, the UI scale a HUD multiplies its
   point sizes by.
+- `last_gpu_frame_time` reports how long the GPU spent on the most recently completed frame, if
+  the backend measures it (the Metal backend does; the default and `NullRenderer` say `None`).
 - `set_render_settings(&RenderSettings)` applies a `ShadowQuality` tier, a shadow range (a fraction
   of the draw distance), and a draw-distance scale. All of them are relative to the backend's own
   look defaults.
