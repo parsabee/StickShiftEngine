@@ -249,7 +249,9 @@ pub fn drive_frame<G: Game>(
         // Snapshot input edges for the next step so a held key fires
         // `is_key_just_pressed` exactly once.
         lp.input.advance_frame();
+        lp.perf.mark_start();
         lp.scene.step_physics();
+        lp.perf.mark_physics();
     }
 
     // Push the engine camera's view-projection across the render seam BEFORE the
@@ -268,6 +270,7 @@ pub fn drive_frame<G: Game>(
     renderer.set_camera_position(lp.camera.position());
 
     // Exactly one render per frame, carrying the interpolation alpha.
+    lp.perf.mark_start();
     {
         let alpha = lp.accumulator.alpha();
         let mut ctx = EngineCtx::new(
@@ -282,6 +285,7 @@ pub fn drive_frame<G: Game>(
         );
         game.render(&mut ctx);
     }
+    lp.perf.mark_render();
 
     lp.perf.end_frame();
     steps
@@ -490,6 +494,37 @@ mod tests {
         let expected: Vec<Option<Mat4>> = game.expected.iter().copied().map(Some).collect();
         assert_eq!(used, expected, "each frame drew from the camera it set");
         assert_eq!(renderer.camera_position(), Some(lp.camera.position()));
+    }
+
+    /// The loop times physics (every fixed step) and the game's render into the
+    /// perf tracker, alongside the frame's CPU time.
+    #[test]
+    fn the_loop_records_physics_and_render_time() {
+        struct SlowRender;
+        impl Game for SlowRender {
+            fn init(&mut self, _ctx: &mut EngineCtx) {}
+            fn update(&mut self, _ctx: &mut EngineCtx, _dt: f32) {}
+            fn render(&mut self, _ctx: &mut EngineCtx) {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+
+        let mut lp = Loop::new();
+        let mut renderer = NullRenderer::new();
+        let mut game = SlowRender;
+        lp.init_once(&mut game, &mut renderer);
+        for _ in 0..3 {
+            drive_frame(
+                &mut lp,
+                &mut game,
+                &mut renderer,
+                Duration::from_secs_f64(f64::from(FIXED_DT)),
+            );
+        }
+        let snap = lp.perf.snapshot();
+        assert!(snap.avg_render_time >= Duration::from_millis(2), "{snap:?}");
+        assert!(snap.avg_physics_time > Duration::ZERO, "{snap:?}");
+        assert!(snap.avg_cpu_time >= snap.avg_render_time + snap.avg_physics_time);
     }
 
     /// The loop owns the audio layer and hands it to the game through
