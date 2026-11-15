@@ -203,17 +203,20 @@ fn completed_frames_report_their_gpu_time() {
     }
     assert!(wait_until(|| r.completed_frame_count() == frames));
 
-    // Every retained frame has a plausible GPU time: real work, well under a
-    // second for an 8 x 8 quad.
-    for frame in frames - GPU_TIME_FRAMES + 1..=frames {
-        let time = r
-            .gpu_frame_time(frame)
-            .expect("a completed frame's GPU time");
-        assert!(
-            time > Duration::ZERO && time < Duration::from_secs(1),
-            "frame {frame}: {time:?}"
-        );
-    }
+    // Every retained frame has a GPU time, well under a second for an 8 x 8
+    // quad. A virtualized GPU (CI's) has coarse timestamps and can report a
+    // tiny frame as taking zero, so only some frames must show measurable work.
+    let times: Vec<Duration> = (frames - GPU_TIME_FRAMES + 1..=frames)
+        .map(|frame| {
+            r.gpu_frame_time(frame)
+                .unwrap_or_else(|| panic!("frame {frame}: no GPU time"))
+        })
+        .collect();
+    assert!(
+        times.iter().all(|t| *t < Duration::from_secs(1)),
+        "{times:?}"
+    );
+    assert!(times.iter().any(|t| *t > Duration::ZERO), "{times:?}");
     // The newest is what the seam reports.
     let last = r.last_gpu_frame_time().expect("a completed frame");
     assert_eq!(last.frame, frames);
