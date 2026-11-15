@@ -124,6 +124,12 @@ API**.
   resized the drawable only after that frame, so a render-scale or full-screen change showed one
   stretched or cropped frame. The runner now applies the queued change and resizes for it before the
   frame, as the built-in menu already did.
+- **The headless clock steps exactly one fixed step per frame**
+  ([#35](https://github.com/parsabee/StickShiftEngine/issues/35)). `Headless::run` advanced its
+  synthetic clock by `FIXED_DT` converted from `f32` (16,666,668 ns), while a fixed step consumes
+  16,666,666 ns, so 2 ns were left over every frame: `alpha` crept up from zero, and after about
+  8.3 million frames a frame ran two updates. The headless runner, and the windowed runner's first
+  frame, now step by the new public `FIXED_DT_DURATION`, the exact step as a `Duration`.
 
 ## [0.1.0-beta.2] - 2026-11-14
 

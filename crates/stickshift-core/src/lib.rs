@@ -95,7 +95,7 @@ pub use input::{InputState, Key, MouseButton};
 // dependency to spell them.
 pub use stickshift_audio::{Audio, SoundHandle, Volume};
 pub use stickshift_scene::{Scene, SpawnCtx, StreamingConfig};
-pub use timestep::{Accumulator, FIXED_DT, MAX_STEPS_PER_FRAME};
+pub use timestep::{Accumulator, FIXED_DT, FIXED_DT_DURATION, MAX_STEPS_PER_FRAME};
 
 #[cfg(test)]
 mod boundary_tests {

@@ -29,8 +29,6 @@
 //! shared, which is what keeps simulation identical across drivers and frame
 //! rates.
 
-use std::time::Duration;
-
 use stickshift_audio::Audio;
 use stickshift_camera::Camera;
 use stickshift_ecs::hecs::World;
@@ -43,6 +41,7 @@ use crate::graphics::{GraphicsSettings, GraphicsState};
 use crate::input::InputState;
 
 pub use crate::timestep::FIXED_DT;
+use crate::timestep::FIXED_DT_DURATION;
 
 /// Drive `game` headlessly for `frames` frames and return the engine state.
 ///
@@ -113,7 +112,7 @@ impl Headless {
     /// [`Game::init`] runs on the first call to `run` only;
     /// subsequent calls continue driving `update`/`render` without re-`init`, so
     /// a caller can step a game in chunks. Each frame advances the synthetic
-    /// clock by one [`FIXED_DT`] and runs the shared
+    /// clock by exactly one fixed step ([`FIXED_DT_DURATION`]) and runs the shared
     /// [`drive_frame`], so it produces exactly one
     /// `update` and one `render` per frame.
     ///
@@ -123,12 +122,11 @@ impl Headless {
     pub fn run<G: Game>(&mut self, game: &mut G, frames: u32) {
         self.lp.init_once(game, &mut self.renderer);
 
-        let step = Duration::from_secs_f64(f64::from(FIXED_DT));
         for _ in 0..frames {
             if self.lp.exit_requested {
                 break;
             }
-            let steps = drive_frame(&mut self.lp, game, &mut self.renderer, step);
+            let steps = drive_frame(&mut self.lp, game, &mut self.renderer, FIXED_DT_DURATION);
             debug_assert_eq!(
                 steps, 1,
                 "headless synthetic clock is one FIXED_DT per frame"
@@ -408,6 +406,22 @@ mod tests {
         assert_eq!(harness.frames_run(), 3, "the run stops after that frame");
         harness.run(&mut game, 10);
         assert_eq!((harness.frames_run(), game.updates), (3, 3));
+    }
+
+    #[test]
+    fn the_synthetic_clock_steps_exactly_one_fixed_step_per_frame() {
+        struct Idle;
+        impl Game for Idle {
+            fn init(&mut self, _ctx: &mut EngineCtx) {}
+            fn update(&mut self, _ctx: &mut EngineCtx, _dt: f32) {}
+            fn render(&mut self, _ctx: &mut EngineCtx) {}
+        }
+        let mut harness = Headless::new();
+        harness.run(&mut Idle, 1_000);
+        // Nothing left over to drift: a converted `f32` step left 2 ns per
+        // frame, so `alpha` crept up and, after ~8.3 M frames, a frame ran two
+        // updates.
+        assert_eq!(harness.lp.accumulator.alpha(), 0.0);
     }
 
     #[test]
