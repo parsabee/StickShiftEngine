@@ -89,10 +89,12 @@ impl ChaseController {
         }
     }
 
-    /// Set the world up axis (default `+Y`). Returns `self` for chaining.
+    /// Set the world up axis (default `+Y`). It is normalized; a zero or
+    /// non-finite axis, which has no direction, keeps `+Y`. Returns `self` for
+    /// chaining.
     #[must_use]
     pub fn with_up(mut self, up: Vec3) -> Self {
-        self.up = up.normalize();
+        self.up = up.try_normalize().unwrap_or(Vec3::Y);
         self
     }
 
@@ -306,6 +308,22 @@ mod tests {
                 .with_half_life(-1.0)
                 .follow_fraction(STEP),
             1.0
+        );
+    }
+
+    #[test]
+    fn a_zero_up_axis_keeps_plus_y() {
+        let chase = ChaseController::new(4.0, 2.0).with_up(Vec3::ZERO);
+        let mut cam = Camera::new(1.0);
+        chase.follow(&mut cam, Vec3::ZERO, Vec3::NEG_Z, STEP);
+        assert_eq!(cam.up(), Vec3::Y);
+        assert!(cam.view_projection_matrix().is_finite());
+        assert_eq!(
+            ChaseController::new(4.0, 2.0)
+                .with_up(Vec3::new(0.0, 0.0, 3.0))
+                .desired_position(Vec3::ZERO, Vec3::X),
+            Vec3::new(-4.0, 0.0, 2.0),
+            "a valid axis is still normalized"
         );
     }
 
