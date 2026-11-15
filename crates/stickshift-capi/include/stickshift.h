@@ -116,11 +116,14 @@ typedef struct StickShiftStats {
    */
   uint64_t frames_skipped;
   /**
-   * 3D draws handed to the GPU.
+   * 3D draws handed to the GPU: one per recorded mesh draw, one per model
+   * part.
    */
   uint64_t draws_submitted;
   /**
-   * Draws not made because a resource was pending, failed or destroyed.
+   * Draw calls (`stickshift_frame_draw_mesh`, `_draw_model`, `_draw_quad`,
+   * `_draw_text`) not made because a resource was pending, failed or
+   * destroyed. Counted once per call, however many parts or glyphs it drew.
    */
   uint64_t draws_skipped;
   /**

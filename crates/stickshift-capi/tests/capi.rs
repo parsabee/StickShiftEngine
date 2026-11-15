@@ -702,6 +702,73 @@ fn a_resource_destroyed_after_recording_is_dropped_at_submit() {
 }
 
 #[test]
+fn a_vertex_colour_draw_ignores_its_texture() {
+    let ctx = Ctx::null(8, 8);
+    let mesh = make_mesh(&ctx);
+    let texture = make_texture(&ctx, 2, 2, STICKSHIFT_COLOR_SPACE_SRGB);
+    let material = |texture| StickShiftMaterial {
+        base_color: StickShiftColor {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: 1.0,
+        },
+        base_color_texture: texture,
+    };
+    let frame = ctx.acquire();
+    // SAFETY: a live context and an open frame.
+    unsafe {
+        // The texture is never sampled, so destroying it drops nothing...
+        assert_eq!(
+            stickshift_frame_draw_mesh(frame, mesh, &identity(), &material(texture)),
+            STICKSHIFT_OK
+        );
+        assert_eq!(stickshift_texture_destroy(ctx.0, texture), STICKSHIFT_OK);
+        // ...and a stale handle does not refuse the draw.
+        assert_eq!(
+            stickshift_frame_draw_mesh(frame, mesh, &identity(), &material(texture)),
+            STICKSHIFT_OK
+        );
+        assert_eq!(
+            stickshift_frame_submit(frame, null(), null_mut()),
+            STICKSHIFT_OK
+        );
+    }
+    let stats = ctx.stats();
+    assert_eq!((stats.draws_submitted, stats.draws_skipped), (2, 0));
+}
+
+#[test]
+fn a_dropped_model_counts_as_one_skipped_draw() {
+    let ctx = Ctx::null(8, 8);
+    let mut model = StickShiftModel::default();
+    let two_parts = triangle_soup_glb(2, 1);
+    // SAFETY: the bytes are copied.
+    let r = unsafe { stickshift_model_load_memory(ctx.0, copied(&two_parts), null(), &mut model) };
+    assert_eq!(r, STICKSHIFT_OK);
+    ctx.flush();
+    assert_eq!(ctx.state(model.id), STICKSHIFT_RESOURCE_STATE_READY);
+    let frame = ctx.acquire();
+    // SAFETY: a live context and an open frame.
+    unsafe {
+        // Twice, so two calls of one model stay two skipped draws.
+        for _ in 0..2 {
+            assert_eq!(
+                stickshift_frame_draw_model(frame, model, &identity(), null()),
+                STICKSHIFT_OK
+            );
+        }
+        assert_eq!(stickshift_model_destroy(ctx.0, model), STICKSHIFT_OK);
+        assert_eq!(
+            stickshift_frame_submit(frame, null(), null_mut()),
+            STICKSHIFT_OK
+        );
+    }
+    let stats = ctx.stats();
+    assert_eq!((stats.draws_submitted, stats.draws_skipped), (0, 2));
+}
+
+#[test]
 fn models_load_off_thread_and_report_ready_with_bounds() {
     let ctx = Ctx::null(8, 8);
     ctx.poll();
@@ -994,13 +1061,17 @@ fn destroying_a_context_releases_borrowed_model_bytes() {
     assert_eq!(releases.load(Ordering::SeqCst), 1);
 }
 
-/// A GLB that is slow to parse: one mesh of `PRIMITIVES` primitives, each a
-/// non-indexed soup of `TRIANGLES` triangles without normals (so every one is
-/// flat-shaded on import). Each primitive is its own import stage.
+/// A GLB that is slow to parse: 300 primitives of 1,000 flat-shaded triangles
+/// each. Each primitive is its own import stage.
 fn slow_model_glb() -> Vec<u8> {
-    const PRIMITIVES: usize = 300;
-    const TRIANGLES: usize = 1_000;
-    let positions: Vec<u8> = (0..TRIANGLES * 3)
+    triangle_soup_glb(300, 1_000)
+}
+
+/// A GLB of one mesh with `primitives` primitives, each a non-indexed soup of
+/// `triangles` triangles without normals (so every one is flat-shaded on
+/// import). Each primitive becomes one model part.
+fn triangle_soup_glb(primitives: usize, triangles: usize) -> Vec<u8> {
+    let positions: Vec<u8> = (0..triangles * 3)
         .flat_map(|v| {
             let (t, corner) = ((v / 3) as f32, v % 3);
             let p = [
@@ -1017,12 +1088,12 @@ fn slow_model_glb() -> Vec<u8> {
 "buffers": [{{"byteLength": {len}}}],
 "bufferViews": [{{"buffer": 0, "byteOffset": 0, "byteLength": {len}}}],
 "accessors": [{{"bufferView": 0, "componentType": 5126, "count": {count}, "type": "VEC3",
-  "min": [0,0,0], "max": [{TRIANGLES},1,0]}}],
+  "min": [0,0,0], "max": [{triangles},1,0]}}],
 "meshes": [{{"primitives": [{primitives}]}}],
 "nodes": [{{"mesh": 0}}], "scenes": [{{"nodes": [0]}}], "scene": 0}}"#,
         len = positions.len(),
-        count = TRIANGLES * 3,
-        primitives = vec![primitive; PRIMITIVES].join(", "),
+        count = triangles * 3,
+        primitives = vec![primitive; primitives].join(", "),
     );
     let mut json = json.into_bytes();
     json.resize(json.len().next_multiple_of(4), b' ');
@@ -1222,9 +1293,9 @@ fn fonts_measure_and_draw_until_their_atlas_goes() {
             STICKSHIFT_OK
         );
     }
-    // Three glyph quads recorded before the atlas went, all dropped at submit,
-    // plus the text draw refused afterwards.
-    assert_eq!(ctx.stats().draws_skipped, 4);
+    // The text draw recorded before the atlas went (its three glyph quads are
+    // dropped at submit, counted once), plus the text draw refused afterwards.
+    assert_eq!(ctx.stats().draws_skipped, 2);
 }
 
 #[test]

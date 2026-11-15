@@ -23,11 +23,15 @@ use crate::types::*;
 pub(crate) struct Recording {
     draws: Vec<DrawCall>,
     /// Per draw: the mesh or model handle and the texture handle (or 0) it
-    /// came from, re-checked at submit.
-    draw_sources: Vec<(u64, u64)>,
+    /// came from, re-checked at submit, and the draw call that recorded it.
+    draw_sources: Vec<(u64, u64, u32)>,
     quads: Vec<OverlayQuad>,
-    /// Per quad: the texture handle it samples, or 0.
-    quad_sources: Vec<u64>,
+    /// Per quad: the texture handle it samples (or 0), and the draw call that
+    /// recorded it.
+    quad_sources: Vec<(u64, u32)>,
+    /// Draw calls recorded this frame, so the draws or glyph quads one call
+    /// recorded count as one skipped draw if they are dropped at submit.
+    calls: u32,
     /// The draws and quads still valid at submit.
     kept_draws: Vec<DrawCall>,
     kept_quads: Vec<OverlayQuad>,
@@ -35,11 +39,18 @@ pub(crate) struct Recording {
 }
 
 impl Recording {
+    /// Number a new draw call; everything it records shares the number.
+    fn next_call(&mut self) -> u32 {
+        self.calls += 1;
+        self.calls
+    }
+
     fn clear(&mut self) {
         self.draws.clear();
         self.draw_sources.clear();
         self.quads.clear();
         self.quad_sources.clear();
+        self.calls = 0;
         self.kept_draws.clear();
         self.kept_quads.clear();
         self.readback = None;
@@ -231,24 +242,26 @@ pub unsafe extern "C" fn stickshift_frame_draw_mesh(
                 .get(mesh.id)
                 .ok_or_else(|| Error::invalid_handle("mesh"))?;
             let (kind, handle) = (entry.kind, entry.handle);
-            let texture_id = material.base_color_texture.id;
+            // Only a textured mesh samples the texture, so only then must it be
+            // live, now and at submit. A vertex-colour mesh ignores it.
+            let texture_id = match kind {
+                PipelineKind::Textured => material.base_color_texture.id,
+                _ => 0,
+            };
             let texture = match texture_id {
                 0 => None,
                 id => Some(texture(inner, id, "base_color_texture")?),
             };
             let recording = &mut inner.recording;
+            let call = recording.next_call();
             recording.draws.push(DrawCall {
                 kind,
                 mesh: handle,
                 model,
                 base_color: material.base_color.to_array(),
-                texture: if kind == PipelineKind::Textured {
-                    texture
-                } else {
-                    None
-                },
+                texture,
             });
-            recording.draw_sources.push((mesh.id, texture_id));
+            recording.draw_sources.push((mesh.id, texture_id, call));
             Ok(STICKSHIFT_OK)
         })
     })
@@ -278,6 +291,7 @@ pub unsafe extern "C" fn stickshift_frame_draw_model(
                 inner.counters.draws_skipped += 1;
                 return Ok(STICKSHIFT_NOT_READY);
             }
+            let call = inner.recording.next_call();
             for &(part, transform) in &entry.instances {
                 let part = &entry.parts[part];
                 let mut base_color = part.base_color;
@@ -291,7 +305,7 @@ pub unsafe extern "C" fn stickshift_frame_draw_model(
                     base_color,
                     texture: part.texture,
                 });
-                inner.recording.draw_sources.push((model.id, 0));
+                inner.recording.draw_sources.push((model.id, 0, call));
             }
             Ok(STICKSHIFT_OK)
         })
@@ -341,7 +355,8 @@ pub unsafe extern "C" fn stickshift_frame_draw_quad(
                 color: q.color.to_array(),
                 fill,
             });
-            inner.recording.quad_sources.push(source);
+            let call = inner.recording.next_call();
+            inner.recording.quad_sources.push((source, call));
             Ok(STICKSHIFT_OK)
         })
     })
@@ -376,11 +391,12 @@ pub unsafe extern "C" fn stickshift_frame_draw_text(
             }
             let atlas_id = entry.atlas_id;
             let recording = &mut inner.recording;
+            let call = recording.next_call();
             entry
                 .atlas
                 .layout(text, [x, y], px, color.to_array(), |quad| {
                     recording.quads.push(quad);
-                    recording.quad_sources.push(atlas_id);
+                    recording.quad_sources.push((atlas_id, call));
                 });
             Ok(STICKSHIFT_OK)
         })
@@ -452,19 +468,37 @@ pub unsafe extern "C" fn stickshift_frame_submit(
             let recording = &mut inner.recording;
             recording.kept_draws.clear();
             recording.kept_quads.clear();
+            // `draws_skipped` counts draw calls, like the `NOT_READY` refusals:
+            // a dropped model or text counts once, not once per part or glyph.
+            // A call's draws (or quads) are recorded together, and calls are
+            // numbered across both lists, so a new number is a new call.
             let mut skipped = 0;
-            for (draw, &source) in recording.draws.iter().zip(&recording.draw_sources) {
-                if live(&inner.meshes, &inner.textures, &inner.models, source) {
-                    recording.kept_draws.push(*draw);
-                } else {
+            let mut last_dropped = None;
+            let mut dropped = |call: u32| {
+                if last_dropped != Some(call) {
+                    last_dropped = Some(call);
                     skipped += 1;
                 }
+            };
+            for (draw, &(object, texture, call)) in
+                recording.draws.iter().zip(&recording.draw_sources)
+            {
+                if live(
+                    &inner.meshes,
+                    &inner.textures,
+                    &inner.models,
+                    (object, texture),
+                ) {
+                    recording.kept_draws.push(*draw);
+                } else {
+                    dropped(call);
+                }
             }
-            for (quad, &source) in recording.quads.iter().zip(&recording.quad_sources) {
-                if source == 0 || inner.textures.get(source).is_some() {
+            for (quad, &(texture, call)) in recording.quads.iter().zip(&recording.quad_sources) {
+                if texture == 0 || inner.textures.get(texture).is_some() {
                     recording.kept_quads.push(*quad);
                 } else {
-                    skipped += 1;
+                    dropped(call);
                 }
             }
             inner.counters.draws_skipped += skipped;

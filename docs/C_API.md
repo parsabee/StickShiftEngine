@@ -206,9 +206,12 @@ if (stickshift_frame_acquire(ctx, &frame) == STICKSHIFT_OK) {
   the call returns `STICKSHIFT_NOT_READY` and counts it in `StickShiftStats.draws_skipped`. A destroyed or
   unknown handle returns `STICKSHIFT_ERROR_INVALID_HANDLE`. A resource destroyed after a draw was
   recorded, but before submit, is dropped from the frame at submit and counted the same way.
+  `draws_skipped` counts draw *calls*: a dropped model or text draw counts once, however many
+  parts or glyphs it recorded.
 - **Materials.** Meshes with the `POS_NORMAL_UV` layout sample `base_color_texture` (white if
   none) and multiply it by `base_color`. Meshes with the `POS_NORMAL_COLOR` layout take their
-  colour from the vertices; `base_color` and the texture are ignored for them in the beta.
+  colour from the vertices; `base_color` and the texture are ignored for them in the beta, so the
+  texture handle is not checked and destroying it does not drop the draw.
 - **Colour spaces.** Lighting is linear. Create colour images (photos, painted albedo) with
   `STICKSHIFT_COLOR_SPACE_SRGB`: the sampler decodes them to linear before shading. Create data
   (an SDF font atlas, masks) with `STICKSHIFT_COLOR_SPACE_LINEAR`: it is sampled as stored. Model
