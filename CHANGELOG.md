@@ -130,6 +130,14 @@ API**.
   16,666,666 ns, so 2 ns were left over every frame: `alpha` crept up from zero, and after about
   8.3 million frames a frame ran two updates. The headless runner, and the windowed runner's first
   frame, now step by the new public `FIXED_DT_DURATION`, the exact step as a `Duration`.
+- **`MetalRenderer::new` sizes its drawable in pixels**
+  ([#36](https://github.com/parsabee/StickShiftEngine/issues/36)). The window constructor set the
+  layer's `drawableSize` from the view's bounds, which are in points, and ignored its `width` /
+  `height` arguments. On a 2x display a renderer built directly therefore rendered at half
+  resolution until someone called `resize_surface`. (`stickshift-core` resizes straight away, so
+  the demo was unaffected.) The drawable is now `width` × `height` physical pixels, falling back to
+  the bounds times the window's backing scale factor for a zero dimension. The layer's
+  `contentsScale` and `surface_scale` are set to that scale factor.
 
 ## [0.1.0-beta.2] - 2026-11-14
 

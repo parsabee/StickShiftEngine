@@ -864,8 +864,9 @@ struct FrameShading {
 impl MetalRenderer {
     /// Construct a backend attached to a `winit` window's surface.
     ///
-    /// Attaches a `CAMetalLayer` to the window's `NSView`, sizes it to the view
-    /// bounds, and compiles the Phong raster pipeline. The infallible wrapper over
+    /// Attaches a `CAMetalLayer` to the window's `NSView`, sizes its drawable to
+    /// `width` × `height` **physical pixels** (`winit`'s `inner_size`), and
+    /// compiles the Phong raster pipeline. The infallible wrapper over
     /// [`try_new`](Self::try_new).
     ///
     /// # Panics
@@ -880,8 +881,11 @@ impl MetalRenderer {
     /// Construct a backend attached to a window's surface, or say why not.
     ///
     /// Attaches a fresh `CAMetalLayer` to the window's `NSView` and sizes its
-    /// drawable to the view bounds; `width`/`height` are not used (the bounds
-    /// decide), matching [`new`](Self::new).
+    /// drawable to `width` × `height` physical pixels. A zero dimension falls
+    /// back to the view's bounds times its window's backing scale factor, so the
+    /// drawable is never a 1x surface on a Retina display. The layer's
+    /// `contentsScale` and [`surface_scale`](RenderDevice::surface_scale) are
+    /// set to that backing scale factor (pixels per point).
     ///
     /// # Errors
     /// [`RenderError::NoDevice`] without a Metal device,
@@ -901,19 +905,35 @@ impl MetalRenderer {
         layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
         layer.set_presents_with_transaction(false);
 
-        // Attach the layer to the window's NSView.
+        // Attach the layer to the window's NSView, sized in pixels.
         // SAFETY: `view` is the live AppKit `NSView` of `window` (checked by
-        // `ns_view`), and `layer` is a valid `CAMetalLayer` we own.
-        unsafe {
+        // `ns_view`), and `layer` is a valid `CAMetalLayer` we own. A view not
+        // yet in a window answers `window` with nil, which is checked before
+        // it is messaged.
+        let scale = unsafe {
             let bounds: NSRect = msg_send![view, bounds];
-            layer.set_drawable_size(CGSize::new(bounds.size.width, bounds.size.height));
+            let ns_window: cocoa_id = msg_send![view, window];
+            let backing_scale: f64 = if ns_window.is_null() {
+                1.0
+            } else {
+                msg_send![ns_window, backingScaleFactor]
+            };
+            let (size, scale) = window_drawable(
+                (width, height),
+                (bounds.size.width, bounds.size.height),
+                backing_scale,
+            );
+            layer.set_contents_scale(f64::from(scale));
+            layer.set_drawable_size(size);
             let _: () = msg_send![view, setWantsLayer: YES];
             let layer_ptr = layer.as_ref() as *const metal::MetalLayerRef as cocoa_id;
             let _: () = msg_send![view, setLayer: layer_ptr];
-        }
+            scale
+        };
 
-        let _ = (width, height);
-        Self::try_build(device, command_queue, RenderTarget::Surface { layer })
+        let mut renderer = Self::try_build(device, command_queue, RenderTarget::Surface { layer })?;
+        renderer.surface_scale = scale;
+        Ok(renderer)
     }
 
     /// Construct a backend that renders into a `CAMetalLayer` the **host owns**.
@@ -2816,6 +2836,31 @@ impl FrameRecorder for MetalRenderer {
     }
 }
 
+/// A window layer's initial drawable size in pixels, and its pixels per point.
+///
+/// `pixels` is the size the caller passed (physical pixels). `bounds` is the
+/// view's size in points and `backing_scale` its window's pixels per point; they
+/// decide only when a pixel dimension is zero. A non-finite or non-positive
+/// scale counts as 1.
+fn window_drawable(pixels: (u32, u32), bounds: (f64, f64), backing_scale: f64) -> (CGSize, f32) {
+    let scale = if backing_scale.is_finite() && backing_scale > 0.0 {
+        backing_scale
+    } else {
+        1.0
+    };
+    let side = |pixels: u32, points: f64| {
+        if pixels > 0 {
+            f64::from(pixels)
+        } else {
+            (points * scale).round().max(1.0)
+        }
+    };
+    (
+        CGSize::new(side(pixels.0, bounds.0), side(pixels.1, bounds.1)),
+        scale as f32,
+    )
+}
+
 /// Extract the AppKit `NSView` pointer from a window handle.
 ///
 /// The pointer is valid for as long as the window is live.
@@ -2834,6 +2879,20 @@ fn ns_view<W: HasWindowHandle>(window: &W) -> Result<cocoa_id, RenderError> {
 #[cfg(test)]
 mod shadow_pass_tests {
     use super::*;
+
+    #[test]
+    fn a_window_drawable_is_sized_in_pixels() {
+        // An 800 x 600 pt window on a 2x display: winit passes 1600 x 1200 px,
+        // and that, not the bounds in points, is the drawable.
+        let (size, scale) = window_drawable((1600, 1200), (800.0, 600.0), 2.0);
+        assert_eq!((size.width, size.height, scale), (1600.0, 1200.0, 2.0));
+        // Without a pixel size, the bounds are converted at the backing scale.
+        let (size, _) = window_drawable((0, 0), (800.0, 600.0), 2.0);
+        assert_eq!((size.width, size.height), (1600.0, 1200.0));
+        // No window yet (or a bad scale): 1 pixel per point, never zero.
+        let (size, scale) = window_drawable((0, 0), (0.0, 0.0), f64::NAN);
+        assert_eq!((size.width, size.height, scale), (1.0, 1.0, 1.0));
+    }
 
     #[test]
     fn shadow_map_is_stored_not_discarded() {
