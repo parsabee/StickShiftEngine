@@ -384,6 +384,16 @@ impl<'g, 'f, G: Game> EngineApp<'g, 'f, G> {
     /// the seam (`begin_frame` … `submit`), which the real backend turns into a
     /// GPU present.
     fn drive_frame(&mut self) {
+        // A change the game queued through `EngineCtx` last frame is applied
+        // here, and the drawable resized for it, *before* the frame. Left to
+        // the shared `drive_frame`, it would be applied at the start of the
+        // frame and the drawable resized only after it, so that one frame would
+        // render the new settings at the old size. (The built-in menu applies
+        // its changes the same way, between frames.)
+        self.lp
+            .apply_pending_graphics(self.game, self.renderer.as_mut());
+        self.after_graphics_change();
+
         let now = Instant::now();
         let elapsed = match self.last_frame {
             Some(prev) => now.duration_since(prev),
@@ -519,14 +529,13 @@ impl<G: Game> ApplicationHandler<EngineEvent> for EngineApp<'_, '_, G> {
                 self.resize_surface();
             }
             WindowEvent::RedrawRequested => {
+                // Applies a graphics change the game queued, and resizes for
+                // it, before the frame (see `EngineApp::drive_frame`).
                 self.drive_frame();
                 if self.lp.exit_requested {
                     event_loop.exit();
                     return;
                 }
-                // A change the game requested through `EngineCtx` was applied at the
-                // start of that frame; resize / refresh / persist for it.
-                self.after_graphics_change();
                 // Request the next frame to keep the loop pumping.
                 if let Some(window) = &self.window {
                     window.request_redraw();

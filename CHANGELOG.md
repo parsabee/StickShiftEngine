@@ -118,6 +118,12 @@ API**.
   `EngineCtx::request_exit` quits after the current frame; it also ends a headless run early. The
   close button and Cmd-Q always quit. `RunConfig` and `Loop` gain a public field, which breaks only
   code that builds them with a struct literal without `..Default::default()`.
+- **A graphics change the game requests no longer renders one frame at the old size**
+  ([#34](https://github.com/parsabee/StickShiftEngine/issues/34)). A change queued through
+  `EngineCtx::set_graphics_settings` was applied at the start of a frame, but the windowed runner
+  resized the drawable only after that frame, so a render-scale or full-screen change showed one
+  stretched or cropped frame. The runner now applies the queued change and resizes for it before the
+  frame, as the built-in menu already did.
 
 ## [0.1.0-beta.2] - 2026-11-14
 
