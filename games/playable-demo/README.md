@@ -115,6 +115,16 @@ cargo run -p playable-demo --example gen_skyline
 cargo run -p playable-demo --example gen_font
 ```
 
+One more example records the demo rather than baking an asset.
+[`record_demo`](examples/record_demo.rs) runs the game offscreen through the Metal backend, with
+an autopilot steering around traffic, and writes PNG frames. Traffic is seeded, so it records the
+same clip every time. [`scripts/record-demo-gif.sh`](../../scripts/record-demo-gif.sh) runs it and
+assembles the frames into the top-level README's `docs/images/demo.gif` with macOS's ImageIO:
+
+```sh
+./scripts/record-demo-gif.sh   # macOS, needs a Metal device
+```
+
 ## Asset licences
 
 Everything under [`assets/`](assets) is free to redistribute. Credits below; the
