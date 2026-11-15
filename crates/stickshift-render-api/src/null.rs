@@ -35,6 +35,9 @@ pub struct RecordedDraw {
     pub model: Mat4,
     /// The material parameters passed to the draw.
     pub material: MaterialParams,
+    /// The view-projection the seam held when the draw was recorded (the one
+    /// the Metal backend would build this draw's MVP from), if any had been set.
+    pub view_projection: Option<Mat4>,
 }
 
 /// A call the Metal backend would ignore, which [`NullRenderer`] therefore
@@ -495,6 +498,7 @@ impl FrameRecorder for NullRenderer {
             texture: self.current_texture,
             model,
             material: *material,
+            view_projection: self.view_projection,
         });
     }
 

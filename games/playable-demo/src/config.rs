@@ -60,9 +60,10 @@ pub(crate) const CHASE_DISTANCE: f32 = 12.0;
 pub(crate) const CHASE_HEIGHT: f32 = 6.0;
 /// Height above the player the camera aims at, so the road ahead stays framed.
 pub(crate) const CHASE_LOOK_AT_HEIGHT: f32 = 1.5;
-/// Chase smoothing (per fixed step); small enough to ease, large enough to
-/// keep the fast-moving box centered.
-pub(crate) const CHASE_SMOOTHING: f32 = 0.2;
+/// Chase smoothing half-life, in seconds: long enough to ease, short enough to
+/// keep the fast-moving car centered. (The same ease as closing 20% of the gap
+/// every 60 Hz step.)
+pub(crate) const CHASE_HALF_LIFE: f32 = 0.052;
 /// The car's travel direction (the streaming axis, `-Z`); the chase camera
 /// trails along it.
 pub(crate) const FORWARD: Vec3 = Vec3::new(0.0, 0.0, -1.0);

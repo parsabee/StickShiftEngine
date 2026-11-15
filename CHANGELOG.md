@@ -84,6 +84,21 @@ no functional changes. The known limitations of 0.1.0-beta.1 still apply.
   the buffers load, and before each image decode and mesh primitive. Destroying a context now
   stops the parse in progress the same way, instead of letting it finish. The importer gains
   `import_gltf_cancellable`, `import_slice_cancellable` and `ImportError::Cancelled` for this.
+- **A camera positioned in `Game::render` is used by that frame**
+  ([#24](https://github.com/parsabee/StickShiftEngine/issues/24)). `EngineCtx::camera_mut`
+  suggested moving the camera in `render`, but the loop pushed the camera across the render seam
+  before `render` ran, so such a game drew every frame with the previous frame's camera.
+  `EngineCtx::renderer` now pushes the camera again if it was moved since the last push, so draws
+  recorded after the move use it. `NullRenderer`'s `RecordedDraw` gains `view_projection`, the
+  camera each draw was recorded with.
+- **`ChaseController` smoothing no longer depends on the frame rate (breaking)**
+  ([#24](https://github.com/parsabee/StickShiftEngine/issues/24)). `follow` moved a fixed fraction
+  of the way on every call, so following from `render` converged twice as fast at 120 Hz as at
+  60 Hz. A small factor also trailed very loosely, while `0.0` snapped. Smoothing is now a
+  half-life in seconds: `with_smoothing(fraction)` is replaced by `with_half_life(seconds)`, and
+  `follow` takes the time step as a new last argument, `dt`. To keep an existing feel, a fraction
+  `f` per 60 Hz step is a half-life of `ln 2 / (-60 ln(1 - f))` seconds (`0.2` is about
+  `0.052`).
 
 ## [0.1.0-beta.1] - 2026-11-13
 

@@ -58,7 +58,7 @@ once; `update` runs 0..N times per frame with `dt` always equal to
 frame after that frame's updates. Advance state in `update`, record draws in `render`, and don't
 cross the two — that split is what makes the simulation framerate-independent.
 
-Everything the engine offers arrives through the [`EngineCtx`](../crates/stickshift-core/src/context.rs#L86)
+Everything the engine offers arrives through the [`EngineCtx`](../crates/stickshift-core/src/context.rs#L87)
 argument: the `Scene` (ECS world + physics + streaming), the ECS world, the render seam, the
 `Camera`, an input snapshot, frame timing. There is nothing else to reach for, and no way to reach
 past it.
@@ -191,8 +191,10 @@ protocol is `begin_frame` → `set_pipeline` / `bind_texture` / `draw_mesh` /
 
 You never set the view: the driver pushes the engine camera's view-projection across the seam
 before `render` runs, so whatever pose the camera is in at the end of `update` is the pose the
-frame is drawn from. Move the camera with `ctx.camera_mut()`; `stickshift_camera::ChaseController` is a
-ready-made follow camera.
+frame is drawn from. Move the camera with `ctx.camera_mut()`, in `update` or in `render`. A move
+in `render` is pushed on your next `ctx.renderer()` call, so position the camera before recording
+the frame. `stickshift_camera::ChaseController` is a ready-made follow camera; pass `follow` the
+time step it covers, so its smoothing is the same at any frame rate.
 
 Group draws by pipeline and texture so each switch happens once per group rather than once per
 entity. For a HUD, record [`OverlayQuad`](../crates/stickshift-render-api/src/overlay.rs#L71)s — the
