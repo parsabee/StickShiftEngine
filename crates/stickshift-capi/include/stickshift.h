@@ -659,6 +659,12 @@ typedef struct StickShiftTextureDesc {
 #define STICKSHIFT_ERROR_INTERNAL (-10)
 
 /**
+ * A wait gave up before what it was waiting for finished (a hung GPU, or a
+ * load that never completed).
+ */
+#define STICKSHIFT_ERROR_TIMEOUT (-11)
+
+/**
  * The Metal renderer (Apple platforms).
  */
 #define STICKSHIFT_BACKEND_METAL 0
@@ -889,6 +895,10 @@ StickShiftResult stickshift_poll_events(struct StickShiftContext *ctx,
 /**
  * **Wait** for every model load and submitted frame to finish, delivering
  * their callbacks; their poll events are queued. Tests and tools only.
+ *
+ * Waits at most 60 seconds, then returns `STICKSHIFT_ERROR_TIMEOUT` (the last
+ * error says what was still pending). Callbacks for whatever did finish have
+ * been delivered; the rest stays pending and a later call can wait again.
  *
  * # Safety
  * `ctx` must be NULL or a live context.

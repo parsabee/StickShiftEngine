@@ -225,6 +225,9 @@ fn versions_and_result_names() {
     assert_eq!(version, env!("CARGO_PKG_VERSION"));
     let name = unsafe { CStr::from_ptr(stickshift_result_name(STICKSHIFT_NOT_READY)) };
     assert_eq!(name.to_str().unwrap(), "STICKSHIFT_NOT_READY");
+    // SAFETY: a static string.
+    let name = unsafe { CStr::from_ptr(stickshift_result_name(STICKSHIFT_ERROR_TIMEOUT)) };
+    assert_eq!(name.to_str().unwrap(), "STICKSHIFT_ERROR_TIMEOUT");
 }
 
 #[test]

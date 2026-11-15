@@ -9,7 +9,7 @@ use std::cell::UnsafeCell;
 use std::collections::VecDeque;
 use std::ffi::{c_char, CString};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use stickshift_math::glam::{Mat4, Vec3};
 use stickshift_render_api::{RenderSettings, ShadowQuality, SunSky};
@@ -28,6 +28,9 @@ pub(crate) const MAX_FRAMES_IN_FLIGHT: u64 = 3;
 
 /// The largest drawable or texture side, in pixels.
 pub(crate) const MAX_DIMENSION: u32 = 16384;
+
+/// How long [`stickshift_context_flush`] waits before it gives up.
+const FLUSH_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// An opaque rendering context. See `docs/C_API.md`.
 pub struct StickShiftContext {
@@ -233,10 +236,14 @@ impl Inner {
     }
 
     /// Whether nothing is in progress: no loads, no frames or read-backs on the GPU.
-    fn idle(&self) -> bool {
-        self.loader.as_ref().is_none_or(|l| l.in_flight() == 0)
-            && self.pending_frames.is_empty()
-            && self.pending_reads.is_empty()
+    /// What housekeeping is still waiting for: `(model loads, frames,
+    /// read-backs)`. All zero when the context is idle.
+    fn pending(&self) -> (u32, usize, usize) {
+        (
+            self.loader.as_ref().map_or(0, Loader::in_flight),
+            self.pending_frames.len(),
+            self.pending_reads.len(),
+        )
     }
 
     pub(crate) fn surface_size(&self) -> (u32, u32) {
@@ -747,20 +754,46 @@ pub unsafe extern "C" fn stickshift_poll_events(
 /// **Wait** for every model load and submitted frame to finish, delivering
 /// their callbacks; their poll events are queued. Tests and tools only.
 ///
+/// Waits at most 60 seconds, then returns `STICKSHIFT_ERROR_TIMEOUT` (the last
+/// error says what was still pending). Callbacks for whatever did finish have
+/// been delivered; the rest stays pending and a later call can wait again.
+///
 /// # Safety
 /// `ctx` must be NULL or a live context.
 #[no_mangle]
 pub unsafe extern "C" fn stickshift_context_flush(ctx: *mut StickShiftContext) -> StickShiftResult {
-    call(|| loop {
-        let idle = with_context(ctx, |inner| {
+    call(|| flush_within(ctx, FLUSH_TIMEOUT))
+}
+
+/// [`stickshift_context_flush`], giving up after `timeout`.
+///
+/// # Safety
+/// `ctx` must be NULL or a live context.
+unsafe fn flush_within(
+    ctx: *mut StickShiftContext,
+    timeout: Duration,
+) -> Result<StickShiftResult, Error> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let pending = with_context(ctx, |inner| {
             inner.pump();
-            Ok(inner.idle())
+            Ok(inner.pending())
         })?;
-        if idle {
+        if pending == (0, 0, 0) {
             return Ok(STICKSHIFT_OK);
         }
+        if Instant::now() >= deadline {
+            let (loads, frames, reads) = pending;
+            return Err(Error::new(
+                STICKSHIFT_ERROR_TIMEOUT,
+                format!(
+                    "stickshift_context_flush gave up after {timeout:?}: {loads} model \
+                     load(s), {frames} frame(s) and {reads} read-back(s) are still pending"
+                ),
+            ));
+        }
         std::thread::sleep(Duration::from_millis(1));
-    })
+    }
 }
 
 /// The state of any handle id: `INVALID` for an unknown handle, a NULL
@@ -782,6 +815,59 @@ pub unsafe extern "C" fn stickshift_resource_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn null_context() -> *mut StickShiftContext {
+        let desc = StickShiftContextDesc {
+            api_version: STICKSHIFT_API_VERSION,
+            backend: STICKSHIFT_BACKEND_NULL,
+            metal_layer: std::ptr::null_mut(),
+            width: 4,
+            height: 4,
+            scale: 1.0,
+        };
+        let mut ctx = std::ptr::null_mut();
+        // SAFETY: valid pointers to locals.
+        assert_eq!(
+            unsafe { stickshift_context_create(&desc, &mut ctx) },
+            STICKSHIFT_OK
+        );
+        ctx
+    }
+
+    #[test]
+    fn flush_gives_up_on_a_frame_that_never_completes() {
+        let ctx = null_context();
+        // SAFETY: just created; no other call is in progress.
+        let context = unsafe { &*ctx };
+        // A frame the GPU will never finish, as after a hang.
+        context
+            .enter()
+            .unwrap()
+            .inner()
+            .pending_frames
+            .push_back((u64::MAX, None));
+
+        let start = Instant::now();
+        // SAFETY: a live context.
+        let result = call(|| unsafe { flush_within(ctx, Duration::from_millis(20)) });
+        assert_eq!(result, STICKSHIFT_ERROR_TIMEOUT);
+        assert!(start.elapsed() >= Duration::from_millis(20));
+        // SAFETY: never NULL, valid until the next error on this thread.
+        let message =
+            unsafe { std::ffi::CStr::from_ptr(crate::core::stickshift_last_error_message()) };
+        let message = message.to_string_lossy();
+        assert!(
+            message.contains("1 frame(s)") && message.contains("0 model load(s)"),
+            "{message}"
+        );
+
+        // Once nothing is stuck, flush returns at once.
+        context.enter().unwrap().inner().pending_frames.clear();
+        // SAFETY: a live context.
+        assert_eq!(unsafe { stickshift_context_flush(ctx) }, STICKSHIFT_OK);
+        // SAFETY: no guard is held.
+        assert_eq!(unsafe { stickshift_context_destroy(ctx) }, STICKSHIFT_OK);
+    }
 
     #[test]
     fn a_second_enter_is_busy_until_the_first_guard_drops() {
