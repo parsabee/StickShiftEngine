@@ -138,6 +138,12 @@ API**.
   the demo was unaffected.) The drawable is now `width` × `height` physical pixels, falling back to
   the bounds times the window's backing scale factor for a zero dimension. The layer's
   `contentsScale` and `surface_scale` are set to that scale factor.
+- **Shadows Off frees the shadow map** ([#37](https://github.com/parsabee/StickShiftEngine/issues/37)).
+  `set_render_settings` replaced the shadow map only for a tier with a size, so switching to
+  `ShadowQuality::Off` kept the previous map allocated: 64 MiB coming from High, 16 MiB from Low.
+  Off, the obvious memory saver, saved nothing. Off now swaps in a 1×1 placeholder
+  (`shadow::SHADOW_MAP_SIZE_OFF`), which keeps the shaders' binding valid, and a later tier
+  re-creates a full map.
 
 ## [0.1.0-beta.2] - 2026-11-14
 

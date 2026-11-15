@@ -129,9 +129,16 @@ pub const SHADOW_MAP_SIZE: u32 = 4096;
 /// 2048², 16 MiB, texels twice the size of [`SHADOW_MAP_SIZE`]'s at the same fit.
 pub const SHADOW_MAP_SIZE_LOW: u32 = 2048;
 
+/// Edge length of the placeholder map kept at [`ShadowQuality::Off`]: 1×1, so
+/// the lit shaders' shadow-map binding stays valid while the real map's memory
+/// is freed. Off runs no shadow pass and zeroes the shadow strength, so the
+/// placeholder is never rendered into or read for shading.
+pub const SHADOW_MAP_SIZE_OFF: u32 = 1;
+
 /// The shadow map edge length a [`ShadowQuality`] tier uses:
 /// [`SHADOW_MAP_SIZE`] for `High`, [`SHADOW_MAP_SIZE_LOW`] for `Low`, and `None`
-/// for `Off`, which renders no shadow pass and so needs no particular map.
+/// for `Off`, which renders no shadow pass and so needs no real map (the
+/// backend then keeps a [`SHADOW_MAP_SIZE_OFF`] placeholder).
 #[must_use]
 pub fn shadow_map_size_for(quality: ShadowQuality) -> Option<u32> {
     match quality {
