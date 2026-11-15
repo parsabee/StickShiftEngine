@@ -144,6 +144,12 @@ API**.
   Off, the obvious memory saver, saved nothing. Off now swaps in a 1×1 placeholder
   (`shadow::SHADOW_MAP_SIZE_OFF`), which keeps the shaders' binding valid, and a later tier
   re-creates a full map.
+- **A completed frame has always returned its frames-in-flight permit**
+  ([#38](https://github.com/parsabee/StickShiftEngine/issues/38)). The Metal completion handler
+  bumped `completed_frame_count` and only then released the frame's permit. A thread that saw every
+  frame completed could therefore still read `frames_in_flight() > 0`, which made the `async_frames`
+  test flaky on a busy machine. The handler now returns the permit and flags the read-back first, and
+  counts the frame last.
 
 ## [0.1.0-beta.2] - 2026-11-14
 
