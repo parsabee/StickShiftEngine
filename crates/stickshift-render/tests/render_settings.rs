@@ -90,8 +90,8 @@ fn shadow_range_is_a_fraction_of_the_scaled_draw_distance() {
 
     // The frame actually fits that slab.
     r.begin_frame();
-    let fitted = r.light_for_test().shadow_distance;
     r.submit();
+    let fitted = r.light_for_test().shadow_distance;
     assert!((fitted - expected).abs() < 1e-2);
 
     // Back to matching the draw distance.

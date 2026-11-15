@@ -200,7 +200,7 @@ fn render_textured_with(texels: &[u8], color_space: ColorSpace) -> Option<Vec<u8
     });
 
     // Camera pushed before the frame opens, matching the engine loop: the sky pass
-    // runs inside `begin_frame` and needs the frame's camera to place the sun.
+    // needs the frame's camera to place the sun.
     // The camera's position/target/defaults are unchanged.
     renderer.set_view_projection(camera.view_projection_matrix());
     renderer.set_camera_position(camera.position());

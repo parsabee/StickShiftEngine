@@ -253,7 +253,7 @@ The seam is two traits in `stickshift-render-api`, bundled for the game as one
   `create_mesh` / `create_texture` / `create_pipeline` (and their `destroy_*`), plus
   `surface_size` and `safe_area_insets`. Every call returns an **opaque handle** — a newtype over
   an id. No GPU type crosses the seam in either direction.
-- [`FrameRecorder`](../crates/stickshift-render-api/src/recorder.rs#L63) — per-frame recording:
+- [`FrameRecorder`](../crates/stickshift-render-api/src/recorder.rs#L66) — per-frame recording:
   `begin_frame` → `set_pipeline` / `bind_texture` / `draw_mesh` / `draw_overlay_quad` → `submit`.
   (`set_view_projection` is also on this trait, but the *driver* calls it, pushing the engine
   camera's matrix across the seam before `Game::render` runs — the game never does.)

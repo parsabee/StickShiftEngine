@@ -99,6 +99,16 @@ no functional changes. The known limitations of 0.1.0-beta.1 still apply.
   `follow` takes the time step as a new last argument, `dt`. To keep an existing feel, a fraction
   `f` per 60 Hz step is a half-life of `ln 2 / (-60 ln(1 - f))` seconds (`0.2` is about
   `0.052`).
+- **A camera set after `begin_frame` lights and shadows that frame**
+  ([#25](https://github.com/parsabee/StickShiftEngine/issues/25)). The `FrameRecorder` protocol
+  lists `set_view_projection` / `set_camera_position` after `begin_frame`, but the Metal backend
+  captured the camera-dependent lighting inside `begin_frame`. A host following the documented
+  order got shadows fitted to the previous frame's camera, and the sky and specular were a frame
+  behind the geometry. On the very first frame the shadow fit came from the identity matrix. The
+  backend now captures the frame's light block (camera, sun, shadow fit, and whether shadows are
+  cast) at the frame's first draw, or at `submit` for a frame with no draws. A camera or sun set
+  before that, before or after `begin_frame`, lights the frame. `stickshift-core` and the C API
+  already set the camera before opening the frame, so they are unaffected.
 
 ## [0.1.0-beta.1] - 2026-11-13
 

@@ -588,11 +588,10 @@ fn reference_sun_sky() -> stickshift_render_api::SunSky {
 /// Render the sun-disc reference offscreen and return its pixel bytes, or `None`
 /// if no Metal device is available.
 ///
-/// Draws **no geometry**: the sky is a fullscreen pass inside `begin_frame`, so an
+/// Draws **no geometry**: the sky is a fullscreen pass every frame encodes, so an
 /// empty frame is exactly the sky and nothing else. That isolates the disc from
 /// any lighting or mesh change — only the sky shader and the sun direction can
-/// move these pixels. The camera is pushed *before* `begin_frame` because the sky
-/// pass runs there and unprojects the frame's camera to get its view rays.
+/// move these pixels. The sky unprojects the frame's camera to get its view rays.
 fn render_reference_sun() -> Option<Vec<u8>> {
     let mut renderer = MetalRenderer::new_offscreen(WIDTH, HEIGHT)?;
 

@@ -31,7 +31,10 @@ use crate::sun::SunSky;
 ///    the draws that follow. Both are **sticky** (retained across frames), so the
 ///    engine typically pushes them once per frame before the game records; a frame
 ///    that draws must have a view-projection in effect (set this frame or a prior
-///    one).
+///    one). The camera and sun/sky in effect at the frame's **first draw** also
+///    light it: the sky, specular and the shadow fit (or, for a frame with no
+///    draws, the ones in effect at `submit`). Setting them before or after
+///    `begin_frame` is equally fine.
 /// 3. [`set_pipeline`](Self::set_pipeline) at least once **before the first draw**;
 ///    it may be called again to switch pipelines between draws.
 /// 4. Any number of [`bind_texture`](Self::bind_texture) and
@@ -86,9 +89,11 @@ pub trait FrameRecorder {
     /// - The value is **sticky**: it persists across `begin_frame`/`submit` until
     ///   replaced, so a default engine loop pushes the engine camera's
     ///   view-projection here **once per frame before `Game::render`** (before the
-    ///   game opens its frame) and every draw that frame uses it.
+    ///   game opens its frame) and every draw that frame uses it. Setting it after
+    ///   `begin_frame` but before the first draw is equally valid.
     /// - May be called again to switch mid-frame; the most recent value applies to
-    ///   the draws that follow.
+    ///   the draws that follow. The frame's lighting (sky, specular, shadow fit)
+    ///   keeps the camera in effect at its first draw.
     /// - Until the first call, the implementation uses the identity matrix.
     fn set_view_projection(&mut self, view_proj: Mat4);
 
@@ -127,9 +132,10 @@ pub trait FrameRecorder {
     /// # Contract (ordering)
     /// - The value is **sticky** — it persists across `begin_frame`/`submit` until
     ///   replaced — so a game with a fixed sun pushes it once at load, and a game
-    ///   with a day/night cycle pushes it every frame *before* it opens the frame.
-    /// - Backends honour it **per frame**: whatever is in effect when a frame opens
-    ///   lights that frame, including its sky pass.
+    ///   with a day/night cycle pushes it every frame before its first draw.
+    /// - Backends honour it **per frame**: whatever is in effect at a frame's first
+    ///   draw (or at `submit`, for a frame with no draws) lights that frame,
+    ///   including its sky pass.
     /// - Until the first call, the implementation uses the default [`SunSky`].
     fn set_sun_sky(&mut self, sun: &SunSky);
 
