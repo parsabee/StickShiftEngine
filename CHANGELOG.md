@@ -168,6 +168,15 @@ API**.
   were three entries, each parsed and uploaded to the GPU. Keys are now canonicalized, which also
   covers `..` and symlinks. A path that can't be canonicalized (a missing file) stays its own key,
   so the import error still names the path the caller gave.
+- **Looping a broken sound keeps the music, and sound handles belong to their `Audio`**
+  ([#41](https://github.com/parsabee/StickShiftEngine/issues/41)).
+  - `Audio::play_looping` stopped the current loop before checking that the new sound could play.
+    Asking for a sound whose file failed to decode left silence. It now checks first, and a sound
+    that can't loop leaves the current one playing.
+  - **(Breaking)** `SoundHandle(pub u32)` was a bare index: a handle from one `Audio` passed to
+    another played whatever sound sat at that index, and callers could forge handles. A handle now
+    carries the id of the `Audio` that issued it, which ignores anyone else's. Its fields are
+    private, so handles come only from `Audio::load`.
 
 ## [0.1.0-beta.2] - 2026-11-14
 
