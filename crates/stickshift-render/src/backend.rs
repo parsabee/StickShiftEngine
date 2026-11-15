@@ -194,7 +194,7 @@ use crate::frame_sync::FrameSemaphore;
 use crate::registry::Registry;
 use crate::shadow::{
     fit_shadow_frustum, resolve_shadow_distance, shadow_distance_for_fog, shadow_map_size_for,
-    SHADOW_MAP_SIZE,
+    SHADOW_MAP_SIZE, SHADOW_MAP_SIZE_OFF,
 };
 use crate::vertex::{
     normal_matrix, LightUniforms, MaterialUniforms, Uniforms, Vertex, UNIFORM_RING_STRIDE,
@@ -2029,8 +2029,9 @@ impl MetalRenderer {
 
     /// The shadow map's current edge length in texels: 4096 for
     /// [`ShadowQuality::High`](stickshift_render_api::ShadowQuality::High), 2048 for
-    /// [`ShadowQuality::Low`](stickshift_render_api::ShadowQuality::Low). Off keeps the last
-    /// map (the pass is skipped, so it costs no fill). Test/diagnostic aid.
+    /// [`ShadowQuality::Low`](stickshift_render_api::ShadowQuality::Low), and 1 for
+    /// [`ShadowQuality::Off`](stickshift_render_api::ShadowQuality::Off), whose
+    /// placeholder map frees the real one's memory. Test/diagnostic aid.
     #[must_use]
     pub fn shadow_map_size(&self) -> u32 {
         self.shadow_map_size
@@ -2705,19 +2706,20 @@ impl RenderDevice for MetalRenderer {
             .map(|fraction| fraction.clamp(0.0, 1.0) * draw_distance);
 
         // Shadow tier: off zeroes the strength (the lit shaders then skip the map
-        // and `submit` skips the pass); on re-creates the map only if the size
-        // changes. Command buffers retain the textures they reference, so dropping
-        // the old map here cannot pull it out from under a frame in flight.
+        // and `submit` skips the pass) and swaps the map for a 1x1 placeholder,
+        // which frees its memory (64 MiB at High) while keeping the binding
+        // valid. A tier re-creates the map only if the size changes. Command
+        // buffers retain the textures they reference, so dropping the old map
+        // here cannot pull it out from under a frame in flight.
         self.light.shadow_strength = if settings.shadows.casts_shadows() {
             1.0
         } else {
             0.0
         };
-        if let Some(size) = shadow_map_size_for(settings.shadows) {
-            if size != self.shadow_map_size {
-                self.shadow_map = new_shadow_map(&self.device, size);
-                self.shadow_map_size = size;
-            }
+        let size = shadow_map_size_for(settings.shadows).unwrap_or(SHADOW_MAP_SIZE_OFF);
+        if size != self.shadow_map_size {
+            self.shadow_map = new_shadow_map(&self.device, size);
+            self.shadow_map_size = size;
         }
 
         self.render_settings = *settings;

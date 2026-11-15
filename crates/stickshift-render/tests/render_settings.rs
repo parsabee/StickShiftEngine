@@ -10,7 +10,9 @@
 //! the UI scale is reported back. Like the other backend tests they **skip** when
 //! no Metal device is available.
 
-use stickshift_render::shadow::{shadow_distance_for_fog, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE_LOW};
+use stickshift_render::shadow::{
+    shadow_distance_for_fog, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE_LOW, SHADOW_MAP_SIZE_OFF,
+};
 use stickshift_render::MetalRenderer;
 use stickshift_render_api::{FrameRecorder, RenderDevice, RenderSettings, ShadowQuality};
 
@@ -121,6 +123,11 @@ fn shadow_tiers_resize_or_disable_the_map() {
         0.0,
         "off disables shadowing"
     );
+    assert_eq!(
+        r.shadow_map_size(),
+        SHADOW_MAP_SIZE_OFF,
+        "off frees the map's memory"
+    );
     // A frame with the shadow pass skipped still renders.
     r.begin_frame();
     r.submit();
@@ -130,6 +137,17 @@ fn shadow_tiers_resize_or_disable_the_map() {
     assert_eq!(r.shadow_map_size(), SHADOW_MAP_SIZE);
     assert_eq!(r.light_for_test().shadow_strength, 1.0);
     assert_eq!(r.render_settings(), RenderSettings::default());
+    // Shadows come back working after Off: a frame renders with the new map.
+    r.begin_frame();
+    r.submit();
+    assert!(r.read_pixels().is_some());
+
+    // Straight from High, too.
+    r.set_render_settings(&RenderSettings {
+        shadows: ShadowQuality::Off,
+        ..RenderSettings::default()
+    });
+    assert_eq!(r.shadow_map_size(), SHADOW_MAP_SIZE_OFF);
 }
 
 #[test]
