@@ -6,9 +6,13 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
 use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Tween};
+
+/// The id the next [`Audio`] takes, so its handles name it.
+static NEXT_OWNER: AtomicU32 = AtomicU32::new(1);
 
 use crate::handle::SoundHandle;
 use crate::volume::Volume;
@@ -35,11 +39,40 @@ enum Output {
     Silent,
 }
 
+/// The `kira` mixer behind a device. Tests drive the same device-mode code over
+/// `kira`'s mock backend, which opens no device and produces no sound.
+// The second variant exists only in tests, and a `Device` already lives in a
+// `Box`, so the size difference costs nothing outside tests.
+#[cfg_attr(test, allow(clippy::large_enum_variant))]
+enum Manager {
+    Default(AudioManager<DefaultBackend>),
+    #[cfg(test)]
+    Mock(AudioManager<kira::backend::mock::MockBackend>),
+}
+
+impl Manager {
+    fn play(&mut self, data: StaticSoundData) -> Result<StaticSoundHandle, String> {
+        match self {
+            Self::Default(manager) => manager.play(data).map_err(|e| e.to_string()),
+            #[cfg(test)]
+            Self::Mock(manager) => manager.play(data).map_err(|e| e.to_string()),
+        }
+    }
+
+    fn set_main_volume(&mut self, volume: Decibels) {
+        match self {
+            Self::Default(manager) => manager.main_track().set_volume(volume, Tween::default()),
+            #[cfg(test)]
+            Self::Mock(manager) => manager.main_track().set_volume(volume, Tween::default()),
+        }
+    }
+}
+
 /// The live mixer and the one loop channel it owns.
 struct Device {
     /// The `kira` mixer. Dropping it stops all output, so it lives as long as the
     /// [`Audio`] that owns it.
-    manager: AudioManager<DefaultBackend>,
+    manager: Manager,
     /// The playing loop's `kira` handle, kept so it can be stopped or replaced.
     /// Held only in device mode — [`Audio::looping`] is the device-independent
     /// view of the same fact.
@@ -101,6 +134,8 @@ struct Device {
 /// (a state change, a collision), not polled every update.
 pub struct Audio {
     output: Output,
+    /// This layer's id, carried by every handle it issues.
+    owner: u32,
     /// Loaded sounds, indexed by [`SoundHandle`]'s wrapped value.
     sounds: Vec<Sound>,
     /// Path → handle, so a second load of the same file is a lookup.
@@ -129,7 +164,7 @@ impl Audio {
     pub fn with_output_device() -> Self {
         let output = match AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()) {
             Ok(manager) => Output::Device(Box::new(Device {
-                manager,
+                manager: Manager::Default(manager),
                 looping: None,
             })),
             // The whole point of the fallback: no device is a perfectly ordinary
@@ -159,6 +194,7 @@ impl Audio {
     fn with_output(output: Output) -> Self {
         Self {
             output,
+            owner: NEXT_OWNER.fetch_add(1, Ordering::Relaxed),
             sounds: Vec::new(),
             by_path: HashMap::new(),
             decodes: 0,
@@ -214,7 +250,7 @@ impl Audio {
             }
         };
 
-        let handle = SoundHandle(self.sounds.len() as u32);
+        let handle = SoundHandle::new(self.owner, self.sounds.len() as u32);
         self.sounds.push(Sound {
             path: key.clone(),
             data,
@@ -264,11 +300,23 @@ impl Audio {
     /// current loop and starts the new one. So the count of loops actually started
     /// ([`loop_starts`](Self::loop_starts)) rises only when playback really began,
     /// which is what a test asserting "the music was never doubled" pins.
+    ///
+    /// A sound that failed to load cannot loop, so asking for one leaves the
+    /// current loop playing rather than replacing it with silence.
     pub fn play_looping(&mut self, sound: SoundHandle, volume: Volume) {
         let Some(index) = self.index_of(sound) else {
             return;
         };
         if self.looping == Some(sound) {
+            return;
+        }
+
+        // A sound that failed to load does not take the channel (on a device;
+        // silent mode decodes nothing and keeps the channel's state for any
+        // sound): it would claim to be looping while silent, and a later request
+        // for the same sound would then do nothing. It is checked *before* the
+        // current loop stops, so a bad file never turns the music off.
+        if !self.is_silent() && self.sounds[index].data.is_none() {
             return;
         }
 
@@ -281,9 +329,6 @@ impl Audio {
             self.loop_starts += 1;
             return;
         };
-        // A sound that failed to load, or a start the audio thread refused, does
-        // not take the channel: it would claim to be looping while silent, and
-        // a later request for the same sound would then do nothing.
         let Some(data) = &self.sounds[index].data else {
             return;
         };
@@ -320,8 +365,7 @@ impl Audio {
     pub fn set_master_volume(&mut self, volume: Volume) {
         self.master = volume;
         if let Output::Device(device) = &mut self.output {
-            let main = device.manager.main_track();
-            main.set_volume(Decibels(volume.0), Tween::default());
+            device.manager.set_main_volume(Decibels(volume.0));
         }
     }
 
@@ -387,13 +431,13 @@ impl Audio {
             .map(|index| self.sounds[index].path.as_path())
     }
 
-    /// Validate a handle against the sound table.
+    /// Validate a handle against this layer and its sound table.
     ///
     /// Every operation goes through this, which is what makes a stale or foreign
-    /// handle a no-op instead of a panic.
+    /// handle a no-op instead of a panic, or a wrong sound.
     fn index_of(&self, sound: SoundHandle) -> Option<usize> {
-        let index = sound.0 as usize;
-        (index < self.sounds.len()).then_some(index)
+        let index = sound.index() as usize;
+        (sound.owner() == self.owner && index < self.sounds.len()).then_some(index)
     }
 }
 
@@ -539,11 +583,74 @@ mod tests {
         assert_eq!(audio.looping(), None);
     }
 
+    /// An `Audio` in device mode over `kira`'s mock backend: the device-mode
+    /// code paths, with no device opened and no sound produced.
+    fn mock_device() -> Audio {
+        let manager =
+            AudioManager::<kira::backend::mock::MockBackend>::new(AudioManagerSettings::default())
+                .expect("the mock backend always starts");
+        Audio::with_output(Output::Device(Box::new(Device {
+            manager: Manager::Mock(manager),
+            looping: None,
+        })))
+    }
+
+    /// Add a sound as a load would, decoded (a short silence) or, as when the
+    /// file could not be read, not.
+    fn add_sound(audio: &mut Audio, path: &str, decoded: bool) -> SoundHandle {
+        use kira::sound::static_sound::StaticSoundSettings;
+        let data = decoded.then(|| StaticSoundData {
+            sample_rate: 48_000,
+            frames: std::sync::Arc::from(vec![kira::Frame::ZERO; 480]),
+            settings: StaticSoundSettings::default(),
+            slice: None,
+        });
+        let handle = SoundHandle::new(audio.owner, audio.sounds.len() as u32);
+        audio.sounds.push(Sound {
+            path: PathBuf::from(path),
+            data,
+            one_shots: 0,
+        });
+        handle
+    }
+
+    #[test]
+    fn looping_a_sound_that_failed_to_load_keeps_the_current_loop() {
+        let mut audio = mock_device();
+        assert!(!audio.is_silent());
+        let music = add_sound(&mut audio, A, true);
+        let broken = add_sound(&mut audio, B, false);
+
+        audio.play_looping(music, Volume::UNCHANGED);
+        assert_eq!((audio.looping(), audio.loop_starts()), (Some(music), 1));
+
+        // The broken file cannot loop, and must not silence the music.
+        audio.play_looping(broken, Volume::UNCHANGED);
+        assert_eq!(audio.looping(), Some(music), "the music keeps playing");
+        assert_eq!(audio.loop_starts(), 1, "and nothing else started");
+    }
+
+    #[test]
+    fn a_handle_from_another_audio_is_ignored() {
+        let mut audio = Audio::silent();
+        let mine = audio.load(A);
+        // The first sound of another layer: the same table index as `mine`.
+        let theirs = Audio::silent().load(B);
+        assert_ne!(mine, theirs);
+
+        audio.play_once(theirs, Volume::UNCHANGED);
+        audio.play_looping(theirs, Volume::UNCHANGED);
+        assert_eq!(audio.one_shots_played(), 0, "not taken for `mine`");
+        assert_eq!(audio.one_shots_of(mine), 0);
+        assert_eq!(audio.looping(), None);
+        assert_eq!(audio.path(theirs), None);
+    }
+
     #[test]
     fn an_unknown_handle_is_ignored_rather_than_fatal() {
         // Handles from another `Audio` (or a stale one) must not take a game down.
         let mut audio = Audio::silent();
-        let alien = SoundHandle(7);
+        let alien = Audio::silent().load(A);
 
         audio.play_once(alien, Volume::UNCHANGED);
         audio.play_looping(alien, Volume::UNCHANGED);
