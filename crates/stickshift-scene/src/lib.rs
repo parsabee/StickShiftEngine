@@ -145,8 +145,11 @@ pub struct Scene {
     physics: PhysicsWorld,
     config: StreamingConfig,
     /// Entities the scene created via `stream`; candidates for despawn-behind.
-    /// Ownership: the scene tracks these so it can remove them atomically.
-    streamed: Vec<Entity>,
+    /// Ownership: the scene tracks these so it can remove them atomically. Each
+    /// is kept with its spawn slot's distance along the axis since the start of
+    /// the run (rebases included), which places an entity without a
+    /// [`TransformComponent`].
+    streamed: Vec<(Entity, f64)>,
     /// The furthest slot index (along the axis) that has already been spawned.
     /// `None` until the first `stream` call seeds the frontier from the focus.
     spawn_frontier: Option<i64>,
@@ -305,28 +308,37 @@ impl Scene {
         }
     }
 
-    /// Frees the bodies of entities that are gone, then records the current
-    /// owner of every body still attached to a live entity.
+    /// Frees the bodies their owners let go of, then records the current owner
+    /// of every body still attached to a live entity.
+    ///
+    /// An owner lets go of its body when it is despawned, or when its
+    /// [`PhysicsBodyComponent`] is removed or replaced, through
+    /// [`world_mut`](Self::world_mut). The body is freed unless another live
+    /// entity has since taken it over.
     fn reclaim_orphaned_bodies(&mut self) {
         let world = &self.world;
-        if self.body_owners.keys().any(|&e| !world.contains(e)) {
-            // Rare path: an entity was despawned behind the scene's back. Free its
-            // body, unless a live entity has since taken that body over.
+        let let_go = |(&entity, &handle): (&Entity, &RigidBodyHandle)| {
+            world
+                .get::<&PhysicsBodyComponent>(entity)
+                .map_or(true, |body| body.handle != handle)
+        };
+        // The common case: every owner still holds its body. Checking costs one
+        // lookup per owner and allocates nothing.
+        if self.body_owners.iter().any(let_go) {
             let held: HashSet<RigidBodyHandle> = world
                 .query::<&PhysicsBodyComponent>()
                 .iter()
                 .map(|(_e, b)| b.handle)
                 .collect();
-            let physics = &mut self.physics;
-            self.body_owners.retain(|&entity, &mut handle| {
-                if world.contains(entity) {
-                    return true;
-                }
-                if !held.contains(&handle) {
-                    physics.remove_body(handle);
-                }
-                false
-            });
+            let orphans: HashSet<RigidBodyHandle> = self
+                .body_owners
+                .values()
+                .copied()
+                .filter(|handle| !held.contains(handle))
+                .collect();
+            for handle in orphans {
+                self.physics.remove_body(handle);
+            }
         }
         self.body_owners.clear();
         for (entity, body) in self.world.query::<&PhysicsBodyComponent>().iter() {
@@ -378,13 +390,19 @@ impl Scene {
     /// 1. **Despawn-behind.** Every streamed entity whose distance along the axis
     ///    has fallen more than [`despawn_behind`](StreamingConfig::despawn_behind)
     ///    behind the focus is removed atomically via [`despawn`](Self::despawn).
+    ///    An entity's distance is its [`TransformComponent`]'s, or, for an
+    ///    entity without one (a marker or logic entity), its spawn slot's. An
+    ///    entity the game already despawned is dropped from tracking.
     /// 2. **Spawn-ahead.** For each not-yet-filled slot between the current
     ///    frontier and `focus + spawn_ahead` (slots spaced
     ///    [`spawn_interval`](StreamingConfig::spawn_interval) apart along the
     ///    axis), `spawn` is invoked with a [`SpawnCtx`] positioned at that slot.
     ///    Whatever entities the callback reports via
     ///    [`SpawnCtx::spawned`](SpawnCtx::spawned) become tracked streamed
-    ///    entities (candidates for a later despawn).
+    ///    entities (candidates for a later despawn). If the focus jumped past
+    ///    the frontier (a teleport or a respawn far ahead), the slots it jumped
+    ///    over are skipped: filling resumes from the focus, as on the first
+    ///    pass, instead of spawning every slot in between at once.
     ///
     /// The `spawn` closure receives mutable access to the ECS world and physics
     /// world (through [`SpawnCtx`]) plus the world-space slot position, and decides
@@ -416,25 +434,29 @@ impl Scene {
     {
         let axis = self.config.axis;
         let focus_d = focus.dot(axis);
+        // Distances since the very start of the run, in `f64`: the running
+        // rebase shift keeps them consistent across an origin rebase.
+        let focus_total = f64::from(focus_d) + self.rebase_shift_units;
 
         // --- Step 1: despawn-behind ----------------------------------------
         let cutoff = focus_d - self.config.despawn_behind;
+        let cutoff_total = focus_total - f64::from(self.config.despawn_behind);
         // Collect victims first so we don't mutate the world while borrowing it.
-        let mut kept = Vec::with_capacity(self.streamed.len());
         let mut victims = Vec::new();
-        for &e in &self.streamed {
-            let behind = match self.world.get::<&TransformComponent>(e) {
+        let world = &self.world;
+        self.streamed.retain(|&(e, slot_total)| {
+            let behind = match world.get::<&TransformComponent>(e) {
                 Ok(t) => t.transform.position.dot(axis) < cutoff,
+                // No transform: place it at the slot it was spawned for.
+                Err(_) if world.contains(e) => slot_total < cutoff_total,
                 // Entity already gone (removed by game): drop from tracking.
                 Err(_) => true,
             };
             if behind {
                 victims.push(e);
-            } else {
-                kept.push(e);
             }
-        }
-        self.streamed = kept;
+            !behind
+        });
         for e in victims {
             self.despawn(e);
         }
@@ -445,24 +467,24 @@ impl Scene {
             return;
         }
 
-        // Slot indices are measured in "rebased" world space: the running
-        // rebase_shift keeps the frontier consistent across an origin rebase.
-        // In `f64`: these are distances since the very start of the run.
         let interval_f64 = f64::from(interval);
-        let focus_total = f64::from(focus_d) + self.rebase_shift_units;
         let target = focus_total + f64::from(self.config.spawn_ahead);
         let target_slot = (target / interval_f64).floor() as i64;
 
         // Seed the frontier just behind the focus on the first pass so we don't
-        // retroactively fill the whole world behind the player.
+        // retroactively fill the whole world behind the player. A focus that
+        // jumped past the frontier is seeded the same way: the slots it skipped
+        // are behind it, so spawning them would only despawn them again.
+        let seed = (focus_total / interval_f64).floor() as i64;
         let start = match self.spawn_frontier {
-            Some(f) => f + 1,
-            None => (focus_total / interval_f64).floor() as i64,
+            Some(f) => (f + 1).max(seed),
+            None => seed,
         };
 
         for slot in start..=target_slot {
+            let slot_total = slot as f64 * interval_f64;
             // Subtract in `f64`, then narrow: the result is near the origin.
-            let along = (slot as f64 * interval_f64 - self.rebase_shift_units) as f32;
+            let along = (slot_total - self.rebase_shift_units) as f32;
             let position = axis * along;
             let mut cx = SpawnCtx {
                 world: &mut self.world,
@@ -478,7 +500,8 @@ impl Scene {
                     self.body_owners.insert(e, body.handle);
                 }
             }
-            self.streamed.extend(spawned);
+            self.streamed
+                .extend(spawned.into_iter().map(|e| (e, slot_total)));
             self.spawn_frontier = Some(slot);
         }
     }
@@ -785,7 +808,7 @@ mod tests {
         assert!(after_first > 0, "spawned ahead on the first pass");
 
         // All streamed entities are ahead (negative Z, matching -Z axis).
-        for &e in &scene.streamed {
+        for &(e, _) in &scene.streamed {
             let z = scene
                 .world()
                 .get::<&TransformComponent>(e)
@@ -814,7 +837,7 @@ mod tests {
         // than `spawn_ahead` of the focus.
         let axis = scene.config().axis;
         let focus_along = last_focus.dot(axis);
-        for &e in &scene.streamed {
+        for &(e, _) in &scene.streamed {
             let along = scene
                 .world()
                 .get::<&TransformComponent>(e)
@@ -1106,5 +1129,99 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A streaming config with one slot per unit along -Z.
+    fn unit_slots(spawn_ahead: f32, despawn_behind: f32) -> StreamingConfig {
+        StreamingConfig {
+            spawn_interval: 1.0,
+            spawn_ahead,
+            despawn_behind,
+            ..StreamingConfig::default()
+        }
+    }
+
+    /// A streamed entity without a transform is kept while its slot is in
+    /// range, and despawned once its slot falls behind, like any other.
+    #[test]
+    fn a_streamed_entity_without_a_transform_follows_its_slot() {
+        let mut scene = Scene::with_config(unit_slots(3.0, 2.0));
+        let mut markers = Vec::new();
+        scene.stream(Vec3::ZERO, |cx| {
+            // A logic entity with no transform.
+            let e = cx.world.spawn(());
+            markers.push(e);
+            cx.spawned(e);
+        });
+        let first = markers[0];
+        // Another pass at the same focus: it used to be despawned here.
+        scene.stream(Vec3::ZERO, |_| {});
+        assert!(
+            scene.world().contains(first),
+            "kept while its slot is in range"
+        );
+        // Far enough ahead that its slot is behind the despawn threshold.
+        scene.stream(Vec3::new(0.0, 0.0, -10.0), |_| {});
+        assert!(!scene.world().contains(first), "despawned once behind");
+    }
+
+    /// Removing only the body component (not the entity) frees the body.
+    #[test]
+    fn removing_the_body_component_frees_the_body() {
+        let mut scene = Scene::new();
+        let e = spawn_body(&mut scene, Vec3::ZERO);
+        scene.step_physics();
+        assert_eq!(scene.physics().rigid_body_set.len(), 1);
+
+        scene
+            .world_mut()
+            .remove_one::<PhysicsBodyComponent>(e)
+            .unwrap();
+        scene.step_physics();
+
+        assert!(scene.world().contains(e), "the entity lives on");
+        assert_eq!(scene.physics().rigid_body_set.len(), 0, "its body is freed");
+        assert_eq!(scene.physics().collider_set.len(), 0, "and its collider");
+    }
+
+    /// Replacing an entity's body frees the old one and keeps the new one.
+    #[test]
+    fn replacing_the_body_component_frees_the_old_body() {
+        use stickshift_math::Transform;
+        let mut scene = Scene::new();
+        let e = spawn_body(&mut scene, Vec3::ZERO);
+        scene.step_physics();
+        let new_body = scene
+            .physics_mut()
+            .create_dynamic_body(Transform::from_position(Vec3::ONE));
+        scene
+            .world_mut()
+            .insert_one(e, PhysicsBodyComponent::new(new_body))
+            .unwrap();
+        scene.step_physics();
+
+        assert_eq!(scene.physics().rigid_body_set.len(), 1);
+        assert!(scene.physics().get_transform(new_body).is_some());
+    }
+
+    /// A focus that jumps far past the frontier spawns only the slots in
+    /// range of its new position, not every slot it jumped over.
+    #[test]
+    fn a_teleport_spawns_only_the_slots_in_range() {
+        let mut scene = Scene::with_config(unit_slots(10.0, 5.0));
+        let mut spawned = 0;
+        let mut spawn = |cx: &mut SpawnCtx<'_>| {
+            let e = cx
+                .world
+                .spawn((TransformComponent::from_position(cx.position),));
+            cx.spawned(e);
+            spawned += 1;
+        };
+        scene.stream(Vec3::ZERO, &mut spawn);
+        scene.stream(Vec3::new(0.0, 0.0, -100_000.0), &mut spawn);
+        // The first pass fills 0..=10 and the jump fills 100000..=100010:
+        // 22 slots, not 100,011.
+        assert_eq!(spawned, 22);
+        assert_eq!(scene.streamed_count(), 11, "the old slots fell behind");
     }
 }

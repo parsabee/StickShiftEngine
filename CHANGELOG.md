@@ -150,6 +150,18 @@ API**.
   frame completed could therefore still read `frames_in_flight() > 0`, which made the `async_frames`
   test flaky on a busy machine. The handler now returns the permit and flags the read-back first, and
   counts the frame last.
+- **Scene streaming handles transform-less entities, removed body components and teleports**
+  ([#39](https://github.com/parsabee/StickShiftEngine/issues/39)). Three edge cases in `Scene`:
+  - A streamed entity without a `TransformComponent` (a marker or logic entity) was despawned on
+    the next pass, as if it were already gone. It is now placed at the slot it was spawned for and
+    despawned when that slot falls behind.
+  - Removing only the `PhysicsBodyComponent` from a live entity leaked its rigid body for good,
+    because the orphan sweep freed only bodies whose entity was gone. A body whose component was
+    removed or replaced is now freed too, unless another entity holds it. The sweep's check no
+    longer allocates on the common path.
+  - A focus jump far past the spawn frontier (a teleport, or a respawn far ahead) spawned every slot
+    in between in one call, and despawned them straight away. Filling now resumes from the focus,
+    as on the first pass.
 
 ## [0.1.0-beta.2] - 2026-11-14
 
