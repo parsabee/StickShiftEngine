@@ -177,6 +177,15 @@ cargo run -p playable-demo -- --smoke                    # headless oracle: 120 
 ./scripts/gen-header.sh --check                          # stickshift.h matches the Rust sources (needs cbindgen 0.29.0)
 ```
 
+A development build compiles the Metal shaders at runtime, so the Command Line Tools are enough.
+Release builds embed shaders compiled ahead of time instead, so nothing is compiled when the
+library starts. To build that way, which needs full Xcode for the Metal compiler:
+
+```sh
+cargo build --release -p playable-demo --features precompiled-shaders
+cargo build --release -p stickshift-capi --features precompiled-shaders
+```
+
 ## Using Stick Shift Engine from C or Swift
 
 Build the library from a checkout (or install it with [Homebrew](#install-with-homebrew)):

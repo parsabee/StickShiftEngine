@@ -16,6 +16,12 @@ publish.workspace = true
 name = "stickshift"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Embed precompiled Metal shaders instead of compiling them at runtime (needs full
+# Xcode to build; see stickshift-render's feature of the same name). Release builds
+# of libstickshift turn it on.
+precompiled-shaders = ["stickshift-render/precompiled-shaders"]
+
 [dependencies]
 stickshift-math.workspace = true
 stickshift-render-api.workspace = true
