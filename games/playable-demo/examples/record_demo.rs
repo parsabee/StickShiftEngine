@@ -7,8 +7,9 @@
 //! The real game (the same modules the binary builds) runs against an
 //! **offscreen** Metal renderer at a fixed timestep, and every few frames the
 //! rendered image is read back and written out. No window or screen capture is
-//! involved, so it runs from a plain terminal. A small autopilot steers: it taps
-//! Left or Right to leave a lane with traffic ahead, so the clip shows a clean run.
+//! involved, so it runs from a plain terminal. A small autopilot steers: it only
+//! taps Left or Right when a car is about to reach the player in its lane, so
+//! every lane change in the clip answers a car right in front.
 //! Traffic is seeded, so the same command records the same frames.
 //!
 //! ```sh
@@ -65,8 +66,12 @@ const WARM_UP_FRAMES: u32 = 150;
 const RECORD_FRAMES: u32 = 60 * 4;
 /// Keep every `STRIDE`th frame: 60 / 3 = 20 frames per second in the GIF.
 const STRIDE: u32 = 3;
-/// How far ahead (world units) a car in the player's lane makes the autopilot move.
-const LOOKAHEAD: f32 = 45.0;
+/// How soon (seconds, at the current speed) a car ahead in the player's lane
+/// must be to make the autopilot change lanes. Lane changes are instant, so a
+/// short warning is enough.
+const REACTION_SECONDS: f32 = 0.45;
+/// Extra distance (world units) on top of that, about a car length.
+const MARGIN: f32 = 5.0;
 /// Frames the autopilot waits between lane changes.
 const COOLDOWN: u32 = 12;
 
@@ -99,6 +104,10 @@ fn main() {
     let mut held: Option<Key> = None;
     let mut cooldown = 0;
     let mut written = 0;
+    let mut lane_changes = 0;
+    // The player's speed, estimated from its travel each frame.
+    let mut last_z = game.player_position().z;
+    let mut speed = config::SPEED;
     for frame in 0..WARM_UP_FRAMES + RECORD_FRAMES {
         // Release last frame's tap, so each press is a fresh edge.
         if let Some(key) = held.take() {
@@ -110,17 +119,27 @@ fn main() {
             cooldown -= 1;
             None
         } else {
-            steer(&lp, &game)
+            steer(&lp, &game, speed)
         };
         if let Some(key) = tap {
             lp.input.press_key(key);
             held = Some(key);
             if key != Key::Space {
                 cooldown = COOLDOWN;
+                if frame >= WARM_UP_FRAMES {
+                    lane_changes += 1;
+                }
             }
         }
 
         drive_frame(&mut lp, &mut game, &mut renderer, FIXED_DT_DURATION);
+        let z = game.player_position().z;
+        let travelled = (last_z - z) / FIXED_DT_DURATION.as_secs_f32();
+        // A floating-origin rebase jumps the position; keep the last estimate.
+        if (0.0..=config::SPEED_MAX * 1.5).contains(&travelled) {
+            speed = speed.max(travelled);
+        }
+        last_z = z;
 
         let recording = frame >= WARM_UP_FRAMES;
         if recording && (frame - WARM_UP_FRAMES).is_multiple_of(STRIDE) {
@@ -134,7 +153,10 @@ fn main() {
             written += 1;
         }
     }
-    println!("wrote {written} frames to {}", out.display());
+    println!(
+        "wrote {written} frames ({lane_changes} lane changes) to {}",
+        out.display()
+    );
 }
 
 /// The lane index of world `x`.
@@ -151,9 +173,10 @@ fn nearest_in_lane(cars: &[(i32, f32)], lane: i32, behind: f32) -> f32 {
         .fold(f32::INFINITY, f32::min)
 }
 
-/// The key the autopilot taps this frame, if any: move to the adjacent lane
-/// whose nearest car is furthest away when a car is close ahead in this one.
-fn steer(lp: &Loop, game: &CarRunner) -> Option<Key> {
+/// The key the autopilot taps this frame, if any: when a car ahead in this lane
+/// is about to reach the player at `speed`, move to the adjacent lane whose
+/// nearest car is furthest away.
+fn steer(lp: &Loop, game: &CarRunner, speed: f32) -> Option<Key> {
     let player = game.player_position();
     let lane = lane_of(player.x);
     // Each traffic car's lane and distance ahead (the game travels toward -Z).
@@ -167,7 +190,7 @@ fn steer(lp: &Loop, game: &CarRunner) -> Option<Key> {
             (lane_of(p.x), player.z - p.z)
         })
         .collect();
-    if nearest_in_lane(&cars, lane, -3.0) > LOOKAHEAD {
+    if nearest_in_lane(&cars, lane, -3.0) > speed * REACTION_SECONDS + MARGIN {
         return None;
     }
     [(lane - 1, Key::Left), (lane + 1, Key::Right)]
