@@ -4,12 +4,14 @@ CPU-side profiling and frame timing for Stick Shift Engine.
 
 ## Responsibility
 
-`stickshift-perf` measures per-frame CPU work and maintains rolling averages over the
-last `WINDOW_SIZE` (60) frames: frame time, per-subsystem breakdown
-(physics / spatial-query / render), FPS, and buffer allocation/upload/free
-accounting. It has no dependencies on the renderer or GPU — GPU-side timing
-(command-buffer completion handlers) is not implemented yet (it is planned with the
-v0.1.0 benchmarking work).
+`stickshift-perf` measures frame timing and maintains rolling averages over the
+last `WINDOW_SIZE` (60) frames: frame time (the real frame period, from one
+`end_frame` to the next, so it includes waiting for vsync or a drawable), CPU time
+(the work between `begin_frame` and `end_frame`), per-subsystem breakdown
+(physics / spatial-query / render, each adding up over the frame), FPS (from the
+frame time), and buffer allocation/upload/free accounting. It has no dependencies
+on the renderer or GPU — GPU-side timing (command-buffer completion handlers) is
+not implemented yet (it is planned with the v0.1.0 benchmarking work).
 
 ## API tour
 
@@ -48,8 +50,9 @@ let _ = (fps, snapshot);
 
 Read-back methods:
 
-- `current_fps` / `avg_fps` — FPS from the last frame / the window average.
-- `avg_frame_time`, `min_max_frame_time` — frame timing and stutter bounds.
+- `current_fps` / `avg_fps` — FPS from the last frame time / the window average.
+- `avg_frame_time`, `min_max_frame_time` — frame periods and stutter bounds.
+- `avg_cpu_time` — the average work inside a frame.
 - `avg_subsystems` — average `(physics, query, render)` durations.
 - `avg_allocations` — average `(allocations, bytes)` per frame.
 - `snapshot` — a `PerfSnapshot` capturing the whole window plus cumulative

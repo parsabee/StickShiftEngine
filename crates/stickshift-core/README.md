@@ -67,7 +67,8 @@ once. Consequences:
   cursor position). Backend-agnostic `Key`/`MouseButton` enums, not `winit`
   types, with just-pressed/just-released edges. Remapping, gamepad and touch
   input are out of scope.
-- `perf()` — a `PerfSnapshot` (frame timing) from `stickshift-perf`.
+- `perf()` — a `PerfSnapshot` from `stickshift-perf`: frame time and FPS, CPU time, and the
+  physics and render time the loop records.
 - `alpha()` — the fixed-timestep interpolation factor in `0.0..=1.0`, meaningful
   on the render path (`0.0` in `init`/`update`).
 - `graphics_settings()` / `set_graphics_settings()` — the engine's

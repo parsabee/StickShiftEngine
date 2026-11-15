@@ -102,6 +102,15 @@ API**.
   success. It now checks the call's result, waits for the read-back's completion and writes the
   image only on `READBACK_COMPLETE`, reporting the event's message otherwise. The buffer is
   `calloc`ed, so a mistake shows up as black instead of noise.
+- **FPS measures the frame rate, and physics and render time are recorded**
+  ([#32](https://github.com/parsabee/StickShiftEngine/issues/32)). `PerfTracker` timed only
+  `begin_frame` to `end_frame`, which the loop wraps around update and render, so its "FPS" was
+  `1 / CPU work` and a light scene with vsync reported 1000+ FPS. Frame time is now the interval
+  from one `end_frame` to the next, the real frame period, and FPS and the frame-time statistics
+  come from it. The work inside a frame is the new `avg_cpu_time` (also on `PerfSnapshot`). The
+  `stickshift-core` loop now records physics time around every fixed step and render time around
+  `Game::render`; before, those fields were always zero. `mark_physics`, `mark_query` and
+  `mark_render` add up within a frame instead of keeping only the last span.
 
 ## [0.1.0-beta.2] - 2026-11-14
 

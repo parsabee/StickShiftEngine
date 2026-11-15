@@ -5,12 +5,25 @@
 //! CPU-side performance monitoring and frame timing for Stick Shift Engine.
 //!
 //! The core type is [`PerfTracker`]: call [`begin_frame`](PerfTracker::begin_frame)
-//! and [`end_frame`](PerfTracker::end_frame) around each frame, bracket
+//! and [`end_frame`](PerfTracker::end_frame) around each frame's work, bracket
 //! subsystems with [`mark_start`](PerfTracker::mark_start) /
 //! [`mark_physics`](PerfTracker::mark_physics) / etc., and read back rolling
 //! averages via [`current_fps`](PerfTracker::current_fps),
 //! [`avg_fps`](PerfTracker::avg_fps), or a whole-window [`PerfSnapshot`] from
 //! [`snapshot`](PerfTracker::snapshot).
+//!
+//! # Frame time vs. CPU time
+//!
+//! Two durations are kept per frame:
+//!
+//! - **Frame time** is the interval from the previous frame's `end_frame` to
+//!   this one's: the real frame period, including whatever happens between
+//!   frames (waiting for vsync or a drawable, the OS). The FPS figures and the
+//!   frame-time statistics come from it. The first frame, with no previous
+//!   one, counts from its own `begin_frame`.
+//! - **CPU time** is `begin_frame` to `end_frame`: the work done inside the
+//!   frame. With vsync on, a light scene has a short CPU time and a frame time
+//!   of one display refresh.
 //!
 //! # Time source
 //!
@@ -42,7 +55,10 @@ pub const WINDOW_SIZE: usize = 60;
 /// Performance metrics captured for a single frame.
 #[derive(Debug, Clone, Copy, Default)]
 struct FrameMetrics {
-    total_time: Duration,
+    /// Previous `end_frame` to this one: the frame period.
+    frame_time: Duration,
+    /// This frame's `begin_frame` to `end_frame`: the work inside it.
+    cpu_time: Duration,
     physics_time: Duration,
     query_time: Duration,
     render_time: Duration,
@@ -57,20 +73,29 @@ struct FrameMetrics {
 /// current window (up to [`WINDOW_SIZE`] frames) except `current_fps`, which is
 /// derived from the most recent frame, and the `total_*` / `current_memory`
 /// fields, which are cumulative since the tracker was created.
+///
+/// Frame times are frame *periods* and CPU times are the work inside a frame
+/// (see the [crate docs](crate#frame-time-vs-cpu-time)). The subsystem,
+/// allocation and triangle fields are whatever the tracker's owner recorded;
+/// the `stickshift-core` loop records physics and render time only, so the
+/// others stay zero there.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PerfSnapshot {
     /// Number of frames currently in the rolling window.
     pub frame_count: usize,
-    /// FPS derived from the most recent frame's total time.
+    /// FPS derived from the most recent frame time.
     pub current_fps: f64,
     /// FPS derived from the average frame time over the window.
     pub avg_fps: f64,
-    /// Average total frame time over the window.
+    /// Average frame time (frame period) over the window.
     pub avg_frame_time: Duration,
-    /// Shortest total frame time in the window (stutter detection).
+    /// Shortest frame time in the window (stutter detection).
     pub min_frame_time: Duration,
-    /// Longest total frame time in the window (stutter detection).
+    /// Longest frame time in the window (stutter detection).
     pub max_frame_time: Duration,
+    /// Average CPU time (the work between `begin_frame` and `end_frame`) over
+    /// the window.
+    pub avg_cpu_time: Duration,
     /// Average physics-subsystem time over the window.
     pub avg_physics_time: Duration,
     /// Average spatial-query-subsystem time over the window.
@@ -110,6 +135,8 @@ pub struct PerfTracker<C: Clock = SystemClock> {
     // Current frame being tracked.
     current: FrameMetrics,
     frame_start: Option<Duration>,
+    /// When the previous frame ended, for the next frame's frame time.
+    last_frame_end: Option<Duration>,
     subsystem_start: Option<Duration>,
 
     // External state (passed in).
@@ -148,6 +175,7 @@ impl<C: Clock> PerfTracker<C> {
             frames: VecDeque::with_capacity(WINDOW_SIZE),
             current: FrameMetrics::default(),
             frame_start: None,
+            last_frame_end: None,
             subsystem_start: None,
             triangle_count: 0,
             total_allocations: 0,
@@ -158,8 +186,8 @@ impl<C: Clock> PerfTracker<C> {
         }
     }
 
-    /// Call at the start of each frame. Resets per-frame metrics and starts the
-    /// frame timer.
+    /// Call at the start of each frame's work. Resets per-frame metrics and
+    /// starts the CPU-time timer.
     pub fn begin_frame(&mut self) {
         self.frame_start = Some(self.clock.now());
         self.current = FrameMetrics::default();
@@ -170,25 +198,33 @@ impl<C: Clock> PerfTracker<C> {
         self.subsystem_start = Some(self.clock.now());
     }
 
-    /// Record elapsed time since [`mark_start`](Self::mark_start) as physics time.
+    /// The time since [`mark_start`](Self::mark_start), or zero without one.
+    fn span(&mut self) -> Duration {
+        self.subsystem_start.take().map_or(Duration::ZERO, |start| {
+            self.clock.now().saturating_sub(start)
+        })
+    }
+
+    /// Add the time since [`mark_start`](Self::mark_start) to this frame's
+    /// physics time. Spans add up, so several fixed steps in one frame are
+    /// all counted.
     pub fn mark_physics(&mut self) {
-        if let Some(start) = self.subsystem_start.take() {
-            self.current.physics_time = self.clock.now().saturating_sub(start);
-        }
+        let span = self.span();
+        self.current.physics_time += span;
     }
 
-    /// Record elapsed time since [`mark_start`](Self::mark_start) as query time.
+    /// Add the time since [`mark_start`](Self::mark_start) to this frame's
+    /// query time. Spans add up within a frame.
     pub fn mark_query(&mut self) {
-        if let Some(start) = self.subsystem_start.take() {
-            self.current.query_time = self.clock.now().saturating_sub(start);
-        }
+        let span = self.span();
+        self.current.query_time += span;
     }
 
-    /// Record elapsed time since [`mark_start`](Self::mark_start) as render time.
+    /// Add the time since [`mark_start`](Self::mark_start) to this frame's
+    /// render time. Spans add up within a frame.
     pub fn mark_render(&mut self) {
-        if let Some(start) = self.subsystem_start.take() {
-            self.current.render_time = self.clock.now().saturating_sub(start);
-        }
+        let span = self.span();
+        self.current.render_time += span;
     }
 
     /// Record a buffer allocation of `bytes` bytes for the current frame.
@@ -212,12 +248,19 @@ impl<C: Clock> PerfTracker<C> {
         self.triangle_count = count;
     }
 
-    /// Call at the end of each frame. Stops the frame timer and pushes the
-    /// frame into the rolling window, evicting the oldest if full.
+    /// Call at the end of each frame's work. Records the frame's CPU time and
+    /// its frame time (since the previous `end_frame`), and pushes the frame
+    /// into the rolling window, evicting the oldest if full.
     pub fn end_frame(&mut self) {
-        if let Some(start) = self.frame_start.take() {
-            self.current.total_time = self.clock.now().saturating_sub(start);
+        let now = self.clock.now();
+        let start = self.frame_start.take();
+        if let Some(start) = start {
+            self.current.cpu_time = now.saturating_sub(start);
         }
+        if let Some(since) = self.last_frame_end.or(start) {
+            self.current.frame_time = now.saturating_sub(since);
+        }
+        self.last_frame_end = Some(now);
 
         self.frames.push_back(self.current);
         if self.frames.len() > WINDOW_SIZE {
@@ -225,11 +268,11 @@ impl<C: Clock> PerfTracker<C> {
         }
     }
 
-    /// FPS derived from the most recent frame's total time (0.0 if none).
+    /// FPS derived from the most recent frame time (0.0 if none).
     pub fn current_fps(&self) -> f64 {
         if let Some(last) = self.frames.back() {
-            if last.total_time.as_secs_f64() > 0.0 {
-                return 1.0 / last.total_time.as_secs_f64();
+            if last.frame_time.as_secs_f64() > 0.0 {
+                return 1.0 / last.frame_time.as_secs_f64();
             }
         }
         0.0
@@ -248,23 +291,34 @@ impl<C: Clock> PerfTracker<C> {
         }
     }
 
-    /// Average total frame time over the window ([`Duration::ZERO`] if empty).
+    /// Average frame time (frame period) over the window
+    /// ([`Duration::ZERO`] if empty).
     pub fn avg_frame_time(&self) -> Duration {
         if self.frames.is_empty() {
             return Duration::ZERO;
         }
-        let total: Duration = self.frames.iter().map(|f| f.total_time).sum();
+        let total: Duration = self.frames.iter().map(|f| f.frame_time).sum();
         total / self.frames.len() as u32
     }
 
-    /// Shortest and longest total frame time in the window (for detecting
+    /// Average CPU time (the work between `begin_frame` and `end_frame`) over
+    /// the window ([`Duration::ZERO`] if empty).
+    pub fn avg_cpu_time(&self) -> Duration {
+        if self.frames.is_empty() {
+            return Duration::ZERO;
+        }
+        let total: Duration = self.frames.iter().map(|f| f.cpu_time).sum();
+        total / self.frames.len() as u32
+    }
+
+    /// Shortest and longest frame time in the window (for detecting
     /// stutter). Returns `(ZERO, ZERO)` if the window is empty.
     pub fn min_max_frame_time(&self) -> (Duration, Duration) {
         if self.frames.is_empty() {
             return (Duration::ZERO, Duration::ZERO);
         }
-        let min = self.frames.iter().map(|f| f.total_time).min().unwrap();
-        let max = self.frames.iter().map(|f| f.total_time).max().unwrap();
+        let min = self.frames.iter().map(|f| f.frame_time).min().unwrap();
+        let max = self.frames.iter().map(|f| f.frame_time).max().unwrap();
         (min, max)
     }
 
@@ -305,6 +359,7 @@ impl<C: Clock> PerfTracker<C> {
             avg_frame_time: self.avg_frame_time(),
             min_frame_time,
             max_frame_time,
+            avg_cpu_time: self.avg_cpu_time(),
             avg_physics_time,
             avg_query_time,
             avg_render_time,
@@ -363,6 +418,10 @@ impl<C: Clock> PerfTracker<C> {
         println!(
             "                {:<6.2} ms (max)",
             max_ft.as_secs_f64() * 1000.0
+        );
+        println!(
+            "  CPU Time:     {:<6.2} ms (avg)",
+            self.avg_cpu_time().as_secs_f64() * 1000.0
         );
 
         println!(" ───────────────────────────────────────────────────────");
@@ -462,6 +521,51 @@ mod tests {
         let clock = MockClock::new();
         let tracker = PerfTracker::with_clock(clock.clone());
         (tracker, clock)
+    }
+
+    #[test]
+    fn frame_time_includes_the_wait_between_frames_and_cpu_time_does_not() {
+        let (mut tracker, clock) = new_pair();
+        // 2 ms of work, then a wait for vsync, every 1/60 s.
+        for _ in 0..10 {
+            tracker.begin_frame();
+            clock.advance(MS * 2);
+            tracker.end_frame();
+            clock.advance(Duration::from_micros(16_667) - MS * 2);
+        }
+        let snap = tracker.snapshot();
+        // The first frame has no previous one, so it counts only its own 2 ms.
+        assert!(tracker
+            .frames
+            .iter()
+            .skip(1)
+            .all(|f| f.frame_time == Duration::from_micros(16_667)));
+        assert_eq!(snap.avg_cpu_time, MS * 2);
+        // Not the 500 FPS the CPU time alone would suggest.
+        assert!(
+            (snap.current_fps - 59.998).abs() < 0.01,
+            "{}",
+            snap.current_fps
+        );
+        assert_eq!(snap.max_frame_time, Duration::from_micros(16_667));
+    }
+
+    #[test]
+    fn subsystem_spans_add_up_within_a_frame() {
+        let (mut tracker, clock) = new_pair();
+        tracker.begin_frame();
+        // Three fixed steps in one frame: all three count.
+        for _ in 0..3 {
+            tracker.mark_start();
+            clock.advance(MS * 2);
+            tracker.mark_physics();
+        }
+        tracker.mark_start();
+        clock.advance(MS * 4);
+        tracker.mark_render();
+        tracker.end_frame();
+        let (physics, _, render) = tracker.avg_subsystems();
+        assert_eq!((physics, render), (MS * 6, MS * 4));
     }
 
     #[test]
