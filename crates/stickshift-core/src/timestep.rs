@@ -49,9 +49,14 @@ use std::time::Duration;
 /// is defined.
 pub const FIXED_DT: f32 = 1.0 / 60.0;
 
-/// `FIXED_DT` as a [`Duration`], for accumulating against clock deltas without
-/// repeated float↔duration conversions.
-const FIXED_DT_DURATION: Duration = Duration::from_nanos((1_000_000_000 / 60) as u64);
+/// [`FIXED_DT`] as a [`Duration`]: exactly what one fixed step consumes from the
+/// [`Accumulator`] (16,666,666 ns).
+///
+/// Use this, not a conversion of the `f32` [`FIXED_DT`], to feed a synthetic
+/// clock one step per frame: `1/60` in `f32` rounds up to 16,666,668 ns, so
+/// converting it leaves 2 ns behind every frame, and the remainder grows until a
+/// frame runs two steps.
+pub const FIXED_DT_DURATION: Duration = Duration::from_nanos((1_000_000_000 / 60) as u64);
 
 /// Spiral-of-death guard: the maximum number of fixed `update` steps run in a
 /// single frame.

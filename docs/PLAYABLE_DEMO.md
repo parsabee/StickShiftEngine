@@ -66,11 +66,11 @@ The `stickshift-render` dependency is even `cfg`-gated to macOS in
 with that constant — never a measured wall-clock delta.
 
 Each display frame, the driver banks the real elapsed time in the
-[`Accumulator`](../crates/stickshift-core/src/timestep.rs#L72), which returns the whole number of
+[`Accumulator`](../crates/stickshift-core/src/timestep.rs#L77), which returns the whole number of
 fixed steps to run and keeps the sub-step remainder. Both drivers then run the same
 [`drive_frame`](../crates/stickshift-core/src/driver.rs#L226): `update × k`, then `render` once.
 `k` may be 0 (a display faster than the sim rate) or several (a slow frame catching up), capped
-at [`MAX_STEPS_PER_FRAME = 5`](../crates/stickshift-core/src/timestep.rs#L63) so a stall slows the
+at [`MAX_STEPS_PER_FRAME = 5`](../crates/stickshift-core/src/timestep.rs#L68) so a stall slows the
 simulation instead of wedging the loop.
 
 **Why `update` and `render` are separate hooks.** Because they run at different rates. `update`
@@ -421,7 +421,7 @@ continuous oracle: CI runs it on every push with Metal API Validation enabled
 (`.github/workflows/ci.yml`), and two unit tests pin both the run and the exact stdout contract
 line ([main.rs:160](../games/playable-demo/src/main.rs#L160)).
 
-**The headless harness.** [`Headless`](../crates/stickshift-core/src/headless.rs#L93) is what makes
+**The headless harness.** [`Headless`](../crates/stickshift-core/src/headless.rs#L92) is what makes
 gameplay testable at all. It owns the engine state a `Game` runs against — scene, input, perf,
 accumulator, a `NullRenderer`, and a **silent** `Audio` layer — runs `init` once, and steps frames on
 the synthetic clock. A test can seed input before a run (`input_mut`), step in chunks, and afterwards

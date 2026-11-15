@@ -324,7 +324,7 @@ read from or written to the player's stored preferences in a headless run.
 
 ## 6. Test it without a GPU
 
-This is the part worth adopting early. [`Headless`](../crates/stickshift-core/src/headless.rs#L93)
+This is the part worth adopting early. [`Headless`](../crates/stickshift-core/src/headless.rs#L92)
 owns the engine state a `Game` runs against — scene, input, perf, accumulator, and a
 `NullRenderer` — and steps frames on a synthetic clock. So gameplay is an ordinary unit test:
 

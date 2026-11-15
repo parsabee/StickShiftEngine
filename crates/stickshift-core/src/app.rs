@@ -398,7 +398,7 @@ impl<'g, 'f, G: Game> EngineApp<'g, 'f, G> {
         let elapsed = match self.last_frame {
             Some(prev) => now.duration_since(prev),
             // First frame: bank exactly one fixed step so a game still ticks once.
-            None => std::time::Duration::from_secs_f64(f64::from(crate::FIXED_DT)),
+            None => crate::FIXED_DT_DURATION,
         };
         self.last_frame = Some(now);
 
