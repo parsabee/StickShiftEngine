@@ -428,8 +428,8 @@ impl<G: Game> ApplicationHandler<EngineEvent> for EngineApp<'_, '_, G> {
             self.window = Some(window);
         }
 
-        // Size the drawable before the game's init sees it: a new backend's
-        // drawable is the view's size in points with a UI scale of 1.
+        // Size the drawable for the render scale before the game's init sees
+        // it: a new backend's drawable is the window's full pixel size.
         self.resize_surface();
         // First activation: run the game's one-time init against the live seam
         // through the shared loop (idempotent).
