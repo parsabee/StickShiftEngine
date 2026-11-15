@@ -26,6 +26,24 @@ static int fail(const char *what, StickShiftResult result) {
     return 1;
 }
 
+/* What a read-back's completion reported. The event's message is only valid
+ * during the callback, so it is copied. */
+typedef struct {
+    int done;
+    StickShiftEventType kind;
+    StickShiftResult result;
+    char message[256];
+} Readback;
+
+static void on_readback(void *user, const StickShiftEvent *event) {
+    Readback *readback = user;
+    readback->done = 1;
+    readback->kind = event->kind;
+    readback->result = event->result;
+    snprintf(readback->message, sizeof readback->message, "%s",
+             event->message ? event->message : "");
+}
+
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "usage: %s <model.gltf|model.glb> <out.ppm> [--null]\n", argv[0]);
@@ -76,11 +94,23 @@ int main(int argc, char **argv) {
     StickShiftMat4 world = stickshift_mat4_identity();
     stickshift_frame_draw_model(frame, model, &world, NULL);
 
-    uint8_t *bgra = malloc(WIDTH * HEIGHT * 4);
+    /* The pixels arrive asynchronously: the buffer must stay valid until the
+     * read-back's event, and holds the frame only if that event is
+     * READBACK_COMPLETE. (calloc, so a mistake shows up as black, not noise.) */
+    uint8_t *bgra = calloc((size_t)WIDTH * HEIGHT, 4);
     if (!bgra) return 1;
-    stickshift_frame_read_pixels_async(frame, bgra, WIDTH * HEIGHT * 4, NULL);
+    Readback readback = {0};
+    StickShiftCompletion on_done = {on_readback, &readback};
+    if ((r = stickshift_frame_read_pixels_async(frame, bgra, WIDTH * HEIGHT * 4, &on_done)) != STICKSHIFT_OK)
+        return fail("stickshift_frame_read_pixels_async", r);
     if ((r = stickshift_frame_submit(frame, NULL, NULL)) != STICKSHIFT_OK) return fail("stickshift_frame_submit", r);
     if ((r = stickshift_context_flush(ctx)) != STICKSHIFT_OK) return fail("stickshift_context_flush", r);
+    if (!readback.done || readback.kind != STICKSHIFT_EVENT_READBACK_COMPLETE) {
+        fprintf(stderr, "read-back failed: %s (%s)\n",
+                readback.done ? stickshift_result_name(readback.result) : "no event",
+                readback.message);
+        return 1;
+    }
 
     FILE *out = fopen(argv[2], "wb");
     if (!out) {
