@@ -159,7 +159,7 @@ input, a state machine, streaming and collision hung off them.
 ## 3. Load an asset
 
 Put committed `.gltf` / `.glb` files under your crate's `assets/` and import them in `init`
-through [`AssetCache`](../crates/stickshift-assets/src/cache.rs#L43), as above. The cache dedups by
+through [`AssetCache`](../crates/stickshift-assets/src/cache.rs#L45), as above. The cache dedups by
 path, so one file parses and uploads exactly once no matter how many entities draw it. What comes
 back is a `CachedAsset`: `mesh_handles` (one per mesh, already uploaded through the render seam)
 and `scene`, the parsed node tree with per-mesh positions, UVs and any decoded base-color image.

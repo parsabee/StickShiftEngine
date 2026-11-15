@@ -702,6 +702,42 @@ fn cache_uploads_meshes_once_and_shares_handles() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn every_path_to_one_file_is_one_cache_entry() {
+    let dir = std::env::temp_dir().join(format!("stickshift-assets-keys-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let path = dir.join("cube.gltf");
+    std::fs::write(&path, CUBE_GLTF).unwrap();
+
+    let mut device = NullRenderer::new();
+    let mut cache = AssetCache::new();
+    let first = cache.load(&mut device, &path).unwrap();
+    for alias in [
+        dir.join(".").join("cube.gltf"),
+        dir.join("sub").join("..").join("cube.gltf"),
+    ] {
+        let again = cache.load(&mut device, &alias).unwrap();
+        assert_eq!(again.mesh_handles, first.mesh_handles, "{alias:?}");
+        cache.load_parse_only(&alias).unwrap();
+    }
+    // A path relative to the working directory, which tests run from the crate
+    // root.
+    let relative = std::path::Path::new("tests/fixtures/cube.gltf");
+    let absolute = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
+    cache.load_parse_only(relative).unwrap();
+    cache.load_parse_only(&absolute).unwrap();
+
+    assert_eq!(cache.parse_count(), 2, "one parse per file");
+    assert_eq!(cache.len(), 2);
+    assert_eq!(device.created_meshes().len(), 1, "one upload");
+
+    // A missing file still names the path it was given.
+    let missing = dir.join("sub").join("..").join("missing.gltf");
+    let err = cache.load_parse_only(&missing).unwrap_err();
+    assert!(err.is_io(), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A glTF whose child node, rotated 45° about Z, sits under a parent scaled
 /// `(2, 1, 1)`: the child's world matrix is sheared. Its mesh is one triangle
 /// with a corner at `(1, 0, 0)`.
