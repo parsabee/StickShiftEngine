@@ -5,11 +5,13 @@
 //! Load-once / dedup [`AssetCache`]: parse + upload a glTF file **once**, then
 //! share it by handle across N instances (the renderer's upload-once discipline, one level up).
 //!
-//! The cache keys imported scenes by their file path. The first request for a
-//! path parses the file and (optionally) uploads its meshes into the render
-//! device, storing the resulting [`MeshHandle`]s; every later request for the
-//! same path returns the already-parsed scene and the already-uploaded handles
-//! without touching the filesystem or the device again. This is the
+//! The cache keys imported scenes by their file path, canonicalized, so
+//! `assets/model.glb`, `./assets/model.glb` and the file's absolute path (or a
+//! symlink to it) are one entry. The first request for a file parses it and
+//! (optionally) uploads its meshes into the render device, storing the resulting
+//! [`MeshHandle`]s; every later request for the same file returns the
+//! already-parsed scene and the already-uploaded handles without parsing or
+//! uploading again. This is the
 //! "upload once, reference by handle" rule applied to whole asset files.
 
 use std::collections::HashMap;
@@ -33,7 +35,7 @@ pub struct CachedAsset {
     pub mesh_handles: Vec<MeshHandle>,
 }
 
-/// A load-once cache of imported glTF scenes, keyed by file path.
+/// A load-once cache of imported glTF scenes, keyed by canonical file path.
 ///
 /// A file parses (and, via [`load`](Self::load), uploads) exactly once no matter
 /// how many times it is requested. Cloning the returned [`CachedAsset`] is cheap
@@ -56,16 +58,19 @@ impl AssetCache {
 
     /// Parse `path` into a [`SceneAsset`] once and cache it, **without** any GPU
     /// upload (the returned [`CachedAsset::mesh_handles`] is empty). Later calls
-    /// for the same path return the cached scene without re-parsing.
+    /// for the same file, by any path, return the cached scene without
+    /// re-parsing.
     ///
     /// # Errors
-    /// Returns [`ImportError`] if a first-time parse of `path` fails.
+    /// Returns [`ImportError`] if a first-time parse of `path` fails. The error
+    /// names the path as given.
     pub fn load_parse_only(&mut self, path: impl AsRef<Path>) -> Result<CachedAsset, ImportError> {
-        let key = path.as_ref().to_path_buf();
+        let path = path.as_ref();
+        let key = cache_key(path);
         if let Some(existing) = self.entries.get(&key) {
             return Ok(existing.clone());
         }
-        let scene = import_gltf(&key)?;
+        let scene = import_gltf(path)?;
         self.parse_count += 1;
         let cached = CachedAsset {
             scene: Arc::new(scene),
@@ -76,8 +81,8 @@ impl AssetCache {
     }
 
     /// Parse `path` and upload its meshes into `device` once, caching both the
-    /// scene and the resulting [`MeshHandle`]s. Later calls for the same path
-    /// return the cached handles without re-parsing or re-uploading.
+    /// scene and the resulting [`MeshHandle`]s. Later calls for the same file, by
+    /// any path, return the cached handles without re-parsing or re-uploading.
     ///
     /// If the path was previously loaded parse-only, this uploads its meshes now
     /// and upgrades the cache entry in place.
@@ -89,7 +94,8 @@ impl AssetCache {
         device: &mut D,
         path: impl AsRef<Path>,
     ) -> Result<CachedAsset, ImportError> {
-        let key = path.as_ref().to_path_buf();
+        let path = path.as_ref();
+        let key = cache_key(path);
 
         // Already uploaded → serve as-is.
         if let Some(existing) = self.entries.get(&key) {
@@ -102,7 +108,7 @@ impl AssetCache {
         let scene = match self.entries.get(&key) {
             Some(existing) => Arc::clone(&existing.scene),
             None => {
-                let parsed = import_gltf(&key)?;
+                let parsed = import_gltf(path)?;
                 self.parse_count += 1;
                 Arc::new(parsed)
             }
@@ -124,7 +130,7 @@ impl AssetCache {
         self.parse_count
     }
 
-    /// Number of distinct cached asset paths.
+    /// Number of distinct cached files.
     #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -135,6 +141,14 @@ impl AssetCache {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+}
+
+/// The cache key for `path`: its canonical form, so every path to one file
+/// (relative, absolute, through `.`/`..` or a symlink) is one entry. A path
+/// that cannot be canonicalized (a missing file) is its own key, so the import
+/// that follows reports the path the caller gave.
+fn cache_key(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Upload every mesh of `scene` into `device`, returning one handle per mesh.

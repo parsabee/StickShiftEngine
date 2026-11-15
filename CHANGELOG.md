@@ -162,6 +162,12 @@ API**.
   - A focus jump far past the spawn frontier (a teleport, or a respawn far ahead) spawned every slot
     in between in one call, and despawned them straight away. Filling now resumes from the focus,
     as on the first pass.
+- **The asset cache parses and uploads a file once, whatever path names it**
+  ([#40](https://github.com/parsabee/StickShiftEngine/issues/40)). `AssetCache` keyed entries by the
+  path exactly as given, so `assets/model.glb`, `./assets/model.glb` and the file's absolute path
+  were three entries, each parsed and uploaded to the GPU. Keys are now canonicalized, which also
+  covers `..` and symlinks. A path that can't be canonicalized (a missing file) stays its own key,
+  so the import error still names the path the caller gave.
 
 ## [0.1.0-beta.2] - 2026-11-14
 
