@@ -189,6 +189,15 @@ API**.
     `debug_assert`ing.
 
   Every other pose gives exactly the matrices it always did.
+- **Doc comments match the code again** ([#43](https://github.com/parsabee/StickShiftEngine/issues/43)).
+  - The physics crate no longer claims to sync transforms with the ECS, which is
+    `Scene::step_physics`' job. Its claim that a test checks `FIXED_DT` against
+    `stickshift_core::FIXED_DT` is now true: `stickshift-core` has the test.
+  - `MeshAsset` documents both vertex layouts, untextured and textured.
+  - `stickshift_frame_submit` says it can wait for a drawable on a layer context.
+  - `stickshift-core` lists all its dependencies, describes the backend factory instead of an
+    "isolated function the Metal backend fills", and lists everything `EngineCtx` exposes.
+  - The audio mixer says which counters can differ between device and silent mode.
 
 ## [0.1.0-beta.2] - 2026-11-14
 

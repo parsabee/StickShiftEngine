@@ -118,13 +118,17 @@ struct Device {
 ///
 /// Because silence is a behaviour and not an absence, it has to be *provable*.
 /// `Audio` therefore records what it was asked to do, the way
-/// `stickshift-render-api`'s `NullRenderer` records draws:
-/// [`is_silent`](Self::is_silent), [`looping`](Self::looping),
-/// [`loop_starts`](Self::loop_starts), [`one_shots_played`](Self::one_shots_played),
-/// [`one_shots_of`](Self::one_shots_of), [`sound_count`](Self::sound_count),
-/// [`decode_count`](Self::decode_count) and [`master_volume`](Self::master_volume)
-/// hold the same values in both modes, so a plain `cargo test` on a machine with
-/// no output device can assert exactly what a game asked to hear.
+/// `stickshift-render-api`'s `NullRenderer` records draws, and
+/// [`is_silent`](Self::is_silent) says which mode it is in.
+/// [`one_shots_played`](Self::one_shots_played),
+/// [`one_shots_of`](Self::one_shots_of), [`sound_count`](Self::sound_count) and
+/// [`master_volume`](Self::master_volume) hold the same values in both modes, so
+/// a plain `cargo test` on a machine with no output device can assert exactly
+/// what a game asked to hear. [`looping`](Self::looping) and
+/// [`loop_starts`](Self::loop_starts) do too, as long as every sound decoded: on a
+/// device, a sound whose file failed to decode never takes the loop channel,
+/// while silent mode, which decodes nothing, lets any sound take it. And
+/// [`decode_count`](Self::decode_count) is always `0` in silent mode.
 ///
 /// # Off the hot path
 ///

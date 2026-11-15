@@ -446,7 +446,9 @@ pub unsafe extern "C" fn stickshift_frame_read_pixels_async(
 }
 
 /// Encode, commit and present the frame, then close it. Never waits for the
-/// GPU. `STICKSHIFT_FRAME_SKIPPED` if the layer gave no drawable. `completion`
+/// GPU, but on a layer context it takes the next drawable from the layer, which
+/// can wait (up to about a second, if the window is hidden).
+/// `STICKSHIFT_FRAME_SKIPPED` if the layer gave no drawable. `completion`
 /// receives the frame's `FRAME_COMPLETED`; `*out_frame_number` (optional) is
 /// the frame's number, or 0 when skipped.
 ///

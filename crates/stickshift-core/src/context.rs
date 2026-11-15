@@ -5,9 +5,11 @@
 //! [`EngineCtx`] — the narrow handle the engine hands a [`Game`](crate::Game).
 //!
 //! `EngineCtx` is the *only* channel through which game code reaches engine
-//! services. It deliberately exposes a small, curated surface — the ECS world,
-//! the render seam, an input snapshot, and frame timing — and nothing else. No
-//! Metal type and no game type ever crosses it (ARCHITECTURE §3).
+//! services. It deliberately exposes a small, curated surface — the scene and
+//! its ECS world, the render seam, the camera, an input snapshot, the audio
+//! layer, the graphics settings, frame timing, and a request to exit — and
+//! nothing else. No Metal type and no game type ever crosses it
+//! (ARCHITECTURE §3).
 //!
 //! # Why accessors, not fields
 //!
