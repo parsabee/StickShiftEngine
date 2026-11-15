@@ -2303,7 +2303,9 @@ impl MetalRenderer {
 
     /// Frames the GPU has finished, counted by each command buffer's completion
     /// handler. Frames on the backend's single command queue complete in
-    /// submission order, so frame `n` is done once this reaches `n`.
+    /// submission order, so frame `n` is done once this reaches `n`. By then its
+    /// frames-in-flight permit is back and its read-back, if any, is ready: the
+    /// handler counts the frame last.
     #[must_use]
     pub fn completed_frame_count(&self) -> u64 {
         self.completed_frames.load(Ordering::Acquire)
@@ -2412,15 +2414,21 @@ impl MetalRenderer {
             // touches is cloned here on the CPU submit path, and it only releases
             // a permit (lock + counter + condvar notify) and stores two atomics.
             // The permit released here is the one taken when this frame opened.
+            //
+            // The permit goes back *first* and the completed count is bumped
+            // *last*, so a thread that sees `completed_frame_count` reach a frame
+            // also sees that frame's permit returned (`frames_in_flight`) and its
+            // read-back flagged. In the other order a caller could see every
+            // frame completed and still a frame in flight.
             let semaphore = Arc::clone(&self.frame_semaphore);
             let completed = Arc::clone(&self.completed_frames);
             let readback_done = frame.readback.as_ref().map(|(_, done)| Arc::clone(done));
             let completion = ConcreteBlock::new(move |_cb: &metal::CommandBufferRef| {
-                completed.fetch_add(1, Ordering::Release);
+                semaphore.release();
                 if let Some(done) = &readback_done {
                     done.store(true, Ordering::Release);
                 }
-                semaphore.release();
+                completed.fetch_add(1, Ordering::Release);
             })
             .copy();
             frame.command_buffer.add_completed_handler(&completion);
