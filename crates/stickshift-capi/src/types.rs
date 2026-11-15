@@ -328,9 +328,12 @@ pub struct StickShiftStats {
     /// `stickshift_frame_acquire` or `stickshift_frame_submit` calls that returned
     /// `STICKSHIFT_FRAME_SKIPPED`.
     pub frames_skipped: u64,
-    /// 3D draws handed to the GPU.
+    /// 3D draws handed to the GPU: one per recorded mesh draw, one per model
+    /// part.
     pub draws_submitted: u64,
-    /// Draws not made because a resource was pending, failed or destroyed.
+    /// Draw calls (`stickshift_frame_draw_mesh`, `_draw_model`, `_draw_quad`,
+    /// `_draw_text`) not made because a resource was pending, failed or
+    /// destroyed. Counted once per call, however many parts or glyphs it drew.
     pub draws_skipped: u64,
     /// Live mesh handles, any state.
     pub meshes: u32,

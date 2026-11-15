@@ -87,6 +87,14 @@ API**.
   `STICKSHIFT_ERROR_TIMEOUT` (-11), and the last error message says what was still pending. Model
   loader jobs also turn a panic anywhere in their work into a failed load (`RESOURCE_FAILED` with
   `STICKSHIFT_ERROR_INTERNAL`), so a load always reports back.
+- **An unused texture no longer refuses or drops a draw, and `draws_skipped` counts draw calls**
+  ([#30](https://github.com/parsabee/StickShiftEngine/issues/30)). `stickshift_frame_draw_mesh`
+  checked and tracked the material's texture even for a `POS_NORMAL_COLOR` mesh, which never samples
+  it. A stale handle there returned `STICKSHIFT_ERROR_INVALID_HANDLE`, and destroying the texture
+  before submit dropped the draw. The texture is now checked only for `POS_NORMAL_UV` meshes.
+  `StickShiftStats.draws_skipped` also mixed units: a refused model draw counted 1, but a model
+  dropped at submit counted once per part, and text once per glyph. It now counts draw calls
+  everywhere, as the header documents.
 
 ## [0.1.0-beta.2] - 2026-11-14
 
