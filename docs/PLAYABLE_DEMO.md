@@ -68,7 +68,7 @@ with that constant — never a measured wall-clock delta.
 Each display frame, the driver banks the real elapsed time in the
 [`Accumulator`](../crates/stickshift-core/src/timestep.rs#L72), which returns the whole number of
 fixed steps to run and keeps the sub-step remainder. Both drivers then run the same
-[`drive_frame`](../crates/stickshift-core/src/driver.rs#L218): `update × k`, then `render` once.
+[`drive_frame`](../crates/stickshift-core/src/driver.rs#L226): `update × k`, then `render` once.
 `k` may be 0 (a display faster than the sim rate) or several (a slow frame catching up), capped
 at [`MAX_STEPS_PER_FRAME = 5`](../crates/stickshift-core/src/timestep.rs#L63) so a stall slows the
 simulation instead of wedging the loop.

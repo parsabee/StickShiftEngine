@@ -193,6 +193,12 @@ pub struct RunConfig {
     /// `true`. This covers every change, whether it came from the built-in menu
     /// or from the game's own UI.
     pub persist_graphics_settings: bool,
+    /// Quit when Escape is pressed. Default `true`. Turn it off to use Escape
+    /// in the game (a pause menu, closing a dialog); the key then reaches the
+    /// game like any other, and the game quits with
+    /// [`EngineCtx::request_exit`](crate::EngineCtx::request_exit). The close
+    /// button and Cmd-Q quit either way.
+    pub quit_on_escape: bool,
 }
 
 impl Default for RunConfig {
@@ -200,6 +206,7 @@ impl Default for RunConfig {
         Self {
             native_settings_menu: true,
             persist_graphics_settings: true,
+            quit_on_escape: true,
         }
     }
 }
@@ -465,8 +472,9 @@ impl<G: Game> ApplicationHandler<EngineEvent> for EngineApp<'_, '_, G> {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     if let Some(key) = translate_key(code) {
                         if event.state.is_pressed() {
-                            // Escape quits, matching the close button.
-                            if key == Key::Escape {
+                            // Escape quits, matching the close button, unless
+                            // the game asked to handle it.
+                            if key == Key::Escape && self.config.quit_on_escape {
                                 event_loop.exit();
                             }
                             self.lp.input.press_key(key);
@@ -512,6 +520,10 @@ impl<G: Game> ApplicationHandler<EngineEvent> for EngineApp<'_, '_, G> {
             }
             WindowEvent::RedrawRequested => {
                 self.drive_frame();
+                if self.lp.exit_requested {
+                    event_loop.exit();
+                    return;
+                }
                 // A change the game requested through `EngineCtx` was applied at the
                 // start of that frame; resize / refresh / persist for it.
                 self.after_graphics_change();

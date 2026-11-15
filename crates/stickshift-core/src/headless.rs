@@ -116,11 +116,18 @@ impl Headless {
     /// clock by one [`FIXED_DT`] and runs the shared
     /// [`drive_frame`], so it produces exactly one
     /// `update` and one `render` per frame.
+    ///
+    /// Stops early, after the frame in which the game called
+    /// [`EngineCtx::request_exit`](crate::EngineCtx::request_exit); later calls
+    /// then run no frames.
     pub fn run<G: Game>(&mut self, game: &mut G, frames: u32) {
         self.lp.init_once(game, &mut self.renderer);
 
         let step = Duration::from_secs_f64(f64::from(FIXED_DT));
         for _ in 0..frames {
+            if self.lp.exit_requested {
+                break;
+            }
             let steps = drive_frame(&mut self.lp, game, &mut self.renderer, step);
             debug_assert_eq!(
                 steps, 1,
@@ -372,5 +379,39 @@ mod tests {
         harness.input_mut().press_key(Key::W);
         harness.run(&mut game, 1);
         assert!(game.saw_w);
+    }
+
+    #[test]
+    fn a_game_can_ask_to_exit() {
+        /// Asks to exit on its third update, as a "press Escape twice" would.
+        #[derive(Default)]
+        struct QuitsOnThird {
+            updates: u32,
+        }
+        impl Game for QuitsOnThird {
+            fn init(&mut self, ctx: &mut EngineCtx) {
+                assert!(!ctx.exit_requested());
+            }
+            fn update(&mut self, ctx: &mut EngineCtx, _dt: f32) {
+                self.updates += 1;
+                if self.updates == 3 {
+                    ctx.request_exit();
+                    assert!(ctx.exit_requested());
+                }
+            }
+            fn render(&mut self, _ctx: &mut EngineCtx) {}
+        }
+
+        let mut harness = Headless::new();
+        let mut game = QuitsOnThird::default();
+        harness.run(&mut game, 10);
+        assert_eq!(harness.frames_run(), 3, "the run stops after that frame");
+        harness.run(&mut game, 10);
+        assert_eq!((harness.frames_run(), game.updates), (3, 3));
+    }
+
+    #[test]
+    fn escape_quits_by_default() {
+        assert!(crate::RunConfig::default().quit_on_escape);
     }
 }

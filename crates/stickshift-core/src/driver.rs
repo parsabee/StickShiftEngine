@@ -66,6 +66,11 @@ pub struct Loop {
     /// platform layer (the built-in menu) queues changes with
     /// [`GraphicsState::request`] and watches [`GraphicsState::revision`].
     pub graphics: GraphicsState,
+    /// Set when the game calls
+    /// [`EngineCtx::request_exit`](crate::EngineCtx::request_exit). The windowed
+    /// driver closes the window after the frame; the headless harness stops its
+    /// [`run`](crate::headless::Headless::run) early.
+    pub exit_requested: bool,
 }
 
 impl Loop {
@@ -86,6 +91,7 @@ impl Loop {
             accumulator: Accumulator::new(),
             initialized: false,
             graphics: GraphicsState::default(),
+            exit_requested: false,
         }
     }
 
@@ -119,6 +125,7 @@ impl Loop {
                 &self.input,
                 &mut self.audio,
                 &mut self.graphics,
+                &mut self.exit_requested,
                 snapshot,
                 0.0,
             );
@@ -164,6 +171,7 @@ impl Loop {
             &self.input,
             &mut self.audio,
             &mut self.graphics,
+            &mut self.exit_requested,
             snapshot,
             0.0,
         );
@@ -241,6 +249,7 @@ pub fn drive_frame<G: Game>(
                 &lp.input,
                 &mut lp.audio,
                 &mut lp.graphics,
+                &mut lp.exit_requested,
                 snapshot,
                 0.0,
             );
@@ -280,6 +289,7 @@ pub fn drive_frame<G: Game>(
             &lp.input,
             &mut lp.audio,
             &mut lp.graphics,
+            &mut lp.exit_requested,
             snapshot,
             alpha,
         );

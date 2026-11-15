@@ -245,6 +245,11 @@ cargo run -p my-game -- --smoke  # headless: 120 frames, exits 0
 Worked example: [main.rs](../games/playable-demo/src/main.rs), which does this with `clap` for
 argument parsing and asserts the stdout contract line in a unit test.
 
+The windowed runner quits on Escape, the close button and Cmd-Q. To use Escape in the game (a
+pause menu, closing a dialog), run it through `run_with_config` with `quit_on_escape: false`; the
+key then reaches `ctx.input()` like any other, and the game quits with `ctx.request_exit()`
+(for example on a second press). `request_exit` also ends a headless run early.
+
 ### Graphics settings: the built-in menu, or your own UI
 
 Every windowed run gets graphics settings for free. There are two ways to expose them to
