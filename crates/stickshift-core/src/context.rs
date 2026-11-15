@@ -91,6 +91,7 @@ pub struct EngineCtx<'a> {
     input: &'a InputState,
     audio: &'a mut Audio,
     graphics: &'a mut GraphicsState,
+    exit_requested: &'a mut bool,
     perf: PerfSnapshot,
     alpha: f32,
     /// The camera was handed out mutably since it was last pushed across the
@@ -116,6 +117,7 @@ impl<'a> EngineCtx<'a> {
         input: &'a InputState,
         audio: &'a mut Audio,
         graphics: &'a mut GraphicsState,
+        exit_requested: &'a mut bool,
         perf: PerfSnapshot,
         alpha: f32,
     ) -> Self {
@@ -126,6 +128,7 @@ impl<'a> EngineCtx<'a> {
             input,
             audio,
             graphics,
+            exit_requested,
             perf,
             alpha,
             camera_moved: false,
@@ -281,6 +284,24 @@ impl<'a> EngineCtx<'a> {
     /// frame collapse to the last.
     pub fn set_graphics_settings(&mut self, settings: GraphicsSettings) {
         self.graphics.request(settings);
+    }
+
+    /// Ask the engine to stop running the game once the current frame is done.
+    ///
+    /// The windowed entry closes the window and returns from
+    /// [`run`](crate::run); the headless harness ends its
+    /// [`run`](crate::headless::Headless::run) early. This is how a game that handles
+    /// Escape itself (with [`RunConfig::quit_on_escape`](crate::RunConfig::quit_on_escape)
+    /// off) quits, for example on a second press. The close button and Cmd-Q
+    /// always quit.
+    pub fn request_exit(&mut self) {
+        *self.exit_requested = true;
+    }
+
+    /// Whether [`request_exit`](Self::request_exit) has been called.
+    #[must_use]
+    pub fn exit_requested(&self) -> bool {
+        *self.exit_requested
     }
 
     /// The [`PerfSnapshot`] describing recent frame timing.

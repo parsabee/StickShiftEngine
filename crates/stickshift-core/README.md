@@ -106,7 +106,8 @@ step per frame); the windowed driver measures a real monotonic `Instant` delta
   `NSMenu`, and clicks posted back through winit's `EventLoopProxy`). It also
   restores and saves the settings in `NSUserDefaults`.
   `native_settings_menu: false` / `persist_graphics_settings: false` opt out, for
-  games with their own UI. The headless driver never touches either. macOS-only bits
+  games with their own UI. `quit_on_escape: false` hands Escape to the game, which
+  quits with `EngineCtx::request_exit`. The headless driver never touches either. macOS-only bits
   (window creation, event translation) are kept in small free functions to ease
   a future `#[cfg]` platform split.
 

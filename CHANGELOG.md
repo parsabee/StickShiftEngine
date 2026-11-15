@@ -111,6 +111,13 @@ API**.
   `stickshift-core` loop now records physics time around every fixed step and render time around
   `Game::render`; before, those fields were always zero. `mark_physics`, `mark_query` and
   `mark_render` add up within a frame instead of keeping only the last span.
+- **Games can use Escape** ([#33](https://github.com/parsabee/StickShiftEngine/issues/33)). The
+  windowed runner quit on every Escape press before the game saw the key, so a game couldn't use it
+  for a pause menu or "press Escape again to quit". `RunConfig` gains `quit_on_escape` (default
+  `true`, today's behaviour). With it off, Escape reaches the game like any other key, and the new
+  `EngineCtx::request_exit` quits after the current frame; it also ends a headless run early. The
+  close button and Cmd-Q always quit. `RunConfig` and `Loop` gain a public field, which breaks only
+  code that builds them with a struct literal without `..Default::default()`.
 
 ## [0.1.0-beta.2] - 2026-11-14
 
