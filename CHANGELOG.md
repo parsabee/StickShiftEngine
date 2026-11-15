@@ -10,35 +10,6 @@ API**.
 
 ## [Unreleased]
 
-## [0.1.0-beta.2] - 2026-11-14
-
-The project is renamed from KamanEngine to **Stick Shift Engine**. Every public name changes
-(crates, the C API, environment variables, Homebrew, the repository and the docs site); there are
-no functional changes. The known limitations of 0.1.0-beta.1 still apply.
-
-### Changed
-
-- **The project is renamed from KamanEngine to Stick Shift Engine (breaking).** Every public name
-  moves; nothing else changes:
-  - **Crates:** `kaman-*` → `stickshift-*` (directories `crates/stickshift-*`; Rust paths
-    `stickshift_core`, `stickshift_render`, …). Types such as `KamanMenuTarget` follow.
-  - **C API:** `kaman_*` functions → `stickshift_*`, `Kaman*` types → `StickShift*`, `KAMAN_*`
-    constants → `STICKSHIFT_*`. The library is `libstickshift` (`@rpath/libstickshift.dylib`), the
-    header `stickshift.h`, the Swift module `StickShift` and the pkg-config file `stickshift.pc`.
-    `STICKSHIFT_API_VERSION` is **3**, so a context refuses a header from before the rename.
-  - **Environment variables:** `KAMAN_*` → `STICKSHIFT_*` (for example `STICKSHIFT_DEMO_ASSETS`,
-    `STICKSHIFT_REQUIRE_GPU`).
-  - **macOS settings:** the Graphics menu stores its choices under `StickShiftEngine.graphics.*`
-    in `NSUserDefaults`, so saved Graphics settings reset once.
-  - **Homebrew:** the formula `kaman-engine` → `stickshift-engine`, the tap
-    `parsabee/homebrew-kaman` → `parsabee/homebrew-stickshift`, the demo command `kaman-demo` →
-    `stickshift-demo`, and the release tarball `stickshift-engine-<version>-aarch64-apple-darwin.tar.gz`.
-    The tap records the rename in `formula_renames.json`, so `brew upgrade` moves existing installs.
-  - **Repository and docs:** `github.com/parsabee/StickShiftEngine`, API docs at
-    `parsabee.github.io/StickShiftEngine`.
-  - **CI:** a new check (`scripts/check-renamed.sh`) fails if the old name returns outside this
-    changelog and the documented migration notes.
-
 ### Fixed
 
 - **A glTF file with a cyclic node hierarchy no longer crashes the process**
@@ -109,6 +80,35 @@ no functional changes. The known limitations of 0.1.0-beta.1 still apply.
   cast) at the frame's first draw, or at `submit` for a frame with no draws. A camera or sun set
   before that, before or after `begin_frame`, lights the frame. `stickshift-core` and the C API
   already set the camera before opening the frame, so they are unaffected.
+
+## [0.1.0-beta.2] - 2026-11-14
+
+The project is renamed from KamanEngine to **Stick Shift Engine**. Every public name changes
+(crates, the C API, environment variables, Homebrew, the repository and the docs site); there are
+no functional changes. The known limitations of 0.1.0-beta.1 still apply.
+
+### Changed
+
+- **The project is renamed from KamanEngine to Stick Shift Engine (breaking).** Every public name
+  moves; nothing else changes:
+  - **Crates:** `kaman-*` → `stickshift-*` (directories `crates/stickshift-*`; Rust paths
+    `stickshift_core`, `stickshift_render`, …). Types such as `KamanMenuTarget` follow.
+  - **C API:** `kaman_*` functions → `stickshift_*`, `Kaman*` types → `StickShift*`, `KAMAN_*`
+    constants → `STICKSHIFT_*`. The library is `libstickshift` (`@rpath/libstickshift.dylib`), the
+    header `stickshift.h`, the Swift module `StickShift` and the pkg-config file `stickshift.pc`.
+    `STICKSHIFT_API_VERSION` is **3**, so a context refuses a header from before the rename.
+  - **Environment variables:** `KAMAN_*` → `STICKSHIFT_*` (for example `STICKSHIFT_DEMO_ASSETS`,
+    `STICKSHIFT_REQUIRE_GPU`).
+  - **macOS settings:** the Graphics menu stores its choices under `StickShiftEngine.graphics.*`
+    in `NSUserDefaults`, so saved Graphics settings reset once.
+  - **Homebrew:** the formula `kaman-engine` → `stickshift-engine`, the tap
+    `parsabee/homebrew-kaman` → `parsabee/homebrew-stickshift`, the demo command `kaman-demo` →
+    `stickshift-demo`, and the release tarball `stickshift-engine-<version>-aarch64-apple-darwin.tar.gz`.
+    The tap records the rename in `formula_renames.json`, so `brew upgrade` moves existing installs.
+  - **Repository and docs:** `github.com/parsabee/StickShiftEngine`, API docs at
+    `parsabee.github.io/StickShiftEngine`.
+  - **CI:** a new check (`scripts/check-renamed.sh`) fails if the old name returns outside this
+    changelog and the documented migration notes.
 
 ## [0.1.0-beta.1] - 2026-11-13
 
