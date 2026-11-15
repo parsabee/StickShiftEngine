@@ -136,17 +136,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP/tap/Formula"
           cp packaging/homebrew/stickshift-engine.rb "$RUNNER_TEMP/tap/Formula/stickshift-engine.rb"
           ./scripts/update-homebrew-formula.sh "$RUNNER_TEMP/tap/Formula/stickshift-engine.rb" "$VERSION" "$sha"
-          # The pre-rename formula: drop its file and map it to stickshift-engine.
-          old_formula=kaman-engine  # recorded in the tap's formula_renames.json
-          printf '{ "%s": "stickshift-engine" }\n' "$old_formula" > "$RUNNER_TEMP/tap/formula_renames.json"
-          git -C "$RUNNER_TEMP/tap" rm -q --ignore-unmatch "Formula/$old_formula.rb"
           git -C "$RUNNER_TEMP/tap" add -A
           if git -C "$RUNNER_TEMP/tap" diff --cached --quiet; then
             echo "tap already at $VERSION"
           else
             git -C "$RUNNER_TEMP/tap" commit -m "stickshift-engine $VERSION" \
-              -m "- Formula/stickshift-engine.rb: url and sha256 for the $TAG release" \
-              -m "- formula_renames.json: the pre-rename formula now resolves to stickshift-engine"
+              -m "- Formula/stickshift-engine.rb: url and sha256 for the $TAG release"
             GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes" git -C "$RUNNER_TEMP/tap" push origin HEAD:main
           fi
           rm -f "$key"

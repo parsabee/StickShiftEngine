@@ -4,8 +4,6 @@
 
 **A Rust game engine for Apple platforms, rendering with raw Metal.**
 
-<sub>Stick Shift Engine was formerly KamanEngine (renamed in v0.1.0-beta.2).</sub>
-
 [![CI](https://github.com/parsabee/StickShiftEngine/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/parsabee/StickShiftEngine/actions/workflows/ci.yml)
 [![Docs](https://github.com/parsabee/StickShiftEngine/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/parsabee/StickShiftEngine/actions/workflows/docs.yml)
 [![API docs](https://img.shields.io/badge/docs-API%20reference-blue?logo=rust)](https://parsabee.github.io/StickShiftEngine/)
