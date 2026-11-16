@@ -130,7 +130,7 @@ pub extern "C" fn stickshift_api_version() -> u32 {
     STICKSHIFT_API_VERSION
 }
 
-/// The library's release, e.g. `"0.1.0-beta.1"`. Static; thread-safe.
+/// The library's release, e.g. `"0.1.0"`. Static; thread-safe.
 #[no_mangle]
 pub extern "C" fn stickshift_version_string() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()

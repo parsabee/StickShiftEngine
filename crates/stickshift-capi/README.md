@@ -4,7 +4,7 @@ The Stick Shift Engine **C API**: `libstickshift.a` / `libstickshift.dylib` and 
 [`include/stickshift.h`](include/stickshift.h), with a [`module.modulemap`](include/module.modulemap)
 so Swift can `import StickShift`.
 
-The contract (concepts, threading, what may wait in the beta, the reference) is
+The contract (concepts, threading, what may wait in v0.1, the reference) is
 [docs/C_API.md](../../docs/C_API.md). In short, the API is **asynchronous in shape**:
 calls return at once with a handle or a result code, resources go `PENDING` →
 `READY` / `FAILED`, completions arrive as events through `stickshift_poll_events` or per-call

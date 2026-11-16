@@ -9,6 +9,15 @@ API**.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-15
+
+The first release: a Metal rendering engine for macOS on Apple Silicon, usable from Rust or, as
+`libstickshift`, from C and Swift, with the playable demo as its reference game. Since 0.1.0-beta.2
+it adds GPU frame timing and a renderer benchmark, and ships its release builds with precompiled
+shaders. It also fixes every bug the beta audit filed (#22–#43), several of them in the C API's
+contract. The C API keeps `STICKSHIFT_API_VERSION` 3: its additions (`STICKSHIFT_ERROR_TIMEOUT`,
+`stickshift_context_gpu_frame_time`) don't change any existing type.
+
 ### Added
 
 - **GPU frame timing.** The Metal backend records each frame's GPU execution time from its command
@@ -224,6 +233,25 @@ API**.
   - `stickshift-core` lists all its dependencies, describes the backend factory instead of an
     "isolated function the Metal backend fills", and lists everything `EngineCtx` exposes.
   - The audio mixer says which counters can differ between device and silent mode.
+
+### Known limitations
+
+- **macOS on Apple Silicon only.** iOS is planned for v0.2
+  ([#2](https://github.com/parsabee/StickShiftEngine/issues/2)).
+- **Some C API calls still do work on the caller's thread.** `stickshift_frame_submit` encodes the
+  frame there and can briefly wait for a drawable; mesh, texture and font creation upload before
+  returning; context creation, destruction and `stickshift_context_flush` wait. Later releases move
+  this onto engine threads without API changes. See "What may wait in v0.1" in
+  [docs/C_API.md](docs/C_API.md).
+- **No ABI stability before 1.0.** `STICKSHIFT_API_VERSION` is 3; a context refuses a header from a
+  different API version.
+- **Draw calls are the main CPU cost.** There is no frustum culling or instancing yet, and indexed
+  meshes are expanded to one vertex per index on upload. See [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+- **Physics will leave the engine.** A later release removes `stickshift-physics` and the scene's
+  physics step; games that want physics will use `rapier3d` directly (see
+  [docs/ROADMAP.md](docs/ROADMAP.md)).
+- **The crates are not published to crates.io.** Use them as path dependencies, or the C library
+  from the release tarball or Homebrew.
 
 ## [0.1.0-beta.2] - 2026-11-14
 
@@ -570,7 +598,8 @@ workspace version and are not published to crates.io.
   crash WAVs were generated for this project and dedicated CC0 1.0. The HUD font is OFL. See
   `games/playable-demo/README.md`.
 
-[Unreleased]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0-beta.2...HEAD
+[Unreleased]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0-beta.2...v0.1.0
 [0.1.0-beta.2]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0-beta.1...v0.1.0-beta.2
 [0.1.0-beta.1]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0-alpha.2...v0.1.0-beta.1
 [0.1.0-alpha.2]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0-alpha.1...v0.1.0-alpha.2

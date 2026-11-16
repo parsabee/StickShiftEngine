@@ -1,10 +1,10 @@
 # Stick Shift Engine C API
 
-> **Status: v0.1.0-beta.1.** The API below is the contract
+> **Status: v0.1.0.** The API below is the contract
 > [`crates/stickshift-capi`](../crates/stickshift-capi) implements. It is **asynchronous in shape**: calls return immediately with a handle or a
 > result code, resources move from *pending* to *ready* or *failed*, and completions arrive as
-> events. In this beta most work still happens synchronously inside the calls (see
-> [What may wait in the beta](#what-may-wait-in-the-beta)); later releases move it onto engine
+> events. In v0.1 most work still happens synchronously inside the calls (see
+> [What may wait in v0.1](#what-may-wait-in-v01)); later releases move it onto engine
 > threads **without changing this API**.
 
 The C API is a thin layer over the Rust crates (`stickshift-render`, `stickshift-render-api`,
@@ -22,7 +22,7 @@ view, the run loop, input, audio and game logic.
 1. [Conventions](#conventions)
 2. [Concepts](#concepts): contexts, handles and states, events and callbacks, data ownership,
    frames, threading, errors
-3. [What may wait in the beta](#what-may-wait-in-the-beta)
+3. [What may wait in v0.1](#what-may-wait-in-v01)
 4. [Versioning and ABI](#versioning-and-abi)
 5. [Limits](#limits)
 6. [Reference](#reference), by module
@@ -65,7 +65,7 @@ the worker threads that load models, and the event queue. Create one per render 
 
 A context is ready to render once `STICKSHIFT_EVENT_CONTEXT_READY` has been delivered. Before that,
 resource creation is accepted (resources stay pending) and `stickshift_frame_acquire` returns
-`STICKSHIFT_FRAME_SKIPPED`. In the beta the context is ready as soon as `stickshift_context_create`
+`STICKSHIFT_FRAME_SKIPPED`. In v0.1 the context is ready as soon as `stickshift_context_create`
 returns, and the event is already queued.
 
 ### Handles and resource states
@@ -97,7 +97,7 @@ Each resource is in one of these states (`stickshift_resource_state`):
 | `STICKSHIFT_RESOURCE_STATE_FAILED` | The work failed. The handle stays valid (so you can read the state and destroy it) but draws using it are skipped. The failure event carries the reason. |
 
 `*_create` and `*_load_*` calls return `STICKSHIFT_OK` and a handle **immediately**, with the resource
-`PENDING` (or already `READY`, see the beta table). They return an error only for problems they
+`PENDING` (or already `READY`, see the v0.1 table). They return an error only for problems they
 can detect at once: a bad argument, a full handle table, a busy context.
 
 Destroying a resource invalidates its handle at once. GPU memory is released only after every
@@ -140,7 +140,7 @@ never on an engine thread**:
 2. **Per-call callbacks.** Functions that start work take an optional
    `const StickShiftCompletion *` (`{ callback, user }`). If given, that work's event goes to `callback` instead of
    the poll queue (each event is delivered exactly once). Callbacks run inside
-   `stickshift_poll_events`, `stickshift_context_flush` or, in the beta, inside the call that started the
+   `stickshift_poll_events`, `stickshift_context_flush` or, in v0.1, inside the call that started the
    work when it completes immediately.
 
 `message` and the event pointer passed to a callback are valid until the callback returns
@@ -210,7 +210,7 @@ if (stickshift_frame_acquire(ctx, &frame) == STICKSHIFT_OK) {
   parts or glyphs it recorded.
 - **Materials.** Meshes with the `POS_NORMAL_UV` layout sample `base_color_texture` (white if
   none) and multiply it by `base_color`. Meshes with the `POS_NORMAL_COLOR` layout take their
-  colour from the vertices; `base_color` and the texture are ignored for them in the beta, so the
+  colour from the vertices; `base_color` and the texture are ignored for them in v0.1, so the
   texture handle is not checked and destroying it does not drop the draw.
 - **Colour spaces.** Lighting is linear. Create colour images (photos, painted albedo) with
   `STICKSHIFT_COLOR_SPACE_SRGB`: the sampler decodes them to linear before shading. Create data
@@ -263,13 +263,13 @@ message is per-thread and valid until the next failing call on the same thread. 
 
 No panic, abort or exception ever crosses the C boundary.
 
-## What may wait in the beta
+## What may wait in v0.1
 
-The API never requires a call to wait. In the beta, a few calls still do bounded work on the
+The API never requires a call to wait. In v0.1, a few calls still do bounded work on the
 caller's thread, or can wait on the system. Every row changes in a later release without an API
 change.
 
-| Call | In the beta | Later |
+| Call | In v0.1 | Later |
 |---|---|---|
 | `stickshift_context_create` | Synchronous setup: creates the Metal device and compiles the shaders (tens to a few hundred ms). `CONTEXT_READY` is queued before it returns. | Setup runs on an engine thread; `CONTEXT_READY` arrives later. |
 | `stickshift_mesh_create`, `stickshift_texture_create`, `stickshift_font_create` | Upload on the caller's thread before returning (bounded by the data size; textures do not wait for mipmap generation). The resource is `READY` on return; `RESOURCE_READY` is queued (or the callback runs before the call returns). Borrowed data is released before the call returns. | Uploads move to a transfer queue; resources become ready later. |
@@ -288,7 +288,7 @@ change.
   `stickshift_api_version()` returns the library's value. `StickShiftContextDesc.api_version` must be set to
   `STICKSHIFT_API_VERSION`: if it does not match the library, `stickshift_context_create` fails with
   `STICKSHIFT_ERROR_UNSUPPORTED`. That catches a header and a library from different releases.
-- `stickshift_version_string()` returns the release, for example `"0.1.0-beta.1"`.
+- `stickshift_version_string()` returns the release, for example `"0.1.0"`.
 
 ## Limits
 

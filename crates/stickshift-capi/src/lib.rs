@@ -13,7 +13,7 @@
 //!   a result code, resources go `PENDING` → `READY` / `FAILED`, and completions
 //!   arrive as events, through `stickshift_poll_events` or per-call callbacks that
 //!   always run on a host thread.
-//! - In this beta, mesh and texture uploads still happen inside their create
+//! - In v0.1, mesh and texture uploads still happen inside their create
 //!   calls; glTF models are parsed on worker threads and uploaded during
 //!   housekeeping; frames are recorded CPU-side and submitted through the Metal
 //!   backend's non-blocking path, so `stickshift_frame_acquire` never waits.

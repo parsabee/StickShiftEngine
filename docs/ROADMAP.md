@@ -30,12 +30,22 @@ The ray tracer was removed for v0.1: the engine is rasterization-only.
 
 ### `v0.1.0`
 
-Everything in the beta, plus:
+Everything in the betas, plus:
 
-- **Precompiled shaders:** compile the Metal shaders to a `.metallib` at build time and embed it,
-  so the library never compiles shaders at runtime (building then needs full Xcode).
-- **Benchmarking:** GPU frame timing and a benchmark scene, with results recorded on real
-  hardware, and any fixes they call for.
+- **Precompiled shaders:** release builds compile the Metal shaders to a `.metallib` at build time
+  and embed it, so the shipped library never compiles shaders at runtime. Building that way needs
+  full Xcode; development builds still compile at runtime.
+- **Benchmarking:** GPU frame timing (renderer, perf snapshot and C API) and a benchmark scene,
+  with results recorded in [BENCHMARKS.md](BENCHMARKS.md). They called for no fixes.
+- **Every bug from the beta audit fixed** (#22–#43).
+
+## After v0.1
+
+- **Physics leaves the engine.** The C API has never exposed physics, and the playable demo only
+  uses it to tag obstacles. A later release removes `stickshift-physics` (and `rapier3d`),
+  `PhysicsBodyComponent` and the loop's physics step. The scene keeps streaming and the
+  floating-origin rebase, and passes the rebase offset to the game. A game that wants physics
+  uses `rapier3d` directly.
 
 ## v0.2 — iOS
 
