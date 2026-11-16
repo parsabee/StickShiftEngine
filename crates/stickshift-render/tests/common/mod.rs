@@ -100,3 +100,33 @@ pub fn bless_or_assert(pixels: &[u8], baseline: u64, constant: &str) {
          with a justification note."
     );
 }
+
+/// Whether `device_name` is a paravirtualized Metal device (a macOS virtual
+/// machine, e.g. a GitHub Actions runner) rather than a real Apple GPU.
+pub fn is_paravirtual(device_name: &str) -> bool {
+    device_name.contains("Paravirtual")
+}
+
+/// Print `frame` base64-encoded on one line between `BEGIN <name>` / `END <name>`
+/// markers, so a failing CI run carries the frame needed to inspect it or re-record a
+/// reference image under `tests/data/` (decode the line into that file).
+pub fn dump_frame(name: &str, frame: &[u8]) {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(frame.len().div_ceil(3) * 4);
+    for chunk in frame.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = u32::from(b[0]) << 16 | u32::from(b[1]) << 8 | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                encoded.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                encoded.push('=');
+            }
+        }
+    }
+    eprintln!("BEGIN {name}\n{encoded}\nEND {name}");
+}
