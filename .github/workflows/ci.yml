@@ -92,6 +92,11 @@ jobs:
       - name: C API smoke test and sample (Metal)
         run: ./scripts/test-c-api.sh
 
+      # Build the Swift package (bindings/swift/StickShift) over libstickshift and run its
+      # tests: the null backend everywhere, and Metal on the runner's device.
+      - name: Swift package tests
+        run: ./scripts/test-swift.sh
+
       - name: Clippy (deny warnings)
         run: cargo clippy --workspace --all-targets -- -D warnings
 

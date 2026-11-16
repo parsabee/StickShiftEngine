@@ -26,6 +26,15 @@ API**.
   `emissiveFactor` (times `KHR_materials_emissive_strength`) as `MeshAsset::emissive`, and the C
   API draws model parts with it.
 - The renderer benchmark has 64- and 256-light scenarios; `docs/BENCHMARKS.md` has the numbers.
+- **A Swift package, `StickShift`** (#76), in `bindings/swift/StickShift`, over the C API. A
+  main-actor `Context` (layer, offscreen or null backend), and `Mesh`, `Texture`, `Model` and
+  `Font` classes that destroy their handles when released. `StickShiftError` carries the C
+  result code and message. Model loads are `async`. `context.frame { frame in ... }` submits
+  the frame when the closure returns and discards it if the closure throws. Also: `simd`
+  interop, lights and emission, pixel read-back, and `StickShiftView`, an `NSView` hosting a
+  `CAMetalLayer` that keeps the drawable sized to the view and drives a display link.
+  `scripts/test-swift.sh` builds `libstickshift` with cargo and runs the package's Swift
+  Testing suite (null backend, plus Metal), which CI now runs too.
 
 ### Changed
 

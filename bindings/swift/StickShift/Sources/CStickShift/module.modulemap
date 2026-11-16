@@ -1,0 +1,6 @@
+// The C API as a Clang module for the `StickShift` Swift target. The header is the
+// one the Rust crate generates; the library is linked by `Package.swift`.
+module CStickShift [system] {
+    header "../../../../../crates/stickshift-capi/include/stickshift.h"
+    export *
+}

@@ -594,8 +594,11 @@ On macOS that is `-framework Metal -framework QuartzCore -framework Foundation
 [`scripts/test-c-api.sh`](../scripts/test-c-api.sh) builds the C smoke test and
 [`examples/c/offscreen.c`](../examples/c/offscreen.c) exactly this way.
 
-**Swift.** Add the include directory to the import paths (`SWIFT_INCLUDE_PATHS` in Xcode, or
-`-I` with `swiftc`), link `libstickshift`, and `import StickShift`. Pass the view's layer as
+**Swift.** The [`StickShift` Swift package](../bindings/swift/StickShift) wraps this API: resource
+classes destroyed on `deinit`, `StickShiftError` for result codes, `async` model loads, a
+closure-scoped frame, `simd` interop and an `NSView` host, all on the main actor. To use the raw C
+API from Swift instead, add the include directory to the import paths (`SWIFT_INCLUDE_PATHS` in
+Xcode, or `-I` with `swiftc`), link `libstickshift`, and `import StickShift`. Pass the view's layer as
 `Unmanaged.passUnretained(layer).toOpaque()` for `metal_layer`; the engine retains it.
 Confine the context to one actor, since the busy guard rejects overlapping calls rather than
 serialising them.

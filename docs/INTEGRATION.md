@@ -21,6 +21,9 @@ a red run blocks merging.
 - the render-seam firewall: `stickshift-render-api` must not depend on `metal`
 - the de-brand guard: no prototype identifiers in `crates/` or `games/`
 - `cargo clippy --workspace --all-targets -- -D warnings`
+- the C header check (`scripts/gen-header.sh --check`), the C smoke test and sample
+  (`scripts/test-c-api.sh`), and the Swift package's tests (`scripts/test-swift.sh`: the null
+  backend, and Metal on the runner's device)
 - rustdoc with broken and private intra-doc links denied
 - the headless smoke oracle, `cargo run -p playable-demo -- --smoke` (120 frames on the CPU-only
   `NullRenderer`, with Metal API Validation enabled)

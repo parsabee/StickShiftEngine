@@ -6,6 +6,10 @@
 *.metallib
 shaders/**/*.metallib
 
+# Swift package build output
+bindings/swift/**/.build/
+bindings/swift/**/.swiftpm/
+
 # macOS
 .DS_Store
 
