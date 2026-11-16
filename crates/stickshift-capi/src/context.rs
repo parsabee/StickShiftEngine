@@ -684,6 +684,47 @@ pub unsafe extern "C" fn stickshift_context_get_stats(
     })
 }
 
+/// How long the GPU spent executing frame `frame_number` (as
+/// `stickshift_frame_submit` returned it), in nanoseconds, into `*out_ns`.
+///
+/// `STICKSHIFT_NOT_READY` until the frame has completed. Times are kept for the
+/// last 64 completed frames: an older frame, frame 0 or a frame never submitted
+/// is `STICKSHIFT_ERROR_INVALID_ARGUMENT`. The null backend reports 0. On
+/// anything but `STICKSHIFT_OK`, `*out_ns` is 0.
+///
+/// # Safety
+/// `ctx` must be NULL or a live context; `out_ns` NULL or valid.
+#[no_mangle]
+pub unsafe extern "C" fn stickshift_context_gpu_frame_time(
+    ctx: *mut StickShiftContext,
+    frame_number: u64,
+    out_ns: *mut u64,
+) -> StickShiftResult {
+    call(|| {
+        let out = output(out_ns, "out_ns")?;
+        *out = 0;
+        with_context(ctx, |inner| {
+            let submitted = inner.backend.submitted_frames();
+            if frame_number == 0 || frame_number > submitted {
+                return Err(Error::invalid_argument(format!(
+                    "frame {frame_number} was never submitted ({submitted} so far)"
+                )));
+            }
+            if frame_number > inner.backend.completed_frames() {
+                return Ok(STICKSHIFT_NOT_READY);
+            }
+            let time = inner.backend.gpu_frame_time(frame_number).ok_or_else(|| {
+                Error::invalid_argument(format!(
+                    "frame {frame_number}'s GPU time is no longer kept (only the last 64 \
+                     completed frames are), or its command buffer failed"
+                ))
+            })?;
+            *out = u64::try_from(time.as_nanos()).unwrap_or(u64::MAX);
+            Ok(STICKSHIFT_OK)
+        })
+    })
+}
+
 /// The GPU's name, valid for the context's lifetime; `""` for NULL. Thread-safe.
 ///
 /// # Safety

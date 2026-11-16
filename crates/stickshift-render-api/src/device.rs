@@ -4,6 +4,8 @@
 
 //! The [`RenderDevice`] trait — load-time resource creation and destruction.
 
+use std::time::Duration;
+
 use crate::descriptor::{PipelineKind, VertexLayout};
 use crate::handles::{MeshHandle, PipelineHandle, TextureHandle};
 use crate::settings::RenderSettings;
@@ -198,6 +200,19 @@ pub trait RenderDevice {
     /// the first [`resize_surface`](Self::resize_surface).
     fn surface_scale(&self) -> f32;
 
+    /// How long the GPU spent executing the most recently completed frame, if
+    /// this backend measures it.
+    ///
+    /// The default is `None` (a backend without a GPU, such as
+    /// [`NullRenderer`](crate::NullRenderer)). The Metal backend reports every
+    /// frame's command-buffer execution time, start to end on the GPU. Frames
+    /// complete a few frames after they are recorded, so this usually describes
+    /// an earlier frame than the one being drawn; [`GpuFrameTime::frame`] says
+    /// which.
+    fn last_gpu_frame_time(&self) -> Option<GpuFrameTime> {
+        None
+    }
+
     /// Apply render quality settings: shadow quality and range, and the
     /// draw-distance scale. See [`RenderSettings`].
     ///
@@ -208,4 +223,14 @@ pub trait RenderDevice {
     ///   here, for example a shadow map of a new size, so treat it as a
     ///   load-time-cost call, not a per-frame one.
     fn set_render_settings(&mut self, settings: &RenderSettings);
+}
+
+/// The GPU execution time of one completed frame, as reported by
+/// [`RenderDevice::last_gpu_frame_time`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GpuFrameTime {
+    /// The frame's number: the `n`th submitted frame is frame `n`.
+    pub frame: u64,
+    /// How long the GPU spent executing it.
+    pub duration: Duration,
 }

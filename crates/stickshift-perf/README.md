@@ -9,9 +9,11 @@ last `WINDOW_SIZE` (60) frames: frame time (the real frame period, from one
 `end_frame` to the next, so it includes waiting for vsync or a drawable), CPU time
 (the work between `begin_frame` and `end_frame`), per-subsystem breakdown
 (physics / spatial-query / render, each adding up over the frame), FPS (from the
-frame time), and buffer allocation/upload/free accounting. It has no dependencies
-on the renderer or GPU — GPU-side timing (command-buffer completion handlers) is
-not implemented yet (it is planned with the v0.1.0 benchmarking work).
+frame time), GPU time (what the renderer reports for completed frames, handed in
+with `record_gpu_time`), and buffer allocation/upload/free accounting. It has no
+dependencies on the renderer or GPU: the `stickshift-core` loop passes in the
+render seam's `last_gpu_frame_time`, which the Metal backend measures from each
+command buffer.
 
 ## API tour
 

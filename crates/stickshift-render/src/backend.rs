@@ -169,6 +169,7 @@ use std::ffi::c_void;
 use std::mem;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use block::ConcreteBlock;
 use cocoa::base::id as cocoa_id;
@@ -183,9 +184,9 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use stickshift_math::glam::{Mat4, Vec3};
 use stickshift_math::Transform;
 use stickshift_render_api::{
-    ColorSpace, FrameRecorder, MaterialParams, MeshData, MeshHandle, OverlayFill, OverlayQuad,
-    PipelineDescriptor, PipelineHandle, PipelineKind, RenderDevice, RenderSettings, SunSky,
-    TextureData, TextureHandle, VertexFormat, VertexLayout,
+    ColorSpace, FrameRecorder, GpuFrameTime, MaterialParams, MeshData, MeshHandle, OverlayFill,
+    OverlayQuad, PipelineDescriptor, PipelineHandle, PipelineKind, RenderDevice, RenderSettings,
+    SunSky, TextureData, TextureHandle, VertexFormat, VertexLayout,
 };
 
 use crate::deindex::deindex;
@@ -463,6 +464,51 @@ fn validate_rgba8(data: &TextureData<'_>) -> Result<(), RenderError> {
 /// source of truth.
 pub const MAX_FRAMES_IN_FLIGHT: u64 = 3;
 
+/// How many of the most recently completed frames keep their GPU time for
+/// [`MetalRenderer::gpu_frame_time`].
+pub const GPU_TIME_FRAMES: u64 = 64;
+
+/// The GPU execution times of the last [`GPU_TIME_FRAMES`] frames, written by
+/// each frame's completion handler on a Metal thread and read on the host.
+///
+/// Each slot packs a frame number's low 32 bits with that frame's GPU time in
+/// nanoseconds (saturated to 32 bits, about 4.3 s), so one atomic store
+/// publishes both and a reader can tell whether the slot still holds the frame
+/// it asks about. Writing it allocates nothing, as a completion handler must.
+struct GpuTimes {
+    slots: [AtomicU64; GPU_TIME_FRAMES as usize],
+}
+
+impl GpuTimes {
+    fn new() -> Self {
+        Self {
+            slots: [const { AtomicU64::new(0) }; GPU_TIME_FRAMES as usize],
+        }
+    }
+
+    fn slot(&self, frame: u64) -> &AtomicU64 {
+        &self.slots[(frame % GPU_TIME_FRAMES) as usize]
+    }
+
+    /// Record frame `frame`'s GPU execution from `start` to `end`, in seconds
+    /// (a command buffer's `GPUStartTime` / `GPUEndTime`). Nothing is recorded
+    /// when the times are unusable, as for a command buffer that failed.
+    fn record(&self, frame: u64, start: f64, end: f64) {
+        if !(start > 0.0 && end >= start) {
+            return;
+        }
+        let nanos = ((end - start) * 1e9).round().min(f64::from(u32::MAX)) as u64;
+        self.slot(frame)
+            .store(((frame & 0xFFFF_FFFF) << 32) | nanos, Ordering::Release);
+    }
+
+    /// Frame `frame`'s GPU time, if it is still in its slot.
+    fn get(&self, frame: u64) -> Option<Duration> {
+        let packed = self.slot(frame).load(Ordering::Acquire);
+        (packed >> 32 == frame & 0xFFFF_FFFF).then(|| Duration::from_nanos(packed & 0xFFFF_FFFF))
+    }
+}
+
 /// Initial per-frame uniform-slot capacity of the ring, per in-flight frame.
 ///
 /// The ring starts sized for `INITIAL_MAX_DRAWS_PER_FRAME * MAX_FRAMES_IN_FLIGHT`
@@ -677,6 +723,8 @@ pub struct MetalRenderer {
     frame_index: u64,
     // Frames the GPU has finished, bumped by each frame's completion handler.
     completed_frames: Arc<AtomicU64>,
+    // Recent frames' GPU execution times, written by the same handler.
+    gpu_times: Arc<GpuTimes>,
 
     // Cached MSAA (multisampled) depth texture — the depth attachment is now
     // multisampled to match the MSAA color. Reallocated only on resize,
@@ -1310,6 +1358,7 @@ impl MetalRenderer {
             frame_semaphore: Arc::new(FrameSemaphore::new(MAX_FRAMES_IN_FLIGHT as u32)),
             frame_index: 0,
             completed_frames: Arc::new(AtomicU64::new(0)),
+            gpu_times: Arc::new(GpuTimes::new()),
             depth_texture: None,
             depth_texture_size: (0, 0),
             msaa_color_texture: None,
@@ -2311,6 +2360,23 @@ impl MetalRenderer {
         self.completed_frames.load(Ordering::Acquire)
     }
 
+    /// How long the GPU spent executing frame `frame`, start to end, as its
+    /// command buffer reports. Frame numbers are those
+    /// [`submit_async`](Self::submit_async) returns (1-based).
+    ///
+    /// `None` until the frame has completed, for frame 0 or a frame never
+    /// submitted, for a frame older than the last [`GPU_TIME_FRAMES`] completed
+    /// ones, and for a frame whose command buffer failed. Cheap enough to call
+    /// every frame.
+    #[must_use]
+    pub fn gpu_frame_time(&self, frame: u64) -> Option<Duration> {
+        let completed = self.completed_frame_count();
+        if frame == 0 || frame > completed || completed - frame >= GPU_TIME_FRAMES {
+            return None;
+        }
+        self.gpu_times.get(frame)
+    }
+
     /// Ask for the open frame's pixels to be copied out when the GPU finishes it.
     ///
     /// Offscreen targets only, and once per frame: returns `None` without an open
@@ -2420,14 +2486,25 @@ impl MetalRenderer {
             // also sees that frame's permit returned (`frames_in_flight`) and its
             // read-back flagged. In the other order a caller could see every
             // frame completed and still a frame in flight.
+            //
+            // It also records the frame's GPU execution time before counting the
+            // frame, so a completed frame's time is always there to read.
             let semaphore = Arc::clone(&self.frame_semaphore);
             let completed = Arc::clone(&self.completed_frames);
+            let gpu_times = Arc::clone(&self.gpu_times);
+            let number = self.frame_index.wrapping_add(1);
             let readback_done = frame.readback.as_ref().map(|(_, done)| Arc::clone(done));
-            let completion = ConcreteBlock::new(move |_cb: &metal::CommandBufferRef| {
+            let completion = ConcreteBlock::new(move |cb: &metal::CommandBufferRef| {
                 semaphore.release();
                 if let Some(done) = &readback_done {
                     done.store(true, Ordering::Release);
                 }
+                // SAFETY: `GPUStartTime` and `GPUEndTime` are read-only
+                // `CFTimeInterval` (double) properties of the command buffer,
+                // final once it has completed, which it has by this handler.
+                let (start, end): (f64, f64) =
+                    unsafe { (msg_send![cb, GPUStartTime], msg_send![cb, GPUEndTime]) };
+                gpu_times.record(number, start, end);
                 completed.fetch_add(1, Ordering::Release);
             })
             .copy();
@@ -2692,6 +2769,12 @@ impl RenderDevice for MetalRenderer {
         self.surface_scale
     }
 
+    fn last_gpu_frame_time(&self) -> Option<GpuFrameTime> {
+        let frame = self.completed_frame_count();
+        self.gpu_frame_time(frame)
+            .map(|duration| GpuFrameTime { frame, duration })
+    }
+
     fn set_render_settings(&mut self, settings: &RenderSettings) {
         // Draw distance: scale the fog from its look defaults. Start and opaque
         // depth (`start + 2 / density`) both scale by exactly `scale`, so the fog
@@ -2889,6 +2972,27 @@ fn ns_view<W: HasWindowHandle>(window: &W) -> Result<cocoa_id, RenderError> {
 #[cfg(test)]
 mod shadow_pass_tests {
     use super::*;
+
+    #[test]
+    fn gpu_times_keep_the_last_frames_and_reject_stale_slots() {
+        let times = GpuTimes::new();
+        times.record(5, 10.0, 10.002);
+        assert_eq!(times.get(5), Some(Duration::from_millis(2)));
+        // Frame 5 + GPU_TIME_FRAMES shares the slot and replaces it.
+        let later = 5 + GPU_TIME_FRAMES;
+        times.record(later, 20.0, 20.001);
+        assert_eq!(times.get(later), Some(Duration::from_millis(1)));
+        assert_eq!(times.get(5), None, "the slot no longer holds frame 5");
+        // A command buffer that never ran reports zero times: nothing recorded.
+        times.record(7, 0.0, 0.0);
+        assert_eq!(times.get(7), None);
+        // Absurdly long frames saturate rather than wrap.
+        times.record(8, 1.0, 100.0);
+        assert_eq!(
+            times.get(8),
+            Some(Duration::from_nanos(u64::from(u32::MAX)))
+        );
+    }
 
     #[test]
     fn a_window_drawable_is_sized_in_pixels() {

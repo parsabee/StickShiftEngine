@@ -56,9 +56,9 @@ pub mod types;
 pub use context::{
     stickshift_context_create, stickshift_context_destroy, stickshift_context_device_name,
     stickshift_context_flush, stickshift_context_get_settings, stickshift_context_get_size,
-    stickshift_context_get_stats, stickshift_context_resize, stickshift_context_set_settings,
-    stickshift_poll_events, stickshift_render_settings_default, stickshift_resource_state,
-    StickShiftContext, StickShiftFrame,
+    stickshift_context_get_stats, stickshift_context_gpu_frame_time, stickshift_context_resize,
+    stickshift_context_set_settings, stickshift_poll_events, stickshift_render_settings_default,
+    stickshift_resource_state, StickShiftContext, StickShiftFrame,
 };
 pub use core::{
     stickshift_api_version, stickshift_last_error_message, stickshift_result_name,

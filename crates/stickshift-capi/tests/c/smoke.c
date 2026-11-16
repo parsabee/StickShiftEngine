@@ -166,6 +166,13 @@ int main(int argc, char **argv) {
     } while (count == 16);
     REQUIRE(completed && read_back);
 
+    /* Frame 1's GPU time is known now that it has completed: zero on the null backend, and
+     * under a second on Metal (a virtualized GPU's coarse timestamps can also read zero). */
+    uint64_t gpu_ns = UINT64_MAX;
+    CHECK(stickshift_context_gpu_frame_time(ctx, 1, &gpu_ns), STICKSHIFT_OK);
+    REQUIRE(use_null ? gpu_ns == 0 : gpu_ns < 1000000000u);
+    CHECK(stickshift_context_gpu_frame_time(ctx, 2, &gpu_ns), STICKSHIFT_ERROR_INVALID_ARGUMENT);
+
     size_t center = ((HEIGHT / 2) * WIDTH + WIDTH / 2) * 4, corner = (HEIGHT - 1) * WIDTH * 4;
     if (use_null) {
         for (size_t i = 0; i < sizeof pixels; i++) REQUIRE(pixels[i] == 0);

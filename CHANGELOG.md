@@ -9,6 +9,17 @@ API**.
 
 ## [Unreleased]
 
+### Added
+
+- **GPU frame timing.** The Metal backend records each frame's GPU execution time from its command
+  buffer, in the completion handler that already counts finished frames, so it costs no
+  allocation. The time is available in four places:
+  - `MetalRenderer::gpu_frame_time(frame)`, for the last 64 completed frames;
+  - the render seam's new `RenderDevice::last_gpu_frame_time`, a default method returning `None`
+    for backends without a GPU;
+  - `PerfSnapshot::avg_gpu_time`, which the `stickshift-core` loop fills each frame;
+  - the C API's `stickshift_context_gpu_frame_time`.
+
 ### Fixed
 
 - **A glTF file with a cyclic node hierarchy no longer crashes the process**

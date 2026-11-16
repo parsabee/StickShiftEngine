@@ -870,6 +870,22 @@ StickShiftResult stickshift_context_get_stats(struct StickShiftContext *ctx,
                                               struct StickShiftStats *out);
 
 /**
+ * How long the GPU spent executing frame `frame_number` (as
+ * `stickshift_frame_submit` returned it), in nanoseconds, into `*out_ns`.
+ *
+ * `STICKSHIFT_NOT_READY` until the frame has completed. Times are kept for the
+ * last 64 completed frames: an older frame, frame 0 or a frame never submitted
+ * is `STICKSHIFT_ERROR_INVALID_ARGUMENT`. The null backend reports 0. On
+ * anything but `STICKSHIFT_OK`, `*out_ns` is 0.
+ *
+ * # Safety
+ * `ctx` must be NULL or a live context; `out_ns` NULL or valid.
+ */
+StickShiftResult stickshift_context_gpu_frame_time(struct StickShiftContext *ctx,
+                                                   uint64_t frame_number,
+                                                   uint64_t *out_ns);
+
+/**
  * The GPU's name, valid for the context's lifetime; `""` for NULL. Thread-safe.
  *
  * # Safety

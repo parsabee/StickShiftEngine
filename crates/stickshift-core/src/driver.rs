@@ -296,6 +296,11 @@ pub fn drive_frame<G: Game>(
         game.render(&mut ctx);
     }
     lp.perf.mark_render();
+    // The newest frame the GPU has finished (a few frames back), if the
+    // renderer measures it; the tracker counts each frame once.
+    if let Some(gpu) = renderer.last_gpu_frame_time() {
+        lp.perf.record_gpu_time(gpu.frame, gpu.duration);
+    }
 
     lp.perf.end_frame();
     steps
