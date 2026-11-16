@@ -114,6 +114,12 @@ pub struct MeshAsset {
     /// sampled base-color texture (or used alone when there is no texture).
     /// Defaults to opaque white.
     pub base_color_factor: [f32; 4],
+    /// The material's emissive colour (linear RGB): glTF's `emissiveFactor`,
+    /// times `KHR_materials_emissive_strength` when the material has it. Draw it
+    /// as [`MaterialParams::emissive`](stickshift_render_api::MaterialParams::emissive)
+    /// so lit windows and lamps glow. `[0, 0, 0]` (glTF's default) emits nothing.
+    /// An emissive *texture* is not imported.
+    pub emissive: [f32; 3],
     /// The decoded normal map, if the material has one (best-effort).
     /// RGBA8 like [`base_color`](Self::base_color); the tangent-space normal is
     /// in RGB. Plumbed toward a basic lit material.

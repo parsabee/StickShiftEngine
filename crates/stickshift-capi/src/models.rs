@@ -44,6 +44,8 @@ pub(crate) struct Part {
     pub(crate) mesh: MeshHandle,
     pub(crate) texture: Option<TextureHandle>,
     pub(crate) base_color: [f32; 4],
+    /// The glTF material's emissive colour.
+    pub(crate) emissive: [f32; 3],
 }
 
 pub(crate) struct ModelEntry {
@@ -303,6 +305,7 @@ fn upload(backend: &mut dyn Backend, scene: &SceneAsset) -> Result<Vec<Part>, Er
                 mesh: handle,
                 texture,
                 base_color: mesh.base_color_factor,
+                emissive: mesh.emissive,
             })
         })();
         match part {

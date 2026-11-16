@@ -34,7 +34,7 @@ Run the same commands locally before pushing; the [README](../README.md#contribu
 Code that resists unit testing is pinned by goldens captured while its behavior is known-good:
 
 - **Renderer:** deterministic offscreen renders of fixed scenes, with the pixel buffer hashed
-  (`crates/stickshift-render/tests/pixel_hash.rs`, `textured_pixel_hash.rs`). A hash only changes with
+  (`crates/stickshift-render/tests/pixel_hash.rs`, `textured_pixel_hash.rs`, `lights.rs`). A hash only changes with
   a written justification next to the new value, and is re-blessed through the documented
   `BLESS=1` path. The tests skip when no Metal device is present.
 - **Determinism** is covered by the fixed timestep and by the deterministic world-streaming

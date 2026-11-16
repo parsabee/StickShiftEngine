@@ -9,6 +9,33 @@ API**.
 
 ## [Unreleased]
 
+### Added
+
+- **Point and spot lights** (#82). A frame can add up to 256 lights next to its sun, from Rust with
+  `FrameRecorder::add_light(&Light)` and from C with `stickshift_frame_add_light`. Lights last one
+  frame: a game re-adds them every frame from its own state. Brightness falls off with the inverse
+  square of the distance, windowed to zero at the light's range; a spot fades between an inner and
+  an outer half angle. `Light::falloff`, `Light::cone` and `Light::radiance_at` compute the same
+  curve on the CPU. The Metal renderer shades them with clustered forward shading: lights are
+  binned on the CPU into 16 × 9 screen tiles × 24 depth slices, and each fragment shades only its
+  cluster's lights. On an M3 Max, 256 lights add about 0.1 ms of GPU time to a 1080p frame.
+  ARCHITECTURE §4c has the design and the per-frame budget.
+- **Emissive materials.** `MaterialParams::emissive` (and `StickShiftMaterial.emissive`) is light
+  a surface gives off itself, added after lighting and before fog: lit windows and lamps glow at
+  night without lighting anything around them. Imported glTF meshes carry their material's
+  `emissiveFactor` (times `KHR_materials_emissive_strength`) as `MeshAsset::emissive`, and the C
+  API draws model parts with it.
+- The renderer benchmark has 64- and 256-light scenarios; `docs/BENCHMARKS.md` has the numbers.
+
+### Changed
+
+- **The C API is at `STICKSHIFT_API_VERSION` 4.** `StickShiftMaterial` gained an `emissive` field,
+  which changes its size, so code built against version 3 must be rebuilt (contexts created with
+  `api_version = 3` are refused). Zero-initialising the field keeps the old look.
+- `MaterialParams` gained the `emissive` field, so a struct literal must name it or end with
+  `..MaterialParams::default()`. `FrameRecorder` gained the required `add_light` method, which a
+  custom renderer must implement.
+
 ### Removed
 
 - **Physics is no longer part of the engine** (#81). This breaks the Rust API; the C API never

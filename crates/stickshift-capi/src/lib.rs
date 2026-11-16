@@ -66,10 +66,10 @@ pub use core::{
 };
 pub use fonts::{stickshift_font_create, stickshift_font_destroy, stickshift_font_measure};
 pub use frame::{
-    stickshift_frame_acquire, stickshift_frame_discard, stickshift_frame_draw_mesh,
-    stickshift_frame_draw_model, stickshift_frame_draw_quad, stickshift_frame_draw_text,
-    stickshift_frame_read_pixels_async, stickshift_frame_set_camera, stickshift_frame_set_sun_sky,
-    stickshift_frame_submit, stickshift_sun_sky_default,
+    stickshift_frame_acquire, stickshift_frame_add_light, stickshift_frame_discard,
+    stickshift_frame_draw_mesh, stickshift_frame_draw_model, stickshift_frame_draw_quad,
+    stickshift_frame_draw_text, stickshift_frame_read_pixels_async, stickshift_frame_set_camera,
+    stickshift_frame_set_sun_sky, stickshift_frame_submit, stickshift_sun_sky_default,
 };
 pub use math::{
     stickshift_mat4_from_trs, stickshift_mat4_identity, stickshift_mat4_look_at,

@@ -206,8 +206,12 @@ impl Backend for MetalBackend {
                 draw.model,
                 &MaterialParams {
                     base_color: draw.base_color,
+                    emissive: draw.emissive,
                 },
             );
+        }
+        for light in frame.lights {
+            r.add_light(light);
         }
         for quad in frame.quads {
             r.draw_overlay_quad(quad);

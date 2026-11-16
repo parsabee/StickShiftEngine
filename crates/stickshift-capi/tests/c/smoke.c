@@ -124,7 +124,7 @@ int main(int argc, char **argv) {
     CHECK(stickshift_model_get_bounds(ctx, model, &lo, &hi), STICKSHIFT_OK);
     REQUIRE(hi.x > lo.x);
 
-    /* One frame: the triangle, the model, a HUD bar, and a read-back. */
+    /* One frame: the triangle, the model, two lights, a HUD bar, and a read-back. */
     StickShiftFrame *frame = NULL;
     StickShiftFrame *second = NULL;
     CHECK(stickshift_frame_acquire(ctx, &frame), STICKSHIFT_OK);
@@ -139,8 +139,19 @@ int main(int argc, char **argv) {
     camera.position = eye;
     CHECK(stickshift_frame_set_camera(frame, &camera), STICKSHIFT_OK);
 
+    StickShiftLight lamp = {STICKSHIFT_LIGHT_POINT, {0.5f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f},
+                            {1.0f, 0.8f, 0.6f}, 2.0f, 4.0f, 0.0f, 0.0f};
+    StickShiftLight torch = {STICKSHIFT_LIGHT_SPOT, {0.0f, 0.5f, 2.0f}, {0.0f, 0.0f, -1.0f},
+                             {0.6f, 0.8f, 1.0f}, 3.0f, 6.0f, 10.0f, 20.0f};
+    CHECK(stickshift_frame_add_light(frame, &lamp), STICKSHIFT_OK);
+    CHECK(stickshift_frame_add_light(frame, &torch), STICKSHIFT_OK);
+    StickShiftLight no_range = lamp;
+    no_range.range = 0.0f;
+    CHECK(stickshift_frame_add_light(frame, &no_range), STICKSHIFT_ERROR_INVALID_ARGUMENT);
+
     StickShiftMat4 identity = stickshift_mat4_identity();
-    CHECK(stickshift_frame_draw_mesh(frame, mesh, &identity, NULL), STICKSHIFT_OK);
+    StickShiftMaterial glowing = {{1, 1, 1, 1}, {0}, {0.4f, 0.3f, 0.1f}};
+    CHECK(stickshift_frame_draw_mesh(frame, mesh, &identity, &glowing), STICKSHIFT_OK);
     StickShiftVec3 beside = {1.5f, 0.0f, -1.0f}, scale = {0.5f, 0.5f, 0.5f};
     StickShiftQuat spin = stickshift_quat_from_axis_angle(up, 0.6f);
     StickShiftMat4 world = stickshift_mat4_from_trs(beside, spin, scale);

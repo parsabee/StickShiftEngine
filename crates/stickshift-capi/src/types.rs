@@ -17,7 +17,7 @@ use std::ffi::{c_char, c_void};
 
 /// The API version this header describes. It increases with every incompatible
 /// change; set [`StickShiftContextDesc::api_version`] to it.
-pub const STICKSHIFT_API_VERSION: u32 = 3;
+pub const STICKSHIFT_API_VERSION: u32 = 4;
 
 // ---------------------------------------------------------------------------
 // Results
@@ -122,6 +122,17 @@ pub const STICKSHIFT_COLOR_SPACE_SRGB: StickShiftColorSpace = 0;
 /// Data sampled as stored: SDF font atlases, masks. Required for font atlases
 /// and `STICKSHIFT_FILL_SDF` quads.
 pub const STICKSHIFT_COLOR_SPACE_LINEAR: StickShiftColorSpace = 1;
+
+/// What shape of light a [`StickShiftLight`] is.
+pub type StickShiftLightKind = u32;
+/// Shines equally in every direction from its position.
+pub const STICKSHIFT_LIGHT_POINT: StickShiftLightKind = 0;
+/// Shines in a cone from its position, along `direction`.
+pub const STICKSHIFT_LIGHT_SPOT: StickShiftLightKind = 1;
+
+/// The most lights one frame can hold; `stickshift_frame_add_light` refuses
+/// more with `STICKSHIFT_ERROR_LIMIT_EXCEEDED`.
+pub const STICKSHIFT_MAX_LIGHTS: u32 = 256;
 
 /// How a 2D quad is filled.
 pub type StickShiftFill = u32;
@@ -458,6 +469,35 @@ pub struct StickShiftSunSky {
     pub sky_horizon_color: [f32; 3],
 }
 
+/// A point or spot light, added to one frame with `stickshift_frame_add_light`.
+///
+/// Brightness falls off with the inverse square of the distance and reaches
+/// exactly zero at `range`: `intensity` is roughly the brightness one world
+/// unit away, on the scale of the sun's `sun_intensity`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StickShiftLight {
+    /// A `STICKSHIFT_LIGHT_*` value.
+    pub kind: StickShiftLightKind,
+    /// World-space position.
+    pub position: StickShiftVec3,
+    /// Spot lights: the direction the light travels (need not be unit
+    /// length). Ignored for point lights.
+    pub direction: StickShiftVec3,
+    /// Linear RGB colour, each channel `>= 0`.
+    pub color: [f32; 3],
+    /// Brightness, `>= 0`.
+    pub intensity: f32,
+    /// Distance at which the light has faded to zero, `> 0`. Shorter is cheaper.
+    pub range: f32,
+    /// Spot lights: half angle in degrees inside which the light is at full
+    /// strength.
+    pub inner_angle_deg: f32,
+    /// Spot lights: half angle in degrees past which the light is gone;
+    /// `inner_angle_deg <= outer_angle_deg <= 90`.
+    pub outer_angle_deg: f32,
+}
+
 /// A mesh draw's material.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -466,6 +506,10 @@ pub struct StickShiftMaterial {
     pub base_color: StickShiftColor,
     /// The base-colour texture for `POS_NORMAL_UV` meshes; `{0}` for white.
     pub base_color_texture: StickShiftTexture,
+    /// Linear RGB light the surface gives off, added after lighting: a lit
+    /// window or a lamp glows without lighting anything else. May exceed 1.
+    /// `{0, 0, 0}` emits nothing.
+    pub emissive: [f32; 3],
 }
 
 /// A 2D overlay quad, in drawable pixels with the origin at the top-left.

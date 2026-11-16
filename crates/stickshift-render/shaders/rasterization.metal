@@ -19,6 +19,10 @@
 //     *before* the scene pass, and both lit pipelines look themselves up in it
 //     with receiver-plane-biased, tent-filtered 4x4 PCF (`shadow_visibility`). The
 //     fitting, stability and bias reasoning live in `src/shadow.rs`.
+//   * Point and spot lights, clustered: the CPU bins each frame's lights into a
+//     grid of screen tiles x depth slices, and a lit fragment shades only its
+//     own cluster's list (`local_lights`). The binning lives in `src/lights.rs`.
+//   * Emissive surfaces: a per-draw colour added after lighting, before fog.
 //
 // Bloom is not implemented: it needs several extra
 // half-res offscreen targets + ping-pong pipelines that could not be validated
@@ -50,17 +54,20 @@ struct VertexOut {
     float3 worldPosition;              // World-space position for lighting/fog/shadow
     float3 color;                      // Interpolated vertex color
     float  viewDepth;                  // Positive view-space distance for fog
+    float3 emissive [[flat]];          // The draw's emissive colour (per draw, not interpolated)
 };
 
 // ============================================================================
 // Uniform Structures
 // ============================================================================
 
-/// Transformation matrices passed from CPU per draw call
+/// Per-draw uniforms passed from the CPU: the transforms, and the draw's
+/// emissive colour. Mirrors the Rust `Uniforms`, 208 bytes.
 struct Uniforms {
     float4x4 modelViewProjection;      // Combined model-view-projection matrix
     float4x4 model;                    // Model matrix (world pos for fog + shadow lookups; places casters)
     float4x4 normalMatrix;             // Carries normals: inverse-transpose of model's 3x3 (or model itself)
+    float4   emissive;                 // xyz: linear emissive colour, added after lighting
 };
 
 /// Lighting parameters (directional light with Phong components) plus the
@@ -303,6 +310,89 @@ inline float shadow_visibility(float3 worldPos, float viewDepth, constant Light&
 }
 
 // ============================================================================
+// Point and spot lights (clustered)
+// ============================================================================
+//
+// The CPU bins the frame's lights into CLUSTER_TILES_X x CLUSTER_TILES_Y screen
+// tiles x CLUSTER_SLICES exponential depth slices (`src/lights.rs`, which also
+// holds the budget and why the binning is conservative). A fragment finds its
+// cluster from its pixel position and view depth and loops over that cluster's
+// list only. The constants and the cluster formula mirror `src/lights.rs`
+// exactly: `cluster_of` there is this function's CPU twin, and the binning is
+// tested against it.
+
+constant uint CLUSTER_TILES_X = 16;
+constant uint CLUSTER_TILES_Y = 9;
+constant uint CLUSTER_SLICES = 24;
+
+/// Below this distance a light stops brightening (mirrors `LIGHT_MIN_DISTANCE`
+/// in `stickshift-render-api`): 0.1 world units, squared.
+constant float LIGHT_MIN_DISTANCE_SQ = 0.01;
+
+/// One point or spot light. Mirrors the Rust `GpuLight`: four float4s, 64 bytes.
+struct LocalLight {
+    float4 positionInvRangeSq;         // xyz world position, w = 1 / range^2
+    float4 radiance;                   // xyz colour * intensity (linear)
+    float4 spotDirection;              // xyz unit direction the light travels, w = cos(outer)
+    float4 spotParams;                 // x = cos(inner), y = 1 for a spot, 0 for a point
+};
+
+/// The frame's cluster header. Mirrors the Rust `ClusterInfo`, 32 bytes.
+struct ClusterInfo {
+    float4 tileAndSlice;               // tiles per pixel (x, y), slice scale, slice bias
+    uint4  counts;                     // x = lights uploaded this frame (0: skip the loop)
+};
+
+/// The cluster a fragment at `pixel` (origin top-left) and `viewDepth` is in.
+inline uint cluster_index(float2 pixel, float viewDepth, constant ClusterInfo& info) {
+    uint tx = min(uint(max(pixel.x * info.tileAndSlice.x, 0.0)), CLUSTER_TILES_X - 1);
+    uint ty = min(uint(max(pixel.y * info.tileAndSlice.y, 0.0)), CLUSTER_TILES_Y - 1);
+    float s = log2(max(viewDepth, 1e-4)) * info.tileAndSlice.z + info.tileAndSlice.w;
+    uint tz = uint(clamp(s, 0.0, float(CLUSTER_SLICES - 1)));
+    return (tz * CLUSTER_TILES_Y + ty) * CLUSTER_TILES_X + tx;
+}
+
+/// Light from this fragment's cluster's point and spot lights, in LINEAR space,
+/// shaded with the same Blinn-Phong response as the sun (its specular strength
+/// and shininess) and already multiplied by `albedo`. Falloff is the inverse
+/// square, windowed to exactly zero at each light's range; a spot's cone fades
+/// between its inner and outer angles. See `Light` in `stickshift-render-api`
+/// for the curve, which `Light::falloff` / `Light::cone` compute on the CPU.
+inline float3 local_lights(float3 albedo, float3 normal, float3 worldPos, float3 viewDir,
+                           float2 pixel, float viewDepth, constant Light& light,
+                           constant ClusterInfo& info,
+                           device const LocalLight* lights,
+                           device const uint2* clusters,
+                           device const ushort* lightIndices) {
+    float3 sum = float3(0.0);
+    if (info.counts.x == 0) {
+        return sum;
+    }
+    uint2 run = clusters[cluster_index(pixel, viewDepth, info)];
+    for (uint i = 0; i < run.y; ++i) {
+        LocalLight l = lights[lightIndices[run.x + i]];
+        float3 toLight = l.positionInvRangeSq.xyz - worldPos;
+        float d2 = dot(toLight, toLight);
+        float ratio2 = d2 * l.positionInvRangeSq.w;      // (d / range)^2
+        if (ratio2 >= 1.0) {
+            continue;
+        }
+        float window = 1.0 - ratio2 * ratio2;            // 1 - (d / range)^4
+        float attenuation = window * window / max(d2, LIGHT_MIN_DISTANCE_SQ);
+        float3 L = toLight * rsqrt(max(d2, 1e-12));
+        if (l.spotParams.y > 0.5) {
+            attenuation *= smoothstep(l.spotDirection.w, l.spotParams.x,
+                                      dot(-L, l.spotDirection.xyz));
+        }
+        float diff = max(dot(normal, L), 0.0);
+        float3 halfDir = normalize(L + viewDir);
+        float spec = pow(max(dot(normal, halfDir), 0.0), light.shininess) * step(1e-4, diff);
+        sum += (diff + light.specularIntensity * spec) * attenuation * l.radiance.xyz;
+    }
+    return sum * albedo;
+}
+
+// ============================================================================
 // Vertex Shader
 // ============================================================================
 
@@ -321,6 +411,7 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.color = in.color;
     // Clip.w is the positive view-space depth for our right-handed projection.
     out.viewDepth = clip.w;
+    out.emissive = uniforms.emissive.xyz;
 
     return out;
 }
@@ -329,11 +420,16 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
 // Fragment Shader
 // ============================================================================
 
-/// Blinn-Phong lit color in LINEAR space, shared by the lit fragment shaders.
-/// `shadow` (from `shadow_visibility`) scales the sun's direct light only; the
-/// ambient sky fill reaches shadowed surfaces unchanged.
-inline float3 lit_linear(float3 albedo, float3 worldNormal, float3 worldPos,
-                         float viewDepth, float shadow, constant Light& light) {
+/// Blinn-Phong lit color in LINEAR space, shared by the lit fragment shaders:
+/// the sun, the cluster's point and spot lights, and the draw's emission, then
+/// fog. `shadow` (from `shadow_visibility`) scales the sun's direct light only;
+/// the ambient sky fill and the local lights reach shadowed surfaces unchanged.
+inline float3 lit_linear(float3 albedo, float3 emissive, float3 worldNormal, float3 worldPos,
+                         float viewDepth, float2 pixel, float shadow, constant Light& light,
+                         constant ClusterInfo& clusterInfo,
+                         device const LocalLight* lights,
+                         device const uint2* clusters,
+                         device const ushort* lightIndices) {
     float3 normal = normalize(worldNormal);
     float3 lightDir = normalize(-light.direction);
 
@@ -356,16 +452,26 @@ inline float3 lit_linear(float3 albedo, float3 worldNormal, float3 worldPos,
     float3 specular = light.specularIntensity * spec * light.color;
 
     float3 lit = (ambient + (diffuse + specular) * shadow) * albedo;
+    // With no lights and no emission both terms are exactly zero, so a frame
+    // without them shades bit-for-bit as it did before they existed.
+    lit += local_lights(albedo, normal, worldPos, viewDir, pixel, viewDepth, light,
+                        clusterInfo, lights, clusters, lightIndices)
+         + emissive;
     return apply_fog(lit, viewDepth, worldPos.y, light);
 }
 
 /// Calculate per-pixel lighting using Blinn-Phong shading model (untextured).
 fragment float4 fragment_main(VertexOut in [[stage_in]],
                               constant Light& light [[buffer(0)]],
+                              constant ClusterInfo& clusterInfo [[buffer(3)]],
+                              device const LocalLight* lights [[buffer(4)]],
+                              device const uint2* clusters [[buffer(5)]],
+                              device const ushort* lightIndices [[buffer(6)]],
                               depth2d<float> shadowMap [[texture(1)]]) {
     float shadow = shadow_visibility(in.worldPosition, in.viewDepth, light, shadowMap);
-    float3 lit = lit_linear(in.color, in.worldNormal, in.worldPosition,
-                            in.viewDepth, shadow, light);
+    float3 lit = lit_linear(in.color, in.emissive, in.worldNormal, in.worldPosition,
+                            in.viewDepth, in.position.xy, shadow, light,
+                            clusterInfo, lights, clusters, lightIndices);
     return float4(present_color(lit), 1.0);
 }
 
@@ -467,6 +573,7 @@ struct TexturedVertexOut {
     float3 worldPosition;
     float2 uv;
     float  viewDepth;
+    float3 emissive [[flat]];
 };
 
 /// Per-draw material parameters for the textured pipeline (base-color factor).
@@ -486,6 +593,7 @@ vertex TexturedVertexOut textured_vertex_main(TexturedVertexIn in [[stage_in]],
     out.worldNormal = (uniforms.normalMatrix * float4(in.normal, 0.0)).xyz;
     out.uv = in.uv;
     out.viewDepth = clip.w;
+    out.emissive = uniforms.emissive.xyz;
     return out;
 }
 
@@ -494,6 +602,10 @@ vertex TexturedVertexOut textured_vertex_main(TexturedVertexIn in [[stage_in]],
 fragment float4 textured_fragment_main(TexturedVertexOut in [[stage_in]],
                                        constant Light& light [[buffer(0)]],
                                        constant MaterialUniforms& material [[buffer(2)]],
+                                       constant ClusterInfo& clusterInfo [[buffer(3)]],
+                                       device const LocalLight* lights [[buffer(4)]],
+                                       device const uint2* clusters [[buffer(5)]],
+                                       device const ushort* lightIndices [[buffer(6)]],
                                        texture2d<float> baseColor [[texture(0)]],
                                        sampler baseColorSampler [[sampler(0)]],
                                        depth2d<float> shadowMap [[texture(1)]]) {
@@ -501,8 +613,9 @@ fragment float4 textured_fragment_main(TexturedVertexOut in [[stage_in]],
     float3 albedo = sampled.rgb * material.baseColorFactor.rgb;
 
     float shadow = shadow_visibility(in.worldPosition, in.viewDepth, light, shadowMap);
-    float3 lit = lit_linear(albedo, in.worldNormal, in.worldPosition,
-                            in.viewDepth, shadow, light);
+    float3 lit = lit_linear(albedo, in.emissive, in.worldNormal, in.worldPosition,
+                            in.viewDepth, in.position.xy, shadow, light,
+                            clusterInfo, lights, clusters, lightIndices);
     return float4(present_color(lit), sampled.a * material.baseColorFactor.a);
 }
 

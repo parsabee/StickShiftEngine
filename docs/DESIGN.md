@@ -120,6 +120,8 @@ classDiagram
         <<trait>>
         +begin_frame()
         +set_view_projection(Mat4)
+        +set_sun_sky(SunSky)
+        +add_light(Light)
         +set_pipeline(PipelineHandle)
         +bind_texture(TextureHandle)
         +draw_mesh(MeshHandle, Transform, MaterialParams)
@@ -150,6 +152,14 @@ classDiagram
     }
     class MaterialParams {
         +base_color
+        +emissive
+    }
+    class Light {
+        +kind Point or Spot cone
+        +position
+        +color
+        +intensity
+        +range
     }
     class PipelineDescriptor {
         +kind PipelineKind
@@ -170,6 +180,7 @@ classDiagram
     RenderDevice ..> MeshHandle : returns
     MeshData *-- VertexLayout
     FrameRecorder ..> MaterialParams : uses
+    FrameRecorder ..> Light : per frame
 ```
 
 ---
@@ -366,13 +377,15 @@ All below the seam in `stickshift-render`. Lighting is computed in linear space,
 is ACES-tonemapped and sRGB-encoded in the shader (`present_color`) before the MSAA resolve. Each frame is **two render passes** on one command buffer: a
 depth-only shadow pass from the sun, then the scene pass that samples it. Draws are recorded during
 the frame and replayed into both passes at `submit`, so every caster is known before the scene
-pass starts.
+pass starts. The frame's point and spot lights are binned into clusters at `submit` too, so every
+light is known before any fragment is shaded.
 
 ```mermaid
 graph LR
     S["Shadow pass<br/>depth-only from the sun<br/>4096² Depth32Float · store: Store"] --> A
     A["Sky (fullscreen gradient + sun disc, depth off)"] --> B
-    B["Lit draws<br/>4x MSAA color+depth<br/>Blinn-Phong · shadow-map PCF · fog<br/>ACES tonemap → sRGB in the fragment shader"] --> O
+    L["Light binning (CPU)<br/>16×9 tiles × 24 depth slices"] -.-> B
+    B["Lit draws<br/>4x MSAA color+depth<br/>Blinn-Phong sun · shadow-map PCF<br/>cluster's point/spot lights · emission · fog<br/>ACES tonemap → sRGB in the fragment shader"] --> O
     O["2D overlay"] --> C
     C["MSAA resolve (in-tile)<br/>MultisampleResolve store"] --> D
     D["Present<br/>drawable / offscreen texture"]
@@ -392,6 +405,12 @@ follows the camera without shimmering; its direction is the seam-driven sun's. R
 their own triangle's plane plus a constant 2 cm (see `stickshift-render/src/shadow.rs`). Bloom is
 not implemented.
 
+Point and spot lights use clustered forward shading: a lit fragment finds its cluster (screen tile
+× exponential depth slice) from its pixel and view depth and shades only the lights the CPU listed
+there. A frame with no lights skips the loop, and no lights plus no emission shades bit-for-bit as
+before they existed (every pre-existing pixel hash is unchanged). See
+[ARCHITECTURE §4c](ARCHITECTURE.md#4c-point-and-spot-lights) for the budget.
+
 ---
 
 ## 11. Cross-cutting invariants (and how they're enforced)
@@ -404,6 +423,8 @@ not implemented.
 | Zero per-frame GPU allocations | `stickshift-render` | `allocation_count()` asserted `== 0` on the frame path |
 | Audio never requires a device | `stickshift-audio` | `Loop` starts `Audio::silent()`; headless/`--smoke` never open one, and every audio test asserts against silent mode |
 | Rebase preserves relative positions; memory stays bounded | `stickshift-scene` | rebase and 2000-frame streaming tests |
+| Light binning never misses a lit pixel | `stickshift-render` | CPU property test against the shader's cluster formula; GPU test comparing every pixel with `Light::radiance_at` |
+| Lights are per frame, never sticky | `stickshift-render-api`, `stickshift-render` | `NullRenderer` and GPU tests: the frame after a lit one renders unlit |
 | Simulation is framerate-independent | `stickshift-core` | fixed `FIXED_DT`; 60 vs 120 Hz step-count tests |
 | No prototype identifiers ship | `crates/`, `games/` | CI de-brand grep |
 

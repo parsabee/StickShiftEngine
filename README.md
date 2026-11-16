@@ -79,6 +79,8 @@ reference title is the [playable demo](#the-playable-demo), an endless car runne
   referenced by handle.
 - **A modern look stack:** MSAA, a gradient sky with a drivable sun disc, specular lighting,
   ground-hugging horizon fog, ACES tonemapping, and **real fitted shadow maps** with PCF filtering.
+- **Point and spot lights:** up to 256 a frame, shaded with clustered forward lighting, plus
+  emissive materials for lit windows and lamps.
 - **2D HUD overlay** with SDF text rendering.
 - **Audio** built on [`kira`](https://crates.io/crates/kira): load-once sounds, one-shots, looping
   music, and master volume.
@@ -318,7 +320,7 @@ smoke oracle). The layout follows [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) Â
 | [`stickshift-capi`](crates/stickshift-capi) | The C API: `libstickshift` (static and dynamic), the generated `stickshift.h` and the Swift module map, over a Metal or a null backend. Graphics only: no windowing, audio or ECS |
 | [`stickshift-core`](crates/stickshift-core) | Application lifecycle and the engine/game boundary: the `Game` trait, `EngineCtx`, the fixed-timestep loop, input, and the windowed (winit) and headless drivers |
 | [`stickshift-render-api`](crates/stickshift-render-api) | Backend-agnostic render seam: `RenderDevice` / `FrameRecorder` traits, opaque handles, descriptors, sun/sky and 2D overlay types, and a `NullRenderer` test double. Never depends on `metal` |
-| [`stickshift-render`](crates/stickshift-render) | Raw-Metal implementation of the seam: rasterization pipeline, look stack, shadow maps, offscreen rendering and pixel read-back |
+| [`stickshift-render`](crates/stickshift-render) | Raw-Metal implementation of the seam: rasterization pipeline, look stack, shadow maps, clustered point and spot lights, offscreen rendering and pixel read-back |
 | [`stickshift-assets`](crates/stickshift-assets) | Static glTF import and asset cache (metal-free) |
 | [`stickshift-audio`](crates/stickshift-audio) | Audio over `kira`: load-once sounds, one-shot playback, looping music, master volume |
 | [`stickshift-camera`](crates/stickshift-camera) | Camera state and controller math (perspective camera, chase controller) |

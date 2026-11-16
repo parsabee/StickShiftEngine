@@ -7,8 +7,10 @@
 //!
 //! Each scenario draws a grid of meshes (half untextured, half textured, grouped
 //! by pipeline as a game would) under the default sun, with shadows on or off,
-//! into a 1920 x 1080 offscreen target with 4x MSAA. After a warm-up, every
-//! frame records:
+//! into a 1920 x 1080 offscreen target with 4x MSAA. The light scenarios also
+//! add point lights spread over the grid every frame, each reaching a few
+//! cubes around it, so their CPU time includes binning the lights. After a
+//! warm-up, every frame records:
 //!
 //! - **CPU time:** `begin_frame` through `submit_async`, the cost of recording
 //!   and encoding the frame on the calling thread;
@@ -32,7 +34,7 @@ use stickshift_math::glam::{Mat4, Quat, Vec3};
 use stickshift_math::Transform;
 use stickshift_render::MetalRenderer;
 use stickshift_render_api::{
-    ColorSpace, FrameRecorder, MaterialParams, MeshData, MeshHandle, PipelineDescriptor,
+    ColorSpace, FrameRecorder, Light, MaterialParams, MeshData, MeshHandle, PipelineDescriptor,
     PipelineHandle, PipelineKind, RenderDevice, RenderSettings, ShadowQuality, TextureData,
 };
 
@@ -56,6 +58,8 @@ struct Scenario {
     draws: u32,
     shape: Shape,
     shadows: ShadowQuality,
+    /// Point lights added every frame.
+    lights: u32,
 }
 
 const SCENARIOS: &[Scenario] = &[
@@ -64,30 +68,49 @@ const SCENARIOS: &[Scenario] = &[
         draws: 100,
         shape: Shape::Cube,
         shadows: ShadowQuality::High,
+        lights: 0,
     },
     Scenario {
         name: "1,000 cubes",
         draws: 1_000,
         shape: Shape::Cube,
         shadows: ShadowQuality::High,
+        lights: 0,
     },
     Scenario {
         name: "1,000 cubes, shadows off",
         draws: 1_000,
         shape: Shape::Cube,
         shadows: ShadowQuality::Off,
+        lights: 0,
+    },
+    Scenario {
+        name: "1,000 cubes, 64 lights",
+        draws: 1_000,
+        shape: Shape::Cube,
+        shadows: ShadowQuality::High,
+        lights: 64,
+    },
+    Scenario {
+        name: "1,000 cubes, 256 lights",
+        draws: 1_000,
+        shape: Shape::Cube,
+        shadows: ShadowQuality::High,
+        lights: 256,
     },
     Scenario {
         name: "5,000 cubes",
         draws: 5_000,
         shape: Shape::Cube,
         shadows: ShadowQuality::High,
+        lights: 0,
     },
     Scenario {
         name: "16 dense spheres (1M triangles)",
         draws: 16,
         shape: Shape::Sphere { segments: 256 },
         shadows: ShadowQuality::High,
+        lights: 0,
     },
 ];
 
@@ -195,6 +218,28 @@ fn run(renderer: &mut MetalRenderer, scenario: &Scenario) -> Result {
     );
     renderer.set_camera_position(eye);
 
+    // Lights on a jittered grid over the cubes, a little above them, each
+    // reaching about two cells in every direction.
+    let lights: Vec<Light> = (0..scenario.lights)
+        .map(|i| {
+            let per_side = (scenario.lights as f32).sqrt().ceil() as u32;
+            let cell = extent / per_side as f32;
+            let (x, z) = ((i % per_side) as f32 + 0.5, (i / per_side) as f32 + 0.5);
+            let hue = i as f32 * 0.37;
+            Light::point(
+                Vec3::new(x * cell - extent / 2.0, 1.5, z * cell - extent / 2.0),
+                [
+                    0.6 + 0.4 * hue.sin().abs(),
+                    0.6 + 0.4 * (hue * 1.3).cos().abs(),
+                    0.7,
+                ],
+                8.0,
+                spacing * 2.5,
+            )
+        })
+        .collect();
+
+    let dropped_before = renderer.dropped_light_count();
     let half = transforms.len() / 2;
     let material = MaterialParams::default();
     let mut cpu = Vec::with_capacity(MEASURED_FRAMES as usize);
@@ -210,6 +255,9 @@ fn run(renderer: &mut MetalRenderer, scenario: &Scenario) -> Result {
         }
         let start = Instant::now();
         renderer.begin_frame();
+        for light in &lights {
+            renderer.add_light(light);
+        }
         draw_group(
             renderer,
             untextured,
@@ -241,6 +289,14 @@ fn run(renderer: &mut MetalRenderer, scenario: &Scenario) -> Result {
     }
     let wall = wall_start.elapsed();
     collect(renderer, &mut collected, first_measured, &mut gpu);
+
+    let dropped = renderer.dropped_light_count() - dropped_before;
+    if dropped > 0 {
+        eprintln!(
+            "bench: {}: {dropped} lights dropped over budget",
+            scenario.name
+        );
+    }
 
     renderer.destroy_mesh(untextured_mesh);
     renderer.destroy_mesh(textured_mesh);

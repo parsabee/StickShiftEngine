@@ -121,6 +121,10 @@ constant 2 cm, and filtered with 4×4 tent PCF. The fitting and bias math is GPU
 in `stickshift-render/src/shadow.rs`; a new shadow pixel-hash proves occlusion by re-rendering with the
 casters disabled. A GPU-less runner never constructs the Metal backend, so it never reaches the pass.
 
+**Point and spot lights, and emission.** Next to the one sun, a frame can add up to 256 point and
+spot lights (`FrameRecorder::add_light`), and any draw can glow with `MaterialParams::emissive`.
+Lights are shaded with clustered forward shading; §4c has the design and the budget.
+
 **Graphics settings.** Quality settings cross the seam as plain data, like `SunSky`:
 
 - `RenderDevice::set_render_settings(&RenderSettings)` carries a `ShadowQuality` tier, a shadow
@@ -229,6 +233,46 @@ the mixer to the default output. Because the silent mode still *records* every r
 behaviour is asserted in plain unit tests with no hardware and nothing to listen to — the same
 approach as `NullRenderer` for draws. Which sound is "the music" and which is an effect is game
 policy: the engine takes a handle and a level.
+
+### 4c. Point and spot lights
+
+Night scenes need many small lights: headlights, streetlights, lit windows. The seam carries them as
+plain data (`stickshift_render_api::Light`: a point or a spot cone, position, linear colour,
+intensity, range), added to the open frame with `FrameRecorder::add_light`. Unlike the sun and the
+camera they are **not sticky**: a frame starts with none and the game re-adds them from its own
+state, so a light can never outlive the thing that casts it. Every light added before `submit` lights
+every draw in the frame, whatever the call order. Brightness falls off with the inverse square of the
+distance and is windowed to exactly zero at the range (`Light::falloff`), so a light has a hard edge
+the renderer can cull against, and `intensity` sits on the same scale as the sun's.
+
+**Clustered forward shading.** The renderer splits the view into a fixed grid of clusters, 16 × 9
+screen tiles × 24 depth slices that grow exponentially with distance. At `submit` the CPU boxes
+each light's sphere of influence, projects the box, and lists the light in every cluster the box
+overlaps; a lit fragment finds its cluster from its pixel and view depth and shades only that list.
+This fits a tile-based GPU: the scene stays one forward pass with MSAA resolved in tile memory, with
+no G-buffer to write out and read back and no depth pre-pass. The binning is plain CPU arithmetic in
+`stickshift-render/src/lights.rs`, conservative by construction (a light may be listed where it
+contributes nothing, never left out where it contributes), and a property test checks that against
+the shader's own cluster formula. A GPU test does the same end to end: every pixel the seam's
+`Light::radiance_at` says is lit is lit, and every pixel out of reach is byte-identical to the frame
+without lights.
+
+**Budget.** 256 lights per frame (`MAX_LIGHTS`; the seam ignores more, and the C API refuses them)
+and 32,768 light-to-cluster entries per frame across all lights. A street lamp covering a few tiles
+and slices uses a few dozen entries, so a street's worth fits easily; large lights near the camera
+fill the budget sooner, and a light that no longer fits is dropped whole (earlier lights keep
+priority) and counted by `MetalRenderer::dropped_light_count`. On an M3 Max, 256 lights add about
+0.1 ms of GPU time to a 1080p frame ([BENCHMARKS.md](BENCHMARKS.md)). Each in-flight frame owns a
+region of a third ring next to the uniform and light rings, written once per frame, so lights add no
+per-frame allocation.
+
+**Emission** is a per-draw colour (`MaterialParams::emissive`) added after lighting and before fog.
+It costs nothing per light and lights nothing else: a window glows, the wall beside it stays dark.
+It travels in the per-draw uniform slot, which had room, so it needs no extra binding. glTF models
+bring theirs from the material's `emissiveFactor` (and `KHR_materials_emissive_strength`).
+
+**Not yet:** shadows from local lights (a shadowed spot for headlights is the likely first), light
+cookies, and bloom, which would make bright emitters bleed light onto their surroundings.
 
 ## 5. Physics decision
 

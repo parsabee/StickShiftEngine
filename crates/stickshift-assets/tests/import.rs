@@ -1015,3 +1015,32 @@ fn an_import_cancelled_at_any_stage_stops_there() {
         }
     }
 }
+
+#[test]
+fn material_emission_is_imported_with_its_strength() {
+    // One triangle, its material glowing warm white at strength 4, and a second
+    // primitive with no material: glTF's default emits nothing.
+    let positions = [0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+    let bin = le_bytes(&positions, f32::to_le_bytes);
+    let json = format!(
+        r#"{{
+  "asset": {{"version": "2.0"}},
+  "extensionsUsed": ["KHR_materials_emissive_strength"],
+  "buffers": [{{"byteLength": {len}}}],
+  "bufferViews": [{{"buffer": 0, "byteOffset": 0, "byteLength": {len}}}],
+  "accessors": [{{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+                  "min": [0,0,0], "max": [1,1,0]}}],
+  "materials": [{{"emissiveFactor": [1.0, 0.75, 0.5],
+                  "extensions": {{"KHR_materials_emissive_strength": {{"emissiveStrength": 4.0}}}}}}],
+  "meshes": [{{"primitives": [{{"attributes": {{"POSITION": 0}}, "material": 0}},
+                              {{"attributes": {{"POSITION": 0}}}}]}}],
+  "nodes": [{{"mesh": 0}}],
+  "scenes": [{{"nodes": [0]}}],
+  "scene": 0
+}}"#,
+        len = bin.len()
+    );
+    let scene = import_slice(&glb(&json, &bin)).expect("imports");
+    assert_eq!(scene.meshes[0].emissive, [4.0, 3.0, 2.0]);
+    assert_eq!(scene.meshes[1].emissive, [0.0; 3]);
+}

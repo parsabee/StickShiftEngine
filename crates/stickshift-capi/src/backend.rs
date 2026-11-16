@@ -10,7 +10,7 @@
 
 use stickshift_math::glam::{Mat4, Vec3};
 use stickshift_render_api::{
-    ColorSpace, MeshHandle, OverlayQuad, PipelineKind, RenderSettings, SunSky, TextureHandle,
+    ColorSpace, Light, MeshHandle, OverlayQuad, PipelineKind, RenderSettings, SunSky, TextureHandle,
 };
 
 use crate::core::Error;
@@ -24,6 +24,8 @@ pub(crate) struct DrawCall {
     pub(crate) mesh: MeshHandle,
     pub(crate) model: Mat4,
     pub(crate) base_color: [f32; 4],
+    /// Linear RGB emission, added after lighting.
+    pub(crate) emissive: [f32; 3],
     /// The base-colour texture for a textured draw; `None` draws it white.
     pub(crate) texture: Option<TextureHandle>,
 }
@@ -34,6 +36,8 @@ pub(crate) struct FrameData<'a> {
     pub(crate) view_projection: Mat4,
     pub(crate) camera_position: Vec3,
     pub(crate) sun: SunSky,
+    /// The frame's point and spot lights, validated and at most `MAX_LIGHTS`.
+    pub(crate) lights: &'a [Light],
     pub(crate) draws: &'a [DrawCall],
     pub(crate) quads: &'a [OverlayQuad],
     /// Copy the frame's pixels out for the host (offscreen targets only).

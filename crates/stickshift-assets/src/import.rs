@@ -384,6 +384,8 @@ fn import_primitive(
     let material = primitive.material();
     let pbr = material.pbr_metallic_roughness();
     let base_color_factor = pbr.base_color_factor();
+    let emissive_strength = material.emissive_strength().unwrap_or(1.0);
+    let emissive = material.emissive_factor().map(|c| c * emissive_strength);
 
     let base_color = pbr
         .base_color_texture()
@@ -434,6 +436,7 @@ fn import_primitive(
         uvs,
         base_color,
         base_color_factor,
+        emissive,
         normal_map,
         metallic_roughness,
     })

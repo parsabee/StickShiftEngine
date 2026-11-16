@@ -57,7 +57,11 @@ glam = "0.29"
 # Metal / no C toolchain beyond std). `default-features` is disabled and only the
 # `import` + `utils` features are enabled so no image/extras baggage is pulled in
 # (image decoding is the separate `image` dependency below).
-gltf = { version = "1.4", default-features = false, features = ["import", "utils"] }
+gltf = { version = "1.4", default-features = false, features = [
+    "import",
+    "utils",
+    "KHR_materials_emissive_strength",
+] }
 # Image decoding: decode glTF base-color images (PNG/JPEG) to RGBA8 in
 # `stickshift-assets`. Pure-Rust codecs (no C toolchain beyond std); default features
 # off so only the two codecs glTF assets commonly embed are pulled in — no metal,

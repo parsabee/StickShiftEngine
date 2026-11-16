@@ -12,6 +12,7 @@ use stickshift_math::Transform;
 use crate::descriptor::{MaterialParams, PipelineKind};
 use crate::device::{MeshData, PipelineDescriptor, RenderDevice, TextureData};
 use crate::handles::{MeshHandle, PipelineHandle, TextureHandle};
+use crate::light::{Light, MAX_LIGHTS};
 use crate::overlay::OverlayQuad;
 use crate::recorder::FrameRecorder;
 use crate::settings::RenderSettings;
@@ -68,6 +69,10 @@ pub enum ProtocolViolation {
     /// A draw of a mesh with no whole, in-range triangle: the Metal backend has
     /// nothing to draw for it.
     EmptyMesh(MeshHandle),
+    /// A light that is not [valid](Light::is_valid).
+    InvalidLight,
+    /// A light added to a frame that already held [`MAX_LIGHTS`].
+    TooManyLights,
 }
 
 /// A headless implementation of both [`RenderDevice`] and [`FrameRecorder`] that
@@ -85,6 +90,10 @@ pub enum ProtocolViolation {
 /// the wrong pipeline, a double destroy, …) is not recorded as a draw; it is
 /// listed in [`protocol_violations`](Self::protocol_violations) instead, so a
 /// headless test cannot pass on code that draws nothing on a GPU.
+///
+/// Lights are recorded per frame: [`lights`](Self::lights) holds the ones the
+/// open (or last submitted) frame added, so a test can assert which headlights
+/// and streetlights a game lit a frame with.
 ///
 /// The sticky frame-wide state is recorded the same way:
 /// [`view_projection`](Self::view_projection),
@@ -127,6 +136,9 @@ pub struct NullRenderer {
     /// Overlay quads recorded this run, in record order, so headless
     /// tests can assert what a HUD drew without a GPU.
     overlay_quads: Vec<OverlayQuad>,
+    /// The lights the open frame (or, between frames, the last one) added, in
+    /// call order. Cleared by `begin_frame`: lights are not sticky.
+    lights: Vec<Light>,
     /// The most recent view-projection pushed via
     /// [`set_view_projection`](FrameRecorder::set_view_projection), if any. `None`
     /// until the first push, then **sticky** (retained across frames) — mirroring
@@ -246,6 +258,14 @@ impl NullRenderer {
     #[must_use]
     pub fn overlay_quad_count(&self) -> usize {
         self.overlay_quads.len()
+    }
+
+    /// The lights the open frame added, in call order; between frames, the last
+    /// submitted frame's. Empty after `begin_frame` until the frame adds one,
+    /// because lights are per frame, not sticky.
+    #[must_use]
+    pub fn lights(&self) -> &[Light] {
+        &self.lights
     }
 
     /// Total number of draws recorded across all frames.
@@ -429,6 +449,7 @@ impl FrameRecorder for NullRenderer {
         // records — or, for a fixed sun, just once at load.
         self.current_pipeline = None;
         self.current_texture = None;
+        self.lights.clear();
     }
 
     fn set_view_projection(&mut self, view_proj: Mat4) {
@@ -441,6 +462,18 @@ impl FrameRecorder for NullRenderer {
 
     fn set_sun_sky(&mut self, sun: &SunSky) {
         self.sun_sky = Some(*sun);
+    }
+
+    fn add_light(&mut self, light: &Light) {
+        if !self.frame_open {
+            self.violations.push(ProtocolViolation::OutsideFrame);
+        } else if !light.is_valid() {
+            self.violations.push(ProtocolViolation::InvalidLight);
+        } else if self.lights.len() >= MAX_LIGHTS {
+            self.violations.push(ProtocolViolation::TooManyLights);
+        } else {
+            self.lights.push(*light);
+        }
     }
 
     fn set_pipeline(&mut self, handle: PipelineHandle) {

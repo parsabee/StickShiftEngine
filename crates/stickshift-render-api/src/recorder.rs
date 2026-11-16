@@ -9,6 +9,7 @@ use stickshift_math::Transform;
 
 use crate::descriptor::MaterialParams;
 use crate::handles::{MeshHandle, PipelineHandle, TextureHandle};
+use crate::light::Light;
 use crate::overlay::OverlayQuad;
 use crate::sun::SunSky;
 
@@ -40,15 +41,16 @@ use crate::sun::SunSky;
 /// 4. Any number of [`bind_texture`](Self::bind_texture) and
 ///    [`draw_mesh`](Self::draw_mesh) calls. `bind_texture` sets the texture used by
 ///    subsequent draws; `draw_mesh` emits geometry with the currently-bound
-///    pipeline and texture.
+///    pipeline and texture. Any number of [`add_light`](Self::add_light) calls,
+///    anywhere in the open frame: every light lights every draw in the frame.
 /// 5. [`submit`](Self::submit) exactly once to close and present the frame.
 ///
 /// Recording a draw before `begin_frame`, before any `set_pipeline`, or after
 /// `submit` is a caller error. Implementations may panic, debug-assert, or drop the
 /// call, but must not silently corrupt an in-flight frame. Pipeline and bound-texture
 /// state do **not** carry across a `begin_frame`/`submit` boundary — each frame
-/// starts with no pipeline and no texture bound. The **camera and the sun/sky are
-/// the exceptions: they are sticky**, retaining the last value set until it is
+/// starts with no pipeline, no texture bound and no lights. The **camera and the
+/// sun/sky are the exceptions: they are sticky**, retaining the last value set until it is
 /// replaced, so the engine loop can push them once per frame *before* the game opens
 /// its frame (the values survive `begin_frame`). A frame that never sets a
 /// view-projection draws with the identity matrix (the construction default); one
@@ -138,6 +140,28 @@ pub trait FrameRecorder {
     ///   including its sky pass.
     /// - Until the first call, the implementation uses the default [`SunSky`].
     fn set_sun_sky(&mut self, sun: &SunSky);
+
+    /// Add a point or spot [`Light`] to the open frame.
+    ///
+    /// Lights are **per frame**, not sticky: each frame starts with none, and a
+    /// game re-adds its lights (headlights, streetlights, lit windows) every
+    /// frame from its own state. Every light added before
+    /// [`submit`](Self::submit) lights every draw in the frame, whether the draw
+    /// was recorded before or after it.
+    ///
+    /// # Contract
+    /// - Requires an open frame (after [`begin_frame`](Self::begin_frame), before
+    ///   [`submit`](Self::submit)); outside one the call is ignored.
+    /// - A light that is not [valid](Light::is_valid) is ignored.
+    /// - A frame holds up to [`MAX_LIGHTS`](crate::MAX_LIGHTS) lights; later ones
+    ///   are ignored. A backend may also drop whole lights that no longer fit when
+    ///   the frame's lights together cover more of the screen than its budget
+    ///   allows, lights added earlier keeping priority (see
+    ///   [the light module](crate::light#budget)).
+    /// - Lights are binned against the camera that lights the frame (the one in
+    ///   effect at its first draw). A camera switched mid-frame still projects
+    ///   later draws, but their lighting may miss lights near the screen's edges.
+    fn add_light(&mut self, light: &Light);
 
     /// Select the render pipeline used by subsequent draws.
     ///
