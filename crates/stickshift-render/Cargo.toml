@@ -20,11 +20,13 @@ default = []
 # `ASTC_4x4_LDR`). Structured behind this feature so the desktop path is unchanged.
 astc-textures = []
 
-# Precompiled shaders (in progress). OFF by default so the engine builds with
-# only the Command Line Tools (shaders compile at runtime via new_library_with_source).
-# When ON, build.rs compiles shaders/*.metal to a .metallib ahead of time and the
-# backend loads it via new_library_with_data — this REQUIRES the Metal toolchain (full
-# Xcode). See scripts/preflight.sh --ios. Enable once Xcode is installed.
+# Precompiled shaders. When ON, build.rs compiles shaders/rasterization.metal to a
+# .metallib ahead of time, the crate embeds it, and the backend loads it with
+# new_library_with_data, so no shader is compiled at runtime. This REQUIRES the
+# Metal toolchain (full Xcode; see scripts/preflight.sh --ios). OFF by default so a
+# development build needs only the Command Line Tools (shaders then compile at
+# runtime via new_library_with_source). Release builds (the Homebrew tarball and
+# libstickshift) turn it on, and CI tests both ways.
 precompiled-shaders = []
 
 # The `objc` 0.2 `msg_send!`/`sel_impl!` macros emit a `cfg(cargo-clippy)` check

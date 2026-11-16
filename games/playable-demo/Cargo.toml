@@ -21,6 +21,12 @@ path = "src/main.rs"
 image.workspace = true
 fontdue.workspace = true
 
+[features]
+# Embed precompiled Metal shaders instead of compiling them at runtime (needs full
+# Xcode to build; see stickshift-render's feature of the same name). The release
+# binary turns it on.
+precompiled-shaders = ["stickshift-render/precompiled-shaders"]
+
 [dependencies]
 clap.workspace = true
 stickshift-assets.workspace = true

@@ -84,10 +84,12 @@
 //! # Shader compilation
 //!
 //! By default shaders compile at runtime via `include_str!` + `new_library_with_source`,
-//! which needs no toolchain beyond the Command Line Tools. The off-by-default
-//! `precompiled-shaders` feature instead loads a `.metallib` compiled ahead of time by
-//! `build.rs` (via `new_library_with_data`); it requires the Metal toolchain (full Xcode)
-//! and is planned to become the default. See `scripts/preflight.sh --ios`.
+//! which needs no toolchain beyond the Command Line Tools. The `precompiled-shaders`
+//! feature instead embeds a `.metallib` compiled ahead of time by `build.rs` and loads
+//! it with `new_library_with_data`, so nothing is compiled at runtime; building it
+//! requires the Metal toolchain (full Xcode; see `scripts/preflight.sh --ios`). Release
+//! builds (the Homebrew tarball and `libstickshift`) turn it on; `stickshift-capi` and
+//! `playable-demo` forward a feature of the same name.
 
 #![deny(missing_docs)]
 

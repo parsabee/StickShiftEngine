@@ -11,7 +11,8 @@
 # Expects an already-built release binary (`cargo build --release -p playable-demo
 # --locked`) at $STICKSHIFT_DEMO_BIN (default: target/release/playable-demo) and the C
 # library (`cargo build --release -p stickshift-capi --locked`) in $STICKSHIFT_LIB_DIR (default:
-# target/release). Produces
+# target/release), both built with the Cargo features in $STICKSHIFT_FEATURES (the release
+# workflow sets `precompiled-shaders`). Produces
 #
 #   <outdir>/stickshift-engine-<version>-aarch64-apple-darwin.tar.gz
 #   <outdir>/stickshift-engine-<version>-aarch64-apple-darwin.tar.gz.sha256
@@ -77,8 +78,9 @@ fi
 # rustc reports them (touch the crate root so rustc runs and prints them).
 if [[ -z "${STICKSHIFT_NATIVE_LIBS:-}" ]]; then
     touch "$repo/crates/stickshift-capi/src/lib.rs"
+    # Same features as the build that produced the library: this rebuilds libstickshift.a.
     STICKSHIFT_NATIVE_LIBS=$(cd "$repo" && cargo rustc --quiet --release --locked -p stickshift-capi --lib \
-        --crate-type staticlib -- --print native-static-libs 2>&1 \
+        --features "${STICKSHIFT_FEATURES:-}" --crate-type staticlib -- --print native-static-libs 2>&1 \
         | sed -n 's/.*native-static-libs: //p' | tail -n 1)
 fi
 [[ -n "$STICKSHIFT_NATIVE_LIBS" ]] || { echo "error: could not determine the native link libraries" >&2; exit 1; }

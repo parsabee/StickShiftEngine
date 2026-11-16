@@ -109,3 +109,47 @@ jobs:
         env:
           METAL_DEVICE_WRAPPER_TYPE: "1"
         run: cargo run -p playable-demo -- --smoke
+
+  # The same renderer with its shaders compiled ahead of time and embedded (the
+  # `precompiled-shaders` feature, what release builds ship): it must build with the Metal
+  # toolchain, load the .metallib, and pass the GPU tests (pixel hashes included) unchanged.
+  precompiled-shaders:
+    name: precompiled shaders (macOS)
+    runs-on: macos-latest
+    env:
+      STICKSHIFT_REQUIRE_GPU: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install --no-self-update
+          pinned=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
+          rustc --version
+          rustc --version | grep -q " $pinned " || { echo "rustc is not the pinned $pinned"; exit 1; }
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      # The Metal shader compiler comes with full Xcode; recent Xcode versions download it as a
+      # separate component on first use.
+      - name: Metal toolchain
+        run: |
+          xcrun -sdk macosx metal --version || xcodebuild -downloadComponent MetalToolchain
+          xcrun -sdk macosx metal --version
+          ./scripts/preflight.sh --ios || true
+
+      - name: Test the renderer, C API and demo with precompiled shaders
+        run: cargo test -p stickshift-render -p stickshift-capi -p playable-demo --features stickshift-render/precompiled-shaders
+
+      # The release library must carry the compiled .metallib, not the shader source: the
+      # source's header comment is in a runtime-compiling build and absent from this one.
+      - name: The C library embeds compiled shaders
+        run: |
+          cargo build --release -p stickshift-capi --features precompiled-shaders
+          ! grep -aq "Rasterization Shader - Phong Lighting Model" target/release/libstickshift.a
+
+      - name: C API smoke test and sample (precompiled shaders)
+        env:
+          STICKSHIFT_FEATURES: precompiled-shaders
+        run: ./scripts/test-c-api.sh

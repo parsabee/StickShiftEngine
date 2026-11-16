@@ -24,6 +24,17 @@ API**.
   off, and a million-triangle scene. It reports CPU and GPU frame times (mean and 95th
   percentile) and throughput. `docs/BENCHMARKS.md` records the results on an Apple M3 Max and what
   they show.
+- **Release builds embed precompiled shaders.** With the `precompiled-shaders` feature, the
+  renderer compiles its Metal shaders into a `.metallib` at build time, embeds it, and never
+  compiles a shader at runtime. Building that way needs full Xcode. The feature existed but was
+  untested, and nothing shipped with it. Now:
+  - `stickshift-capi` and `playable-demo` forward it;
+  - the release workflow builds the Homebrew tarball's demo and `libstickshift` with it, and
+    checks that the shader source isn't in them;
+  - a new CI job runs the renderer, C API and demo tests (pixel hashes included) and the C
+    programs with it.
+
+  Development builds still compile at runtime, so the Command Line Tools stay enough.
 
 ### Fixed
 

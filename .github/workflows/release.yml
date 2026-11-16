@@ -31,6 +31,8 @@ jobs:
     runs-on: macos-latest
     env:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      # Cargo features every release build uses (and scripts/package-release.sh rebuilds with).
+      STICKSHIFT_FEATURES: precompiled-shaders
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,12 +59,27 @@ jobs:
           rustc --version
           rustc --version | grep -q " $pinned " || { echo "rustc is not the pinned $pinned"; exit 1; }
 
+      # Release builds embed precompiled shaders, so nothing compiles at runtime. The Metal
+      # shader compiler comes with full Xcode; recent versions download it on first use.
+      - name: Metal toolchain
+        run: |
+          xcrun -sdk macosx metal --version || xcodebuild -downloadComponent MetalToolchain
+          xcrun -sdk macosx metal --version
+
       - name: Build release binary
-        run: cargo build --release -p playable-demo --locked
+        run: cargo build --release -p playable-demo --locked --features "$STICKSHIFT_FEATURES"
 
       # libstickshift.a and libstickshift.dylib (install name @rpath/libstickshift.dylib) for C and Swift hosts.
       - name: Build the C library
-        run: cargo build --release -p stickshift-capi --locked
+        run: cargo build --release -p stickshift-capi --locked --features "$STICKSHIFT_FEATURES"
+
+      # The shader source's header comment is only in a runtime-compiling build.
+      - name: Verify precompiled shaders are embedded
+        run: |
+          for artefact in target/release/playable-demo target/release/libstickshift.a; do
+            ! grep -aq "Rasterization Shader - Phong Lighting Model" "$artefact" \
+              || { echo "$artefact compiles its shaders at runtime"; exit 1; }
+          done
 
       - name: Verify binary (arm64, smoke)
         run: |
