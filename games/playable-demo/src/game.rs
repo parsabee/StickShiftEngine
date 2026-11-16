@@ -7,8 +7,8 @@
 //! This is the seam the whole demo is built on: [`CarRunner`] implements
 //! [`stickshift_core::Game`] and is driven by the engine loop through
 //! [`EngineCtx`]. Everything here is *game* state and
-//! *game* rules (lanes, obstacles, score, the state machine); the ECS world,
-//! physics, and scene streaming it manipulates are all engine-generic services
+//! *game* rules (lanes, obstacles, score, the state machine); the ECS world and
+//! scene streaming it manipulates are engine-generic services
 //! reached only through `EngineCtx`. See [`crate::assets`] for how the models it
 //! places are loaded, [`crate::scenery`] for the procedural geometry it streams,
 //! and [`crate::render`] for how a frame built from this state is drawn.
@@ -30,14 +30,14 @@ use crate::asset_root::asset_path;
 use crate::assets::{
     building_fit, color_layout, fit_transform, load_model, load_textured_mesh, CarPart,
 };
-use crate::components::{BuildingVariant, GuardrailTag, TrafficVariant};
+use crate::components::{BuildingVariant, GuardrailTag, Obstacle, TrafficVariant};
 use crate::config;
 use crate::rng::{building_for_slot, hash_u64, variant_for_slot, Rng};
 use crate::scenery::{guardrail_geometry, terrain_geometry};
 
 /// The playable-demo game state.
 ///
-/// The scene (ECS world + physics world + streaming) is owned by the engine loop
+/// The scene (ECS world + streaming) is owned by the engine loop
 /// and reached through [`EngineCtx::scene_mut`]. This struct holds only the
 /// *game's* own bookkeeping.
 ///
@@ -253,9 +253,8 @@ impl CarRunner {
     /// Whether the player box overlaps `obstacle_pos` — a game-side AABB test
     /// (same-lane proximity along `X` and overlap along the travel axis `Z`).
     ///
-    /// This is deliberately a *game* computation over entity transforms: it does
-    /// **not** query `stickshift-physics` for contacts (that would be an engine API
-    /// change, out of scope for the demo).
+    /// This is deliberately a *game* computation over entity transforms; the engine
+    /// has no physics and needs none for this.
     fn overlaps(&self, obstacle_pos: Vec3) -> bool {
         let player = self.player_position();
         let dx = (player.x - obstacle_pos.x).abs();
@@ -332,13 +331,12 @@ impl CarRunner {
     /// unbroken. Fully deterministic: no PRNG reseed, no wall-clock read.
     fn start_new_run(&mut self, ctx: &mut EngineCtx) {
         // Clear obstacles within a window around the player so the restart lane is
-        // safe. Obstacles are the streamed entities that carry a physics body;
-        // despawn removes the ECS entity and its rigid body atomically.
+        // safe. Obstacles are the streamed entities with the `Obstacle` marker.
         let player_along = self.player_position().dot(ctx.scene().config().axis);
         let window = config::CLEAR_AHEAD;
         let victims: Vec<Entity> = ctx
             .world()
-            .query::<(&TransformComponent, &stickshift_ecs::PhysicsBodyComponent)>()
+            .query::<(&TransformComponent, &Obstacle)>()
             .iter()
             .filter(|(_e, (t, _))| {
                 let d = t.transform.position.dot(ctx.scene().config().axis);
@@ -368,7 +366,7 @@ impl CarRunner {
     ///
     /// Both road and obstacle entities are reported via
     /// [`SpawnCtx::spawned`](stickshift_scene::SpawnCtx::spawned) so the scene despawns
-    /// them (and any physics body) once they fall behind the player.
+    /// them once they fall behind the player.
     fn spawn_slot(rng: &mut Rng, tile_depth: f32, cx: &mut stickshift_scene::SpawnCtx<'_>) {
         // Road tile: a wide, flat, dark box centered across all lanes at this slot.
         let road_z = cx.position.z;
@@ -390,12 +388,6 @@ impl CarRunner {
             let lane = rng.next_below(config::LANES as u32) as usize;
             let pos = Vec3::new(Self::lane_x(lane), config::PLAYER_Y, road_z);
 
-            // Give the obstacle a static physics body + collider so streaming's
-            // atomic despawn (ECS entity + rigid body together) is exercised. The
-            // body is not used to drive the player; collision is a game-side AABB.
-            let handle = cx.physics.create_static_body(Transform::from_position(pos));
-            cx.physics.add_box_collider(handle, config::OBSTACLE_HALF);
-
             // Pick a traffic car variant for this obstacle deterministically from
             // its slot — independent of the lane PRNG, so the obstacle world (and
             // the smoke run) is unchanged by adding variety.
@@ -403,7 +395,7 @@ impl CarRunner {
 
             let obstacle = cx.world.spawn((
                 TransformComponent::from_position(pos),
-                stickshift_ecs::PhysicsBodyComponent::new(handle),
+                Obstacle,
                 RenderComponent::cube([0.95, 0.8, 0.1]),
                 TrafficVariant(variant),
                 StaticTag,
@@ -413,7 +405,7 @@ impl CarRunner {
 
         // Roadside buildings: one on each side of the road at this slot,
         // sitting on the ground plane BELOW the road so the freeway reads as raised.
-        // Non-colliding decoration (no physics body); deterministic per slot + side
+        // Non-colliding decoration (no `Obstacle` marker); deterministic per slot + side
         // (weighted prefab, jittered offset) and independent of the lane PRNG.
         for side in 0..2u64 {
             let sign = if side == 0 { -1.0 } else { 1.0 };
@@ -457,12 +449,12 @@ impl CarRunner {
 
     /// Test the player against every streamed obstacle; return `true` on a hit.
     ///
-    /// An obstacle is any streamed entity with `PhysicsBodyComponent` (only
-    /// obstacles get one — road tiles do not), so this reads their transforms and
-    /// runs the game-side overlap test.
+    /// An obstacle is any entity with the [`Obstacle`] marker (road tiles and
+    /// buildings have none), so this reads their transforms and runs the
+    /// game-side overlap test.
     fn hit_any_obstacle(&self, ctx: &EngineCtx) -> bool {
         ctx.world()
-            .query::<(&TransformComponent, &stickshift_ecs::PhysicsBodyComponent)>()
+            .query::<(&TransformComponent, &Obstacle)>()
             .iter()
             .any(|(_e, (t, _body))| self.overlaps(t.transform.position))
     }
@@ -669,7 +661,7 @@ impl Game for CarRunner {
         self.travel += speed * dt;
         self.distance += speed * dt;
 
-        // Streaming cadence: rebase FIRST (between physics steps), against the
+        // Streaming cadence: rebase FIRST, against the
         // focus. A rebase shifts every streamed transform back toward the origin;
         // the player is kinematic and rebuilt from `travel`, so we fold the same
         // shift into `travel` to stay aligned with the shifted world.
@@ -1055,11 +1047,7 @@ mod tests {
 
             // Choose a lane with no traffic in the danger window ahead of us.
             let mut blocked = [false; config::LANES];
-            for (_e, (t, _body)) in h
-                .world()
-                .query::<(&TransformComponent, &stickshift_ecs::PhysicsBodyComponent)>()
-                .iter()
-            {
+            for (_e, (t, _body)) in h.world().query::<(&TransformComponent, &Obstacle)>().iter() {
                 let p = t.transform.position;
                 // "Ahead" is -Z; keep a little margin behind us too.
                 if p.z < player.z + 2.0 && p.z > player.z - 14.0 {
@@ -1112,11 +1100,7 @@ mod tests {
             // Keep dodging so the run survives long enough to rebase.
             let player = game.player_position();
             let mut blocked = [false; config::LANES];
-            for (_e, (t, _body)) in h
-                .world()
-                .query::<(&TransformComponent, &stickshift_ecs::PhysicsBodyComponent)>()
-                .iter()
-            {
+            for (_e, (t, _body)) in h.world().query::<(&TransformComponent, &Obstacle)>().iter() {
                 let p = t.transform.position;
                 if p.z < player.z + 2.0 && p.z > player.z - 14.0 {
                     for (lane, slot) in blocked.iter_mut().enumerate() {
@@ -1441,7 +1425,7 @@ mod tests {
         // floating-origin rebases.
         let (mut game, mut h) = started();
         let entities_at_start = h.scene().world().len() as usize;
-        let (mut rebases, mut max_entities, mut max_bodies) = (0, 0, 0);
+        let (mut rebases, mut max_entities, mut max_obstacles) = (0, 0, 0);
         for _ in 0..5000 {
             if game.state == GameState::GameOver {
                 h.input_mut().press_key(Key::Space);
@@ -1451,11 +1435,12 @@ mod tests {
             h.run(&mut game, 1);
             rebases += u32::from(game.rebased_last_step);
             max_entities = max_entities.max(h.scene().world().len() as usize);
-            max_bodies = max_bodies.max(h.scene().physics().rigid_body_set.len());
+            let obstacles = h.scene().world().query::<&Obstacle>().iter().count();
+            max_obstacles = max_obstacles.max(obstacles);
         }
         println!(
-            "start {entities_at_start}, max entities {max_entities}, max bodies \
-             {max_bodies}, rebases {rebases}, travel {}",
+            "start {entities_at_start}, max entities {max_entities}, max obstacles \
+             {max_obstacles}, rebases {rebases}, travel {}",
             game.travel
         );
         assert!(rebases > 0, "the run crossed a floating-origin rebase");
@@ -1463,18 +1448,10 @@ mod tests {
             max_entities <= entities_at_start + entities_at_start / 10,
             "entity count stayed flat: {max_entities} (started at {entities_at_start})"
         );
-        let obstacles = h
-            .scene()
-            .world()
-            .query::<&stickshift_ecs::PhysicsBodyComponent>()
-            .iter()
-            .count();
-        assert_eq!(
-            h.scene().physics().rigid_body_set.len(),
-            obstacles,
-            "every physics body still belongs to a live obstacle"
+        assert!(
+            max_obstacles > 0 && max_obstacles <= max_entities,
+            "{max_obstacles} obstacles"
         );
-        assert!(max_bodies <= max_entities, "{max_bodies} bodies");
         assert!(
             h.renderer().protocol_violations().is_empty(),
             "the demo made seam calls the Metal backend would ignore: {:?}",
@@ -1495,7 +1472,7 @@ mod tests {
         let mut layout: Vec<(i64, i64)> = h
             .scene()
             .world()
-            .query::<(&TransformComponent, &stickshift_ecs::PhysicsBodyComponent)>()
+            .query::<(&TransformComponent, &Obstacle)>()
             .iter()
             .map(|(_e, (t, _))| {
                 let p = t.transform.position;

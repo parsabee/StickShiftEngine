@@ -5,7 +5,7 @@ Shared math layer for Stick Shift Engine.
 ## Responsibility
 
 `stickshift-math` is the zero-coupling leaf crate that the rest of the engine
-(`stickshift-ecs`, `stickshift-physics`, `stickshift-camera`, `stickshift-scene`, …) depends on for
+(`stickshift-ecs`, `stickshift-camera`, `stickshift-scene`, …) depends on for
 spatial math. It does two things:
 
 1. **Re-exports [`glam`]** so the whole workspace shares a single, version-pinned

@@ -71,7 +71,6 @@ reference title is the [playable demo](#the-playable-demo), an endless car runne
   that depends on `metal`, and CI fails if the seam crate ever gains a `metal` dependency.
 - **ECS** built on [`hecs`](https://crates.io/crates/hecs), with a shared vocabulary of engine
   components.
-- **Physics** via [`rapier3d`](https://rapier.rs), stepped in lockstep with the simulation.
 - **Fixed-timestep game loop** with a clean `Game` / `EngineCtx` boundary. The same loop drives
   both the windowed app and a headless driver.
 - **World streaming** (spawn-ahead / despawn-behind) and a **floating-origin rebase** for endless
@@ -316,7 +315,7 @@ smoke oracle). The layout follows [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) Â
 
 | Crate | Purpose |
 |---|---|
-| [`stickshift-capi`](crates/stickshift-capi) | The C API: `libstickshift` (static and dynamic), the generated `stickshift.h` and the Swift module map, over a Metal or a null backend. Graphics only: no windowing, audio, ECS or physics |
+| [`stickshift-capi`](crates/stickshift-capi) | The C API: `libstickshift` (static and dynamic), the generated `stickshift.h` and the Swift module map, over a Metal or a null backend. Graphics only: no windowing, audio or ECS |
 | [`stickshift-core`](crates/stickshift-core) | Application lifecycle and the engine/game boundary: the `Game` trait, `EngineCtx`, the fixed-timestep loop, input, and the windowed (winit) and headless drivers |
 | [`stickshift-render-api`](crates/stickshift-render-api) | Backend-agnostic render seam: `RenderDevice` / `FrameRecorder` traits, opaque handles, descriptors, sun/sky and 2D overlay types, and a `NullRenderer` test double. Never depends on `metal` |
 | [`stickshift-render`](crates/stickshift-render) | Raw-Metal implementation of the seam: rasterization pipeline, look stack, shadow maps, offscreen rendering and pixel read-back |
@@ -326,11 +325,8 @@ smoke oracle). The layout follows [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) Â
 | [`stickshift-ecs`](crates/stickshift-ecs) | `hecs` wrapper and the shared engine components |
 | [`stickshift-math`](crates/stickshift-math) | Shared math layer: `glam` re-export plus the `Transform` (TRS) type |
 | [`stickshift-perf`](crates/stickshift-perf) | Profiling and frame-timing instrumentation with an injectable clock |
-| [`stickshift-physics`](crates/stickshift-physics) | `rapier3d` wrapper with a body/collider removal API |
-| [`stickshift-scene`](crates/stickshift-scene) | The `Scene`: ECS world + physics world, world streaming, and floating-origin rebase |
+| [`stickshift-scene`](crates/stickshift-scene) | The `Scene`: the ECS world, world streaming, and floating-origin rebase |
 | [`games/playable-demo`](games/playable-demo) | The reference example game (an endless runner) and host of the headless smoke oracle |
-
-Physics uses [rapier](https://rapier.rs) through `stickshift-physics`.
 
 ## Contributing
 

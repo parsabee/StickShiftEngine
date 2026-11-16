@@ -84,8 +84,8 @@ struct FrameMetrics {
 /// Frame times are frame *periods* and CPU times are the work inside a frame
 /// (see the [crate docs](crate#frame-time-vs-cpu-time)). The subsystem,
 /// allocation and triangle fields are whatever the tracker's owner recorded;
-/// the `stickshift-core` loop records physics and render time only, so the
-/// others stay zero there.
+/// the `stickshift-core` loop records render time only (the engine has no
+/// physics), so the others stay zero there unless the game records them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PerfSnapshot {
     /// Number of frames currently in the rolling window.

@@ -4,7 +4,6 @@ members = [
     "crates/stickshift-math",
     "crates/stickshift-perf",
     "crates/stickshift-ecs",
-    "crates/stickshift-physics",
     "crates/stickshift-camera",
     "crates/stickshift-scene",
     "crates/stickshift-render-api",
@@ -45,7 +44,6 @@ publish = false
 stickshift-math = { path = "crates/stickshift-math" }
 stickshift-perf = { path = "crates/stickshift-perf" }
 stickshift-ecs = { path = "crates/stickshift-ecs" }
-stickshift-physics = { path = "crates/stickshift-physics" }
 stickshift-camera = { path = "crates/stickshift-camera" }
 stickshift-scene = { path = "crates/stickshift-scene" }
 stickshift-render-api = { path = "crates/stickshift-render-api" }
@@ -83,7 +81,6 @@ kira = { version = "0.12", default-features = false, features = [
     "wav",
     "pcm",
 ] }
-rapier3d = "0.22"
 hecs = "0.10"
 winit = { version = "0.30", features = ["rwh_06"] }
 metal = "0.29"

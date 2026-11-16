@@ -1,6 +1,6 @@
 [package]
 name = "stickshift-scene"
-description = "hecs World plus PhysicsWorld and world streaming for Stick Shift Engine."
+description = "The ECS world plus world streaming and floating-origin rebase for Stick Shift Engine."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,4 +13,3 @@ publish.workspace = true
 [dependencies]
 stickshift-math.workspace = true
 stickshift-ecs.workspace = true
-stickshift-physics.workspace = true

@@ -26,9 +26,8 @@ graph TD
         GAME["Game trait"]
     end
     subgraph Sim["Simulation crates"]
-        SCENE["stickshift-scene<br/>World + PhysicsWorld + streaming"]
+        SCENE["stickshift-scene<br/>World + streaming + rebase"]
         ECS["stickshift-ecs (hecs)"]
-        PHYS["stickshift-physics (rapier3d)"]
         CAM["stickshift-camera"]
         ASSETS["stickshift-assets (glTF)"]
         AUDIO["stickshift-audio (kira)"]
@@ -46,12 +45,12 @@ graph TD
     LOOP --> CTX
     CTX --> SCENE & CAM & PERF
     CTX -->|"dyn Renderer"| SEAM
-    SCENE --> ECS & PHYS
+    SCENE --> ECS
     ASSETS -->|"MeshData / TextureData"| SEAM
     CR -.->|"builds the backend, injects it"| REND
     REND -->|implements| SEAM
     REND --> METAL
-    ECS & PHYS & CAM & ASSETS & SCENE --> MATH
+    ECS & CAM & ASSETS & SCENE --> MATH
 
     classDef seam fill:#fde,stroke:#a05,stroke-width:2px;
     class SEAM seam;
@@ -75,7 +74,6 @@ graph LR
     perf["stickshift-perf"]
     ecs["stickshift-ecs"]
     camera["stickshift-camera"]
-    physics["stickshift-physics"]
     renderapi["stickshift-render-api"]
     scene["stickshift-scene"]
     assets["stickshift-assets"]
@@ -87,9 +85,8 @@ graph LR
 
     ecs --> math
     camera --> math
-    physics --> math
     renderapi --> math & camera
-    scene --> math & ecs & physics
+    scene --> math & ecs
     assets --> math & ecs & renderapi
     render --> math & camera & renderapi & metal
     core --> math & ecs & camera & scene & renderapi & perf & audio
@@ -220,10 +217,9 @@ classDiagram
 
 ## 5. The fixed-timestep frame (sequence)
 
-`driver::drive_frame` banks real elapsed time, runs `update` + physics a whole number of fixed
-steps, then renders once. Ordering inside a step is `update → step_physics`; the game calls
-`maybe_rebase` at the top of its `update` (giving the documented `stream → step_physics →
-maybe_rebase` cadence).
+`driver::drive_frame` banks real elapsed time, runs `update` a whole number of fixed steps, then
+renders once. The engine has no physics: a game that simulates physics steps it inside its own
+`update`, after `maybe_rebase` and `stream`, so a rebase always lands between two physics steps.
 
 ```mermaid
 sequenceDiagram
@@ -241,7 +237,6 @@ sequenceDiagram
     loop n fixed steps (FIXED_DT)
         Loop->>Game: update(ctx, FIXED_DT)
         Game->>Scene: maybe_rebase(focus) / stream(focus, spawn)
-        Loop->>Scene: step_physics()
     end
     Loop->>Cam: view_projection_matrix()
     Loop->>R: set_view_projection(vp)
@@ -304,12 +299,11 @@ stateDiagram-v2
 
 ---
 
-## 8. World streaming + atomic despawn + rebase (sequence)
+## 8. World streaming + rebase (sequence)
 
-`stickshift-scene` owns the ECS `World` and the `PhysicsWorld`. Streaming spawns ahead of a focus point
-and despawns behind it; despawn removes the physics body **before** the ECS entity so no live
-`PhysicsBodyComponent` ever holds a freed handle. A floating-origin rebase shifts everything back
-toward the origin between physics steps.
+`stickshift-scene` owns the ECS `World`. Streaming spawns ahead of a focus point and despawns
+behind it. A floating-origin rebase shifts every transform back toward the origin and returns the
+offset, so the game can shift whatever it keeps outside the ECS by the same vector.
 
 ```mermaid
 sequenceDiagram
@@ -317,25 +311,23 @@ sequenceDiagram
     participant Game
     participant Scene
     participant World as hecs World
-    participant Phys as PhysicsWorld (rapier)
 
     Game->>Scene: maybe_rebase(focus)
     alt focus past rebase_threshold
         Scene->>World: shift all TransformComponents by -offset
-        Scene->>Phys: set_translation(body, pos - offset) for each body
+        Scene-->>Game: offset  [game shifts its own state]
     end
     Game->>Scene: stream(focus, spawn_cb)
     Scene->>Scene: despawn tracked entities > despawn_behind
     loop each despawn
-        Scene->>Phys: remove_body(handle)  [cascades to colliders]
-        Scene->>World: world.despawn(entity)  [atomic with body]
+        Scene->>World: world.despawn(entity)
     end
     loop each empty slot up to focus + spawn_ahead
-        Scene->>Game: spawn_cb(SpawnCtx{world, physics, position, slot})
-        Game->>World: spawn entity (mesh/collider)
+        Scene->>Game: spawn_cb(SpawnCtx{world, position, slot})
+        Game->>World: spawn entity
         Game->>Scene: cx.spawned(entity)  [track for despawn-behind]
     end
-    Note over Scene,Phys: entity & body counts stay bounded as the focus advances forever
+    Note over Scene,World: the entity count stays bounded as the focus advances forever
 ```
 
 ---
@@ -411,8 +403,7 @@ not implemented.
 | Rendered output unchanged across a refactor | `stickshift-render` | offscreen **pixel-hash** tests (re-bless w/ justification) |
 | Zero per-frame GPU allocations | `stickshift-render` | `allocation_count()` asserted `== 0` on the frame path |
 | Audio never requires a device | `stickshift-audio` | `Loop` starts `Audio::silent()`; headless/`--smoke` never open one, and every audio test asserts against silent mode |
-| Stale physics handle is safe | `stickshift-physics` | use-after-free tests (queries → `None`, never a bad deref) |
-| Physics body removed atomically with its entity | `stickshift-scene` | despawn removes body **before** ECS entity + test |
+| Rebase preserves relative positions; memory stays bounded | `stickshift-scene` | rebase and 2000-frame streaming tests |
 | Simulation is framerate-independent | `stickshift-core` | fixed `FIXED_DT`; 60 vs 120 Hz step-count tests |
 | No prototype identifiers ship | `crates/`, `games/` | CI de-brand grep |
 

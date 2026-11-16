@@ -9,10 +9,8 @@
 //! engine-generic components stored in an [`hecs`] [`World`](hecs::World):
 //!
 //! - [`TransformComponent`] — spatial transform (position, rotation, scale).
-//! - [`PhysicsBodyComponent`] — links an entity to a physics rigid body.
 //! - [`RenderComponent`] / [`RenderShape`] — visual appearance (color + mesh).
-//! - [`StaticTag`] / [`DynamicTag`] — categorize entities as fixed or
-//!   physics-controlled.
+//! - [`StaticTag`] / [`DynamicTag`] — mark entities as fixed or moving.
 //!
 //! Everything here is **engine-generic**: there are deliberately no game-specific
 //! components (no vehicle, track, tally, hazard, or gameplay-lattice types). Games
@@ -41,7 +39,6 @@
 
 #![deny(missing_docs)]
 
-use rapier3d::prelude::RigidBodyHandle;
 use stickshift_math::glam::Vec3;
 use stickshift_math::Transform;
 
@@ -55,8 +52,7 @@ pub use hecs;
 /// A component that stores an entity's spatial transform.
 ///
 /// This component wraps a [`Transform`] which contains position, rotation, and scale.
-/// It's used by the rendering system to determine where to draw objects and by the
-/// physics system to synchronize entity positions with physics bodies.
+/// It's used by the rendering system to determine where to draw objects.
 ///
 /// # Example
 ///
@@ -104,49 +100,6 @@ impl TransformComponent {
         Self {
             transform: Transform::from_position(position),
         }
-    }
-}
-
-/// A component that links an ECS entity to a physics rigid body.
-///
-/// This component stores a [`RigidBodyHandle`] into the physics simulation. The
-/// physics system uses it to update the owning entity's [`TransformComponent`]
-/// from the simulated body each step.
-///
-/// # Invariants
-///
-/// The stored [`handle`](Self::handle) is a lightweight, `Copy` index into a
-/// physics `RigidBodySet` — it does **not** own the rigid body. Ownership of the
-/// body lives in the physics world; this component is a non-owning reference.
-/// Callers are responsible for keeping the handle and the physics world in sync:
-/// a handle whose body has been removed from the set is dangling and must not be
-/// dereferenced. (Handle-removal safety lives in `stickshift-physics` and `stickshift-scene`.)
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use stickshift_ecs::PhysicsBodyComponent;
-/// use rapier3d::prelude::RigidBodyHandle;
-///
-/// let handle = RigidBodyHandle::from_raw_parts(0, 1);
-/// let physics_comp = PhysicsBodyComponent::new(handle);
-/// ```
-#[derive(Debug, Clone, Copy)]
-pub struct PhysicsBodyComponent {
-    /// The (non-owning) handle to the rigid body in the physics world.
-    pub handle: RigidBodyHandle,
-}
-
-impl PhysicsBodyComponent {
-    /// Creates a new physics body component.
-    ///
-    /// # Arguments
-    ///
-    /// * `handle` - The rigid body handle from the physics simulation. The
-    ///   component stores it by value and does not take ownership of the body
-    ///   itself (see the type-level invariants).
-    pub fn new(handle: RigidBodyHandle) -> Self {
-        Self { handle }
     }
 }
 
@@ -421,8 +374,9 @@ impl RenderShape {
 
 /// A tag component marking an entity as static (non-moving).
 ///
-/// Static entities don't have their transforms updated by the physics system.
-/// They're typically used for ground planes, walls, and other fixed geometry.
+/// Static entities keep their transform: ground planes, walls, imported scenery
+/// and other fixed geometry. The tag is a hint for systems that can treat fixed
+/// geometry differently (for example by caching or batching it).
 ///
 /// # Example
 ///
@@ -441,24 +395,22 @@ impl RenderShape {
 #[derive(Debug, Clone, Copy)]
 pub struct StaticTag;
 
-/// A tag component marking an entity as dynamic (physics-controlled).
+/// A tag component marking an entity as dynamic (moving).
 ///
-/// Dynamic entities have their transforms updated from the physics simulation
-/// each frame. They respond to forces, collisions, and gravity.
+/// Dynamic entities have their transforms changed by the game while they live:
+/// a player, traffic, anything the game moves. The tag is the counterpart of
+/// [`StaticTag`].
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// use stickshift_ecs::{TransformComponent, RenderComponent, PhysicsBodyComponent, DynamicTag};
+/// ```rust
+/// use stickshift_ecs::{TransformComponent, RenderComponent, DynamicTag};
 /// use stickshift_ecs::hecs::World;
 /// use stickshift_math::glam::Vec3;
-/// use rapier3d::prelude::RigidBodyHandle;
 ///
 /// let mut world = World::new();
-/// let handle = RigidBodyHandle::from_raw_parts(0, 1);
 /// world.spawn((
 ///     TransformComponent::from_position(Vec3::new(0.0, 5.0, 0.0)),
-///     PhysicsBodyComponent::new(handle),
 ///     RenderComponent::cube([1.0, 0.0, 0.0]),
 ///     DynamicTag,
 /// ));
@@ -582,33 +534,6 @@ mod tests {
             .map(|t| t.transform.position)
             .unwrap();
         assert_eq!(pos, Vec3::new(5.0, 10.0, 15.0));
-    }
-
-    #[test]
-    fn test_physics_body_component() {
-        let mut world = World::new();
-
-        // Create a dummy physics body handle
-        let handle = RigidBodyHandle::from_raw_parts(0, 1);
-
-        let _entity = world.spawn((
-            TransformComponent::from_position(Vec3::new(1.0, 2.0, 3.0)),
-            PhysicsBodyComponent::new(handle),
-            RenderComponent::cube([1.0, 0.0, 0.0]),
-            DynamicTag,
-        ));
-
-        // Query entities with physics bodies
-        let mut found = false;
-        for (_entity, (physics, _transform)) in world
-            .query::<(&PhysicsBodyComponent, &TransformComponent)>()
-            .iter()
-        {
-            assert_eq!(physics.handle, handle);
-            found = true;
-        }
-
-        assert!(found);
     }
 
     #[test]

@@ -24,7 +24,7 @@ callbacks on the host's thread, and `stickshift_frame_acquire` never waits.
 
 The crate is graphics-only: it depends on `stickshift-render` (macOS), `stickshift-render-api`,
 `stickshift-assets` (without its `ecs` feature) and `stickshift-math`, and CI fails if a windowing,
-audio, ECS or physics crate reaches it.
+audio or ECS crate reaches it.
 
 ## Building and testing
 

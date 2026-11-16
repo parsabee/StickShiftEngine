@@ -9,6 +9,24 @@ API**.
 
 ## [Unreleased]
 
+### Removed
+
+- **Physics is no longer part of the engine** (#81). This breaks the Rust API; the C API never
+  exposed physics and is unchanged. Removed:
+  - the `stickshift-physics` crate and the workspace's `rapier3d` dependency;
+  - `stickshift_ecs::PhysicsBodyComponent`;
+  - `Scene::physics`, `Scene::physics_mut`, `Scene::step_physics`, `Scene::fixed_dt` and
+    `SpawnCtx::physics`;
+  - the loop's physics step after each `Game::update`. The loop no longer records physics time,
+    so `PerfSnapshot::avg_physics_time` stays zero unless the game calls `mark_physics` itself.
+
+  `Scene::despawn` now just despawns the entity. `StaticTag` and `DynamicTag` stay as hints that
+  an entity is fixed or moving. To migrate a game that used physics: depend on `rapier3d` (or
+  another physics library) directly, keep the physics world in your game struct, step it from
+  `Game::update` at `FIXED_DT`, remove an entity's body when you despawn the entity, and shift
+  the physics world by the offset `Scene::maybe_rebase` returns. The playable demo, which only
+  used static bodies to mark obstacles, now tags them with its own `Obstacle` component.
+
 ## [0.1.0] - 2026-11-15
 
 The first release: a Metal rendering engine for macOS on Apple Silicon, usable from Rust or, as

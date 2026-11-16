@@ -9,7 +9,7 @@
 //! [`stickshift_core::Game`] and is driven by the engine loop through the
 //! [`EngineCtx`](stickshift_core::EngineCtx) seam. The engine crates never see any of
 //! the car / road / lane / obstacle / score concepts modelled here — they are
-//! composed entirely from the engine-generic ECS, physics, and scene-streaming
+//! composed entirely from the engine-generic ECS and scene-streaming
 //! primitives. See `docs/PLAYABLE_DEMO.md` at the workspace root for a guided
 //! walkthrough of how this is built, and a "build your own game" how-to for
 //! writing a new title on top of the same engine crates.
@@ -18,8 +18,7 @@
 //!
 //! The player drives a car forward along the streaming axis (`-Z`), accelerating
 //! over the run. Three discrete lanes run along `X`; the arrow keys move the car
-//! between them (kinematic — the transform is set directly, the physics solver
-//! never drives the car, per ARCHITECTURE §5). The road, traffic, and roadside
+//! between them (the transform is set directly). The road, traffic, and roadside
 //! scenery are produced by [`Scene::stream`](stickshift_scene::Scene::stream) with the
 //! car as the focus, so the world scrolls endlessly and content behind the player
 //! despawns. Traffic appears in deterministic (seeded PRNG) lanes ahead; colliding
