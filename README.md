@@ -294,6 +294,7 @@ Guides and design docs:
 | [docs/DESIGN.md](docs/DESIGN.md) | Diagrams: component, UML class and sequence diagrams (Mermaid) of the layers, the render seam, the frame loop, streaming, and asset load |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Intentional constraints, the render seam, and workspace layout |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What v0.1 and v0.2 contain |
+| [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Renderer CPU and GPU frame times on real hardware, and how to measure them |
 | [docs/INTEGRATION.md](docs/INTEGRATION.md) | Integration, testing and migration discipline |
 | [CHANGELOG.md](CHANGELOG.md) | Release history and notable changes |
 
