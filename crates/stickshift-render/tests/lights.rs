@@ -16,7 +16,9 @@
 //! - **Cost:** lights add no per-frame allocation, and over-budget or invalid
 //!   lights are counted, not drawn.
 //! - **A golden night street** ([`NIGHT_STREET_REFERENCE_HASH`]): many lights,
-//!   spot headlights and emissive windows in one frame.
+//!   spot headlights and emissive windows in one frame. Exact on a real Apple
+//!   GPU; within a tight tolerance of the committed frame on a paravirtualized
+//!   one (a CI virtual machine), whose arithmetic rounds a little differently.
 //!
 //! Like the other backend tests these skip without a Metal device.
 
@@ -130,7 +132,12 @@ struct Scene {
 
 impl Scene {
     fn new() -> Option<Self> {
-        let mut r = MetalRenderer::new_offscreen(WIDTH, HEIGHT)?;
+        Self::sized(WIDTH, HEIGHT)
+    }
+
+    /// A scene rendering into `width` × `height` (16:9, the camera's aspect).
+    fn sized(width: u32, height: u32) -> Option<Self> {
+        let mut r = MetalRenderer::new_offscreen(width, height)?;
         r.set_sun_sky(&night());
         r.set_view_projection(view_projection());
         r.set_camera_position(eye());
@@ -577,13 +584,71 @@ fn over_budget_and_invalid_lights_are_counted_not_drawn() {
 /// BLESS=1 cargo test -p stickshift-render --test lights -- --nocapture
 /// ```
 ///
-/// Blessed 2026-11-15 on an Apple M-series GPU, after looking at the frame
+/// Blessed 2026-11-15 on an Apple M3 Max, after looking at the frame
 /// (`LIGHTS_DUMP=night.ppm`): warm pools under every lamp fading smoothly into
 /// each other with no tile or slice seams, the headlights' pool on the road,
 /// the tail light's red patch, and every window glowing against its dark wall.
-const NIGHT_STREET_REFERENCE_HASH: u64 = 0x9784249d73882fce;
+///
+/// # On a paravirtualized GPU
+///
+/// GitHub's macOS runners expose an "Apple Paravirtual device" that renders
+/// this frame a hair differently (the first CI run hashed it
+/// `0xb42dbebfdc84ec56`): per-light transcendentals (`pow`, `rsqrt`) round
+/// differently there, and the frame sums dozens of lights. There, the frame
+/// is compared with the committed image ([`NIGHT_STREET_REFERENCE_BGRA`])
+/// instead: every channel within [`NIGHT_STREET_MAX_DELTA`], and at most
+/// [`NIGHT_STREET_MAX_DIFFERING_PIXELS`] pixels off by more than one step.
+/// `the_night_street_tolerance_is_not_vacuous` proves that rule still fails a
+/// frame missing a single lamp.
+const NIGHT_STREET_REFERENCE_HASH: u64 = 0x4983fc2460d51eef;
 
-fn render_night_street(scene: &mut Scene) -> Vec<u8> {
+/// The night street's size: small, so its committed image stays small.
+const NIGHT_WIDTH: u32 = 128;
+const NIGHT_HEIGHT: u32 = 72;
+
+/// The frame [`NIGHT_STREET_REFERENCE_HASH`] pins, BGRA8.
+const NIGHT_STREET_REFERENCE_BGRA: &[u8] = include_bytes!("data/night_street_reference.bgra");
+const NIGHT_STREET_REFERENCE_BGRA_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/data/night_street_reference.bgra"
+);
+/// The most any channel of any pixel may differ from the committed frame.
+const NIGHT_STREET_MAX_DELTA: u8 = 4;
+/// How many pixels may differ by more than one step (about 1% of the frame).
+const NIGHT_STREET_MAX_DIFFERING_PIXELS: usize = 92;
+
+/// Whether `frame` is within the paravirtualized-GPU tolerance of `reference`.
+fn compare_night_street(reference: &[u8], frame: &[u8]) -> Result<(), String> {
+    let mut worst = 0u8;
+    let mut differing = 0;
+    for (a, b) in reference.chunks_exact(4).zip(frame.chunks_exact(4)) {
+        let delta = a
+            .iter()
+            .zip(b)
+            .map(|(x, y)| x.abs_diff(*y))
+            .max()
+            .unwrap_or(0);
+        worst = worst.max(delta);
+        if delta > 1 {
+            differing += 1;
+        }
+    }
+    if worst > NIGHT_STREET_MAX_DELTA {
+        return Err(format!(
+            "a channel is {worst} steps off (at most {NIGHT_STREET_MAX_DELTA})"
+        ));
+    }
+    if differing > NIGHT_STREET_MAX_DIFFERING_PIXELS {
+        return Err(format!(
+            "{differing} pixels are more than one step off (at most \
+             {NIGHT_STREET_MAX_DIFFERING_PIXELS})"
+        ));
+    }
+    Ok(())
+}
+
+/// Render the night street, optionally without lamp `missing_lamp`.
+fn render_night_street(scene: &mut Scene, missing_lamp: Option<usize>) -> Vec<u8> {
     let mut cubes = Vec::new();
     let mut lights = Vec::new();
     for i in 0..18 {
@@ -647,28 +712,99 @@ fn render_night_street(scene: &mut Scene) -> Vec<u8> {
         3.0,
         4.0,
     ));
+    if let Some(lamp) = missing_lamp {
+        lights.remove(lamp);
+    }
     scene.render(false, &cubes, &lights, false)
 }
 
 #[test]
 fn night_street_matches_committed_hash() {
-    let Some(mut scene) = Scene::new() else {
+    let Some(mut scene) = Scene::sized(NIGHT_WIDTH, NIGHT_HEIGHT) else {
         common::no_gpu();
         return;
     };
-    let pixels = render_night_street(&mut scene);
+    let device = scene.r.device_name();
+    let pixels = render_night_street(&mut scene, None);
     // `LIGHTS_DUMP=frame.ppm` writes the frame out to look at, e.g. before a
     // re-bless.
     if let Ok(path) = std::env::var("LIGHTS_DUMP") {
-        let mut ppm = format!("P6\n{WIDTH} {HEIGHT}\n255\n").into_bytes();
+        let mut ppm = format!("P6\n{NIGHT_WIDTH} {NIGHT_HEIGHT}\n255\n").into_bytes();
         for bgra in pixels.chunks_exact(4) {
             ppm.extend_from_slice(&[bgra[2], bgra[1], bgra[0]]);
         }
         std::fs::write(path, ppm).expect("write the dump");
     }
+    if common::blessing() {
+        std::fs::write(NIGHT_STREET_REFERENCE_BGRA_PATH, &pixels)
+            .expect("BLESS: failed to write the night street reference image");
+        println!("BLESS: rewrote {NIGHT_STREET_REFERENCE_BGRA_PATH}");
+        common::bless_or_assert(
+            &pixels,
+            NIGHT_STREET_REFERENCE_HASH,
+            "NIGHT_STREET_REFERENCE_HASH",
+        );
+        return;
+    }
+
+    // Runs on every device (trivially exact on a real GPU), so the tolerance
+    // path CI depends on is exercised locally too.
+    let tolerance = compare_night_street(NIGHT_STREET_REFERENCE_BGRA, &pixels);
+    if common::is_paravirtual(&device) {
+        eprintln!(
+            "{device}: paravirtualized Metal device, so the night street is compared within \
+             tolerance (hash here {:#018x}; the exact {NIGHT_STREET_REFERENCE_HASH:#018x} is \
+             asserted on real Apple GPUs)",
+            common::fnv1a_64(&pixels)
+        );
+        if let Err(why) = tolerance {
+            common::dump_frame("NIGHT_STREET_REFERENCE_BGRA", &pixels);
+            panic!(
+                "the night street on {device} is outside the paravirtualized-GPU tolerance: {why}"
+            );
+        }
+        return;
+    }
+    if common::fnv1a_64(&pixels) != NIGHT_STREET_REFERENCE_HASH {
+        common::dump_frame("NIGHT_STREET_REFERENCE_BGRA", &pixels);
+    }
     common::bless_or_assert(
         &pixels,
         NIGHT_STREET_REFERENCE_HASH,
         "NIGHT_STREET_REFERENCE_HASH",
+    );
+    assert_eq!(tolerance, Ok(()));
+}
+
+#[test]
+fn night_street_reference_image_matches_committed_hash() {
+    // GPU-free: the committed image is exactly the frame the hash pins.
+    assert_eq!(
+        NIGHT_STREET_REFERENCE_BGRA.len(),
+        (NIGHT_WIDTH * NIGHT_HEIGHT * 4) as usize
+    );
+    assert_eq!(
+        common::fnv1a_64(NIGHT_STREET_REFERENCE_BGRA),
+        NIGHT_STREET_REFERENCE_HASH,
+        "tests/data/night_street_reference.bgra is not the frame NIGHT_STREET_REFERENCE_HASH \
+         pins; re-bless both together (BLESS=1 rewrites the image)"
+    );
+}
+
+#[test]
+fn the_night_street_tolerance_is_not_vacuous() {
+    // Rendered and compared on the device under test, so it holds on any GPU:
+    // the frame matches itself, and loses the tolerance when one lamp goes out.
+    let Some(mut scene) = Scene::sized(NIGHT_WIDTH, NIGHT_HEIGHT) else {
+        common::no_gpu();
+        return;
+    };
+    let all = render_night_street(&mut scene, None);
+    assert_eq!(compare_night_street(&all, &all), Ok(()));
+    // Lamp 2 stands on the left, 20 units ahead, in full view.
+    let one_out = render_night_street(&mut scene, Some(2));
+    assert!(
+        compare_night_street(&all, &one_out).is_err(),
+        "a frame missing a lamp passed the tolerance"
     );
 }

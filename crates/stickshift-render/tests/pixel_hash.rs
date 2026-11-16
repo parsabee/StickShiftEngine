@@ -1044,12 +1044,6 @@ fn compare_shadow_frames(
     Ok(())
 }
 
-/// Whether `device_name` is a paravirtualized Metal device (a macOS virtual
-/// machine, e.g. a GitHub Actions runner) rather than a real Apple GPU.
-fn is_paravirtual(device_name: &str) -> bool {
-    device_name.contains("Paravirtual")
-}
-
 /// Mean luminance (0..255) of the 3x3 pixels around where `world` projects in the
 /// shadow reference's camera.
 fn luminance_at(pixels: &[u8], world: Vec3) -> f32 {
@@ -1108,7 +1102,7 @@ fn reference_shadow_matches_committed_hash() {
     // CI depends on is exercised locally too.
     let tolerance = compare_shadow_frames(SHADOW_REFERENCE_BGRA, &pixels, &unshadowed);
 
-    if is_paravirtual(&device) {
+    if common::is_paravirtual(&device) {
         // See SHADOW_REFERENCE_BGRA: a paravirtualized GPU flips a few texel
         // compares at the soft edge, so the exact hash is replaced by the
         // edge-confined tolerance comparison against the committed frame.
@@ -1119,7 +1113,7 @@ fn reference_shadow_matches_committed_hash() {
             common::fnv1a_64(&pixels)
         );
         if let Err(why) = tolerance {
-            dump_frame("SHADOW_REFERENCE_BGRA", &pixels);
+            common::dump_frame("SHADOW_REFERENCE_BGRA", &pixels);
             panic!(
                 "SHADOW_REFERENCE on {device} is outside the paravirtualized-GPU tolerance: \
                  {why}. See SHADOW_REFERENCE_BGRA in tests/pixel_hash.rs."
@@ -1129,35 +1123,11 @@ fn reference_shadow_matches_committed_hash() {
     }
 
     if common::fnv1a_64(&pixels) != SHADOW_REFERENCE_HASH {
-        dump_frame("SHADOW_REFERENCE_BGRA", &pixels);
+        common::dump_frame("SHADOW_REFERENCE_BGRA", &pixels);
     }
     common::bless_or_assert(&pixels, SHADOW_REFERENCE_HASH, "SHADOW_REFERENCE_HASH");
     // Real GPU and the hash matched, so the frame *is* the committed image.
     assert_eq!(tolerance, Ok(()));
-}
-
-/// Print `frame` base64-encoded on one line between `BEGIN <name>` / `END <name>`
-/// markers, so a failing CI run carries the frame needed to re-record
-/// `tests/data/shadow_reference.bgra` (decode the line into that file).
-fn dump_frame(name: &str, frame: &[u8]) {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut encoded = String::with_capacity(frame.len().div_ceil(3) * 4);
-    for chunk in frame.chunks(3) {
-        let b = [
-            chunk[0],
-            *chunk.get(1).unwrap_or(&0),
-            *chunk.get(2).unwrap_or(&0),
-        ];
-        let n = u32::from(b[0]) << 16 | u32::from(b[1]) << 8 | u32::from(b[2]);
-        for i in 0..4 {
-            if i <= chunk.len() {
-                encoded.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
-            } else {
-                encoded.push('=');
-            }
-        }
-    }
-    eprintln!("BEGIN {name}\n{encoded}\nEND {name}");
 }
 
 #[test]

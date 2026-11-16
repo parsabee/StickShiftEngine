@@ -256,7 +256,10 @@ deliberate lighting change) and `OVERLAY_REFERENCE_HASH` came back **unchanged**
 which is the evidence that the new lighting did not leak into screen space.
 
 `tests/lights.rs` adds a fifth, `NIGHT_STREET_REFERENCE_HASH`: many point lights, spot
-headlights and emissive windows in one frame.
+headlights and emissive windows in one frame. Like the shadow reference, it is exact on a real
+Apple GPU and compared within a tight tolerance of its committed image
+(`tests/data/night_street_reference.bgra`) on a paravirtualized one, whose arithmetic rounds a
+little differently.
 
 Every golden goes through `common::bless_or_assert`, which first refuses any frame with 8 or fewer
 distinct pixel values. A render that silently drew *nothing* would otherwise hash
