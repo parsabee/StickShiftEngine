@@ -1,6 +1,6 @@
 <div align="center">
 
-# Stick Shift Engine
+<img src="docs/images/logo.png" alt="Stick Shift Engine" width="380">
 
 **A Rust game engine for Apple platforms, rendering with raw Metal.**
 
