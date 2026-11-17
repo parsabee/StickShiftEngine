@@ -2,7 +2,8 @@
 
 A Swift package over Stick Shift Engine's C API (`libstickshift`). Swift code gets classes that own
 the engine's resources, errors it can `throw` and `catch`, `async` model loading, `simd` types,
-and an `NSView` that hosts the renderer. It never sees a raw handle or a result code.
+and, in `StickShiftAppKit`, the macOS host: a view, a window and menus around the engine. It
+never sees a raw handle or a result code.
 
 Offramp, the Swift reference game, is its first user. Requires macOS 14 and Swift 6.
 
@@ -41,6 +42,7 @@ When iOS support lands (v0.9), the same package will consume the engine as an XC
 
 ```swift
 import StickShift
+import StickShiftAppKit   // StickShiftView, EngineView, StickShiftApp: macOS only
 
 let view = try StickShiftView(size: window.contentLayoutRect.size)
 let context = view.context
@@ -194,7 +196,8 @@ thread is destroyed on the main thread too.
 
 ### The host view
 
-`StickShiftView` is an `NSView` backed by a `CAMetalLayer`. It owns the context that renders into
+`StickShiftView` (in `StickShiftAppKit`; the `StickShift` target imports no AppKit) is an `NSView`
+backed by a `CAMetalLayer`. It owns the context that renders into
 the layer, keeps the drawable sized to the view in pixels (on resize and when the window moves to
 a screen with another backing scale), and runs a `CADisplayLink` while it is in a window and
 started. Each refresh calls `onFrame` and then `pollEvents()`.
@@ -212,6 +215,71 @@ started. Each refresh calls `onFrame` and then `pollEvents()`.
   arrives too, so no key is left down: `NSApplication` never hands a window such a key-up, so
   while the view is in a window and its first responder, a local event monitor sends it to the
   window itself (winit overrides `sendEvent:` for the same reason).
+
+### The macOS host (`StickShiftAppKit`)
+
+A game is game code only; `StickShiftApp` is the rest of the app, what the Rust runner
+(`stickshift_core::run`) is for a Rust game:
+
+```swift
+import StickShift
+import StickShiftAppKit
+
+StickShiftApp.run(title: "Cubes", size: CGSize(width: 800, height: 600)) { Cubes() }
+```
+
+It makes an unbundled executable a regular app (a bundled one keeps its `Info.plist`'s policy,
+as with winit), takes the keyboard from whatever launched it, installs winit's
+application menu, opens a centred, resizable window with an `EngineView` in it, runs the game's
+`load` and `initialize`, adds the Graphics menu, and quits on Escape or when the window closes.
+Its options default to `Engine.Options.app`: the sound device, saved settings, Escape quits.
+
+- **`EngineView`** is a `StickShiftView` that runs an `Engine` on its context. `run()` reports
+  the view (`resume`) and starts the frames: each display refresh ticks the engine on its own
+  monotonic clock (`tick(.engine)`) and polls the context. It reports its size in physical pixels
+  as `viewResized` (the camera's aspect follows, the menu syncs), and a move to a display of
+  another density as `scaleChanged` and then `viewResized`, as winit reports it to the Rust
+  runner; the engine sizes the drawable for its Resolution setting. Keys go through the macOS
+  keycode table (`Key(macKeyCode:)`), with repeats flagged; mouse buttons (each with the cursor
+  first, the first click into an inactive window included, as winit), the cursor (in points from
+  the top-left) and losing the key window (`focusLost`) go too. It carries out what the engine asks: full screen, a menu sync, and on
+  exit it stops and calls `onExit`.
+- **`FrameWatchdog`** keeps the game running while AppKit has stopped the display link (the
+  window minimised, the app hidden): a 60 Hz timer in the run loop's common modes ticks the
+  engine once the display link has been silent for 250 ms, as winit's loop never pauses.
+- **`GraphicsMenuBar`** is the Graphics menu, built from the engine's description of it: its
+  titles, tags, checkmarks and enabled states, the full-screen item titled for the window (with
+  ⌃⌘F), one target and action for every item, and no automatic enabling. A choice goes back to
+  the engine as `.menu(tag)`; `EngineView.makeMenuBar()` wires it up and keeps it in sync.
+
+`examples/swift/Cubes` is a small game on all of this: it streams cubes along a road, rebases,
+and draws them from a world query.
+
+```sh
+cargo build -p stickshift-capi && swift run --package-path examples/swift/Cubes
+```
+
+#### Manual checklist (macOS 14 and 15)
+
+The tests cover the view, the menu and the watchdog in offscreen windows; what only a person at
+the screen sees is checked by hand, with the Cubes example, before a release:
+
+1. **Window:** titled "Cubes", 800 × 600 points, centred, resizable; resizing keeps the cubes
+   undistorted.
+2. **Menus:** the application menu (About, Services, Hide, Hide Others, Show All, Quit) and the
+   Graphics menu, whose checkmarks follow each choice; Shadow Distance is disabled with Shadows
+   Off; Reset to Defaults is disabled at the defaults.
+3. **Full screen:** Graphics ▸ Enter Full Screen (and ⌃⌘F) enters it, the item then reads Exit Full
+   Screen, and leaving it restores the window.
+4. **Settings persist:** change Resolution and Draw Distance, quit, relaunch: they are restored
+   (`defaults read Cubes`). They are the Rust runner's keys (`StickShiftEngine.graphics.*`), but an
+   unbundled executable's standard defaults are its own (`Cubes`, `playable-demo`): run Cubes with
+   `STICKSHIFT_SETTINGS_SUITE=playable-demo` and `cargo run -p playable-demo` sees its choices,
+   and the other way round.
+5. **Escape** quits, and so do closing the window and ⌘Q.
+6. **The loop keeps ticking while a menu is open:** open the Graphics menu and hold it open; the
+   cubes keep streaming past. Minimise the window for a few seconds and restore it: the camera has
+   moved on (the watchdog ticked it).
 
 ## Tests
 
@@ -241,9 +309,20 @@ started. Each refresh calls `onFrame` and then `pollEvents()`.
 - **Math:** `StickShiftMath.multiply` matches the engine's unfused product bit for bit,
   `StickShiftMath.rotation` matches its quaternions (signed zeros included), and
   `Camera.perspective` multiplies with it.
-- **Metal:** offscreen rendering with read-back, lights and emission changing the pixels, a model
-  drawn at `world × local` (and tinted, and by part), and the host view: sizing its context at
-  a render scale, its UI scale, and taking the keyboard, a key-up with Command held included.
+- **Metal:** offscreen rendering with read-back, lights and emission changing the pixels, and a
+  model drawn at `world × local` (and tinted, and by part).
+- **The macOS host (`StickShiftAppKitTests`):** `StickShiftView` sizing its context at a render
+  scale, its UI scale, and taking the keyboard, a key-up with Command held included; `EngineView`
+  in an offscreen window reporting a resize as `viewResized` and a display change as
+  `scaleChanged` then `viewResized` (the drawable, the UI scale, the camera's aspect and the menu
+  checked against the engine's own rules), sizes rounded as winit rounds, keys through the
+  keycode table, the mouse with the cursor before each click, focus loss, Escape and closing
+  (exit reported once), the full-screen request, ticking on the engine clock only once resumed
+  and until exit, and the display link keeping the watchdog quiet; the Graphics
+  menu built from the engine's data (titles, tags, checkmarks, enabled states, the full-screen
+  title and ⌃⌘F, one target and action) and synced after a choice; winit's application menu; the
+  keycode table; and the watchdog on a fake clock, its timer in the run loop's common modes (the
+  event-tracking mode a menu runs in included).
 
 The Metal tests skip without a device; CI sets `STICKSHIFT_REQUIRE_GPU=1` so a missing device
 fails them instead.
@@ -252,9 +331,11 @@ fails them instead.
 
 | Path | |
 |---|---|
-| `Package.swift` | The package: the `CStickShift` C module and the `StickShift` Swift target |
+| `Package.swift` | The package: the `CStickShift` C module, the `StickShift` Swift target, and the macOS `StickShiftAppKit` target |
 | `Sources/CStickShift/module.modulemap` | The C API as a Clang module, over `crates/stickshift-capi/include/stickshift.h` |
-| `Sources/StickShift/` | The Swift API |
-| `Tests/StickShiftTests/` | The tests |
+| `Sources/StickShift/` | The Swift API (no AppKit) |
+| `Sources/StickShiftAppKit/` | The macOS host: `StickShiftView`, `EngineView`, `GraphicsMenuBar`, `FrameWatchdog`, `StickShiftApp`, the keycode table |
+| `Tests/StickShiftTests/`, `Tests/StickShiftAppKitTests/` | The tests |
+| `../../../examples/swift/` | Example apps, built by `scripts/test-swift.sh` |
 
 Part of the [Stick Shift Engine](../../../README.md) workspace. Apache-2.0.

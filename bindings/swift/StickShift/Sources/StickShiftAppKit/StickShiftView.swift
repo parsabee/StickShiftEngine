@@ -5,6 +5,7 @@
 #if canImport(AppKit)
 import AppKit
 import QuartzCore
+import StickShift
 
 /// An `NSView` the engine renders into: it hosts a `CAMetalLayer`, owns the
 /// ``Context`` that draws to it, keeps the drawable sized to the view in pixels,
@@ -32,6 +33,9 @@ import QuartzCore
 /// ``onKey``, including the key-ups AppKit itself drops while Command is held.
 /// Without a handler it does not take focus, and key events go on up the
 /// responder chain as they would without the view.
+///
+/// To run an ``Engine`` in a view, use ``EngineView``, which drives the
+/// engine's loop from this view's display link.
 @MainActor
 open class StickShiftView: NSView {
     /// The context drawing into this view's layer.
@@ -79,7 +83,7 @@ open class StickShiftView: NSView {
     public var renderScale: Double {
         didSet {
             precondition(Self.isValid(renderScale), "renderScale must be finite and greater than zero")
-            resizeDrawable()
+            resizeDrawable(.renderScale)
         }
     }
 
@@ -102,17 +106,40 @@ open class StickShiftView: NSView {
     ///   device.
     public init(size: NSSize, renderScale: Double = 1) throws {
         precondition(Self.isValid(renderScale), "renderScale must be finite and greater than zero")
-        let frame = NSRect(origin: .zero, size: size)
+        let (layer, context) = try Self.makeLayer(size: size, renderScale: renderScale)
+        metalLayer = layer
+        self.renderScale = renderScale
+        self.context = context
+        super.init(frame: NSRect(origin: .zero, size: size))
+        adoptLayer()
+    }
+
+    /// A view of `size` points over a layer and context ``makeLayer(size:renderScale:)``
+    /// made: for a subclass that needs the context before the view exists
+    /// (``EngineView`` creates its engine on it).
+    init(size: NSSize, layer: CAMetalLayer, context: Context, renderScale: Double) {
+        precondition(Self.isValid(renderScale), "renderScale must be finite and greater than zero")
+        metalLayer = layer
+        self.renderScale = renderScale
+        self.context = context
+        super.init(frame: NSRect(origin: .zero, size: size))
+        adoptLayer()
+    }
+
+    /// A `CAMetalLayer` at the main screen's backing scale, and a Metal context
+    /// rendering into it, sized for a view of `size` points at `renderScale`.
+    static func makeLayer(size: NSSize, renderScale: Double) throws -> (CAMetalLayer, Context) {
         let layer = CAMetalLayer()
         let backing = NSScreen.main?.backingScaleFactor ?? 2
         layer.contentsScale = backing
-        let drawable = Self.drawable(frame.size, backing: backing, renderScale: renderScale)
-        metalLayer = layer
-        self.renderScale = renderScale
-        context = try Context(layer: layer, width: drawable.width, height: drawable.height, scale: drawable.scale)
-        super.init(frame: frame)
+        let drawable = Self.drawable(size, backing: backing, renderScale: renderScale)
+        let context = try Context(layer: layer, width: drawable.width, height: drawable.height, scale: drawable.scale)
+        return (layer, context)
+    }
+
+    private func adoptLayer() {
         wantsLayer = true
-        self.layer = layer
+        layer = metalLayer
         layerContentsRedrawPolicy = .duringViewResize
     }
 
@@ -134,7 +161,7 @@ open class StickShiftView: NSView {
     /// `round(points × backing)`, times `renderScale`, rounded (at least 1);
     /// and the UI scale, `backing × renderScale`. Rounding is half away from
     /// zero, and the scale is multiplied in `Double` before narrowing.
-    private static func drawable(_ size: NSSize, backing: CGFloat, renderScale: Double)
+    static func drawable(_ size: NSSize, backing: CGFloat, renderScale: Double)
         -> (width: Int, height: Int, scale: Float)
     {
         func side(_ points: CGFloat) -> Int {
@@ -144,30 +171,49 @@ open class StickShiftView: NSView {
         return (side(size.width), side(size.height), Float(Double(backing) * renderScale))
     }
 
-    private var backingScale: CGFloat {
+    /// The display's pixels per point: the window's, or the layer's out of one.
+    var backingScale: CGFloat {
         window?.backingScaleFactor ?? metalLayer.contentsScale
     }
 
-    private func resizeDrawable() {
-        let backing = backingScale
-        metalLayer.contentsScale = backing
-        let drawable = Self.drawable(bounds.size, backing: backing, renderScale: renderScale)
+    /// What made the drawable's size worth recomputing.
+    enum DrawableChange {
+        /// The view's size.
+        case size
+        /// The backing scale: the window moved to a display of another density.
+        case backing
+        /// The view joined a window, or left one.
+        case window
+        /// ``renderScale``.
+        case renderScale
+    }
+
+    private func resizeDrawable(_ change: DrawableChange) {
+        metalLayer.contentsScale = backingScale
+        layoutDrawable(change)
+    }
+
+    /// Size the context's drawable for the view's size, backing scale and
+    /// ``renderScale``, after `change`. ``EngineView`` overrides it: its engine
+    /// sizes the drawable, for the engine's own render scale.
+    func layoutDrawable(_ change: DrawableChange) {
+        let drawable = Self.drawable(bounds.size, backing: backingScale, renderScale: renderScale)
         try? context.resize(width: drawable.width, height: drawable.height, scale: drawable.scale)
     }
 
     open override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        resizeDrawable()
+        resizeDrawable(.size)
     }
 
     open override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
-        resizeDrawable()
+        resizeDrawable(.backing)
     }
 
     open override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        resizeDrawable()
+        resizeDrawable(.window)
         if onKey != nil {
             takeKeyboard()
         }

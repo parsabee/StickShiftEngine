@@ -11,6 +11,8 @@ bindings/swift/**/.build/
 bindings/swift/**/.swiftpm/
 games/**/.build/
 games/**/.swiftpm/
+examples/swift/**/.build/
+examples/swift/**/.swiftpm/
 
 # macOS
 .DS_Store

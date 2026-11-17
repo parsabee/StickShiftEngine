@@ -21,7 +21,9 @@ let package = Package(
     name: "StickShift",
     platforms: [.macOS(.v14)],
     products: [
-        .library(name: "StickShift", targets: ["StickShift"])
+        .library(name: "StickShift", targets: ["StickShift"]),
+        // The macOS host: the view, the window and the menus around an engine.
+        .library(name: "StickShiftAppKit", targets: ["StickShiftAppKit"]),
     ],
     targets: [
         // The C API, straight from `crates/stickshift-capi/include/stickshift.h`.
@@ -49,5 +51,8 @@ let package = Package(
             ]
         ),
         .testTarget(name: "StickShiftTests", dependencies: ["StickShift"]),
+        // AppKit lives here, never in `StickShift`, whose sources stay free of it.
+        .target(name: "StickShiftAppKit", dependencies: ["StickShift", "CStickShift"]),
+        .testTarget(name: "StickShiftAppKitTests", dependencies: ["StickShiftAppKit", "StickShift", "CStickShift"]),
     ]
 )

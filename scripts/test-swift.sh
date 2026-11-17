@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build libstickshift with cargo, then build and test the Swift package
-# (bindings/swift/StickShift) against it. SwiftPM cannot run cargo itself.
+# (bindings/swift/StickShift) against it, and build the example apps (examples/swift).
+# SwiftPM cannot run cargo itself.
 #
 #   ./scripts/test-swift.sh
 #
@@ -70,3 +71,9 @@ fi
 swift_flags+=(-Xswiftc -warnings-as-errors)
 swift test --package-path "$package" ${swift_flags[@]+"${swift_flags[@]}"}
 echo "Swift package: build and tests passed"
+
+# The example apps build against the package, under the same rules.
+for example in examples/swift/*/; do
+    swift build --package-path "$example" ${swift_flags[@]+"${swift_flags[@]}"}
+    echo "Swift example $(basename "$example"): built"
+done

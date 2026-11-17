@@ -5,10 +5,13 @@ touches a raw handle or a result code.
 
 ## Overview
 
-Create a ``Context`` (or a ``StickShiftView``, which makes one for its layer), create resources
-from it, and record frames:
+Create a ``Context`` (or, on macOS, a `StickShiftView` from the `StickShiftAppKit` module,
+which makes one for its layer), create resources from it, and record frames:
 
 ```swift
+import StickShift
+import StickShiftAppKit  // StickShiftView
+
 let view = try StickShiftView(size: window.contentLayoutRect.size)
 let context = view.context
 let car = try await context.loadModel(contentsOf: carURL)
@@ -104,7 +107,6 @@ Graphics menu as data (``Engine/menu(fullScreen:)``).
 
 - ``Context``
 - ``Frame``
-- ``StickShiftView``
 
 ### Resources
 
