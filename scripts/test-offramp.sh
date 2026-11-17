@@ -37,5 +37,8 @@ plugins="$(dirname "$(dirname "$(xcrun --find swift)")")/lib/swift/host/plugins/
 if [[ -d "$plugins" ]]; then
     swift_flags=(-Xswiftc -plugin-path -Xswiftc "$plugins")
 fi
+# The package builds in Swift 6 mode (its tools version), so with complete concurrency
+# checking; any warning, a concurrency one included, fails the gate, as in test-swift.sh.
+swift_flags+=(-Xswiftc -warnings-as-errors)
 swift test --package-path "$package" ${swift_flags[@]+"${swift_flags[@]}"} "$@"
 echo "Offramp: build and tests passed"

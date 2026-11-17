@@ -107,10 +107,12 @@ cargo build --quiet ${cargo_profile[@]+"${cargo_profile[@]}"} -p playable-demo \
 cargo build --quiet ${cargo_profile[@]+"${cargo_profile[@]}"} -p stickshift-capi \
     || { echo "the libstickshift build failed" >&2; exit 1; }
 touch "$package/Sources/OfframpGame/Config.swift"
-# --quiet keeps the progress lines out, but with it SwiftPM prints only "Build
-# failed"; on a failure, build again without it (only the failure is redone) to
-# show the compiler's errors.
-swift_build=(swift build --package-path "$package" ${swift_config[@]+"${swift_config[@]}"} --product offramp)
+# Any compiler warning fails the build, as in scripts/test-offramp.sh. --quiet
+# keeps the progress lines out, but with it SwiftPM prints only "Build failed";
+# on a failure, build again without it (only the failure is redone) to show the
+# compiler's errors.
+swift_build=(swift build --package-path "$package" ${swift_config[@]+"${swift_config[@]}"} --product offramp
+    -Xswiftc -warnings-as-errors)
 "${swift_build[@]}" --quiet 2>&1 | quiet_build || {
     "${swift_build[@]}" 2>&1 | quiet_build || true
     echo "the offramp build failed" >&2
