@@ -7,19 +7,23 @@ modules (the `#[path]` trick `examples/record_demo.rs` uses) against the headles
 prints as `value[bits]` (or as `value (0x<bits>)` in `probe_stdout.txt`); the tests compare the
 bits.
 
-| File | What it holds |
-|---|---|
-| `vectors.txt` | The first 32 lane draws from `SEED`; per-slot hash, traffic variant, building, jitter and x for slots 0-40 and three negative slots; constants' bits; speed-ramp samples |
-| `scenery.txt` | The guardrail and terrain meshes: counts, FNV-1a 64 of the vertex bytes and the indices, sample vertices, `terrain_height` samples |
-| `init_world.txt` | The world after `init`: the streaming config, the camera, and all 171 entities in hecs query order with their ids |
-| `record_trace.txt` | The 390 frames of `record_demo`'s autopilot run at 1280×720: per frame the state, player, speed, score, fade, camera, counts and world digest |
-| `record_view_projection.txt` | The view-projection at frames 0, 1, 2, 149, 150, 151 and 389 of that run |
-| `record_frame150_world.txt` | The whole world at frame 150 of that run, showing swap-remove's reordering |
-| `smoke_trace.txt` | 900 frames in the centre lane, Space at frame 0 and on every GameOver frame divisible by 60 |
-| `probe_stdout.txt` | The headless tests' observed values: constants, the RNG, the font's metrics and widths, and every HUD quad of the Ready, Playing and GameOver frames |
-| `long_run_events.txt` | 12 000 frames of the autopilot that replays after every crash: every 600th frame, each state change and each rebase (with the camera relative to the car around it), then the maximum entity count and the audio counters |
-| `smoke_state.json` | The 120 frames of `--smoke` (numbered from 1), with the fields `game.rs` keeps private: lane, travel, distance, run clock and fade, read through the probe's accessors |
-| `trace_smoke.jsonl`, `trace_autopilot.jsonl`, `trace_long_summary.jsonl` | The parity trace, printed by `games/playable-demo/examples/trace.rs` (see below) |
+They describe the Rust demo alone, so they change only when it does, or when the engine under
+both games does (an upgrade of hecs or glam, say). Then regenerate them in the same commit, as
+below. The last column names the suites that read each file.
+
+| File | What it holds | Read by |
+|---|---|---|
+| `vectors.txt` | The first 32 lane draws from `SEED`; per-slot hash, traffic variant, building, jitter and x for slots 0-40 and three negative slots; constants' bits; speed-ramp samples | `RngTests`, `GameMathTests` |
+| `scenery.txt` | The guardrail and terrain meshes: counts, FNV-1a 64 of the vertex bytes and the indices, sample vertices, `terrain_height` samples | `SceneryTests` |
+| `init_world.txt` | The world after `init`: the streaming config, the camera, and all 171 entities in hecs query order with their ids | `GameParityTests` |
+| `record_trace.txt` | The 390 frames of `record_demo`'s autopilot run at 1280×720: per frame the state, player, speed, score, fade, camera, counts and world digest | `TraceTests`; its frame 150 for the rebuilt frame of `RenderTests`, `RenderMetalTests` and `RecorderTests` |
+| `record_view_projection.txt` | The view-projection at frames 0, 1, 2, 149, 150, 151 and 389 of that run | `TraceTests`, and the rebuilt frame 150 |
+| `record_frame150_world.txt` | The whole world at frame 150 of that run, showing swap-remove's reordering | `TraceTests`, and the rebuilt frame 150 |
+| `smoke_trace.txt` | 900 frames in the centre lane, Space at frame 0 and on every GameOver frame divisible by 60 | `TraceTests` |
+| `probe_stdout.txt` | The headless tests' observed values: constants, the RNG, the font's metrics and widths, and every HUD quad of the Ready, Playing and GameOver frames | `HUDTests`, `FontTests` |
+| `long_run_events.txt` | 12 000 frames of the autopilot that replays after every crash: every 600th frame, each state change and each rebase (with the camera relative to the car around it), then the maximum entity count and the audio counters | `TraceTests` |
+| `smoke_state.json` | The 120 frames of `--smoke` (numbered from 1), with the fields `game.rs` keeps private: lane, travel, distance, run clock and fade, read through the probe's accessors | `GameParityTests` |
+| `trace_smoke.jsonl`, `trace_autopilot.jsonl`, `trace_long_summary.jsonl` | The parity trace, printed by `games/playable-demo/examples/trace.rs` (see below) | `TraceTests`; `trace_smoke.jsonl` also `ExecutableTests` |
 
 `probe_stdout.txt` is the probe's standard output, so it also holds the game's own "GAME OVER
 ..." and "replay ..." lines, where the game printed them.

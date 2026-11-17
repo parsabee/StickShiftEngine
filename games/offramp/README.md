@@ -1,11 +1,14 @@
 # Offramp
 
 Offramp is the playable demo ([`games/playable-demo`](../playable-demo)), an endless three-lane
-freeway runner, rebuilt in Swift. It is game code only: the engine (its ECS, scene streaming and
-floating origin, game loop, camera, input, audio and graphics settings) is the Rust engine,
-reached through the C API by way of the StickShift Swift package
-([`bindings/swift/StickShift`](../../bindings/swift/StickShift)). It is the reference for building
-a native macOS game on Stick Shift Engine.
+freeway runner, as a Swift game on Stick Shift Engine. It is game code only: its rules, its four
+components, what it spawns in each streamed slot, its draw list and its HUD layout. The engine
+owns everything else (the ECS, scene streaming and the floating origin, the game loop, the camera,
+input, audio and the graphics settings), and that engine is the Rust one, reached through the C
+API by way of the StickShift Swift package
+([`bindings/swift/StickShift`](../../bindings/swift/StickShift)). Its window is the package's
+macOS host, `StickShiftAppKit`. Offramp is the reference for building a native macOS game on
+Stick Shift Engine.
 
 This first milestone is an exact port. Offramp has the same world, the same random sequence and
 the same state on every step as the Rust demo. Its frames match the Rust recorder's pixel for
@@ -43,15 +46,15 @@ The command line:
 | `--smoke` | The headless smoke oracle. It prints exactly what `cargo run -p playable-demo -- --smoke` prints, and exits 0 |
 | `--print-assets-dir` | Print the asset directory in use and exit |
 | `--record <DIR> [--frames N]` | The Rust `record_demo` example: the autopilot run, offscreen on Metal at 1280×720, written as `frame_0000.png`, `frame_0001.png`, ... (N frames, default 80: every third frame after a 150-frame warm-up) |
-| `--trace <smoke\|autopilot\|long> [--summary]` | Print one JSON line of game state per frame of a headless run (below) |
+| `--trace <smoke\|autopilot\|long> [--summary]` | Print one JSON line of game state per frame of a headless run ([below](#how-parity-is-checked)) |
 
 A bad command line prints the usage and exits 2. As with clap, an option never takes an
 argument that looks like a flag as its value: `--record --smoke` is a missing value, and
 `--record=--smoke` names a directory called `--smoke`. A single-dash argument is a cluster of
 short flags, so `-hx` prints the help and `-xh` is an unknown `-x`, and `--` ends the options:
-nothing may follow it. If no asset directory is found, Offramp
-says so and exits 1, before doing anything else. Standard output is line-buffered, as Rust's
-is, so the game's "GAME OVER ..." and "replay ..." lines reach a pipe or a file as they happen.
+nothing may follow it. If no asset directory is found, Offramp says so and exits 1, before doing
+anything else. Standard output is line-buffered, as Rust's is, so the game's "GAME OVER ..." and
+"replay ..." lines reach a pipe or a file as they happen.
 
 ## Assets
 
@@ -63,16 +66,61 @@ directory is the first of these that holds `road.gltf`:
 3. `<executable dir>/assets`;
 4. the checkout's `games/playable-demo/assets`.
 
-If `$OFFRAMP_ASSETS` is set, it is the only candidate.
+If `$OFFRAMP_ASSETS` is set and not empty, it is the only candidate.
 
-## Layout
+## Architecture
+
+The engine runs the game; Offramp writes only the game. `CarRunner` (`Game.swift`) is a
+`StickShift.Game`, and each driver hands it to an `Engine` and ticks it:
+
+- **the window**: `StickShiftApp.run` (`App.swift`) makes the app, its menus and the window, and
+  the engine's `EngineView` ticks the engine on the engine's clock at every display refresh;
+- **`--smoke` and `--trace`**: `Engine.headless`, over a null context with silent audio, one
+  fixed step per tick (`Smoke.swift`, `Trace.swift`);
+- **`--record`**: an engine on an offscreen Metal context that waits for a free frame and reads
+  each kept frame back within its tick (`Autopilot.swift`).
+
+A tick is the Rust loop's frame: the engine applies a queued graphics settings change, runs 0 to
+5 fixed updates (exactly one in the tools), pushes the camera, and opens a frame for the render
+hook. The game's three hooks do, in Rust's order:
+
+1. `initialize`, once: the streaming reach and the camera's clip planes, the player, the sounds,
+   the sun, every model (loaded before it returns, so the first frame draws them), the font and
+   the two procedural meshes, then the first stream pass.
+2. `update`, every fixed step: on the title and game-over screens, Space and the chase camera.
+   While playing: the fade, the lane input, the speed ramp and the move, the floating-origin
+   rebase (with the same shift for the camera), the car's transform, the chase camera, the stream
+   pass and the collision test. The stream pass's spawn callback fills each new slot with
+   entities of the same component sets as the Rust tuples (`spawnSlot`), so the archetypes, and
+   the order every query walks, are Rust's.
+3. `render`, every frame: the draw list from engine queries (`SceneDrawList`), recorded into the
+   engine's frame in Rust's order (`recordScene`), then the HUD, which the game lays out and the
+   engine's text measures and draws (`drawHud`).
+
+### What it uses of the engine
+
+Everything through the StickShift package, which wraps the C API:
+
+- `Engine` and the `Game` protocol, with an `EngineContext` in each hook.
+- `World` and `Query` (hecs), `Scene` and `StreamSlot` (streaming, the floating origin),
+  `EngineCamera` and `ChaseController`, `Input`, `Audio` (kira), and the graphics settings
+  with their menu and persistence.
+- The frame: model draws at `world × (local × node)` with a part filter
+  (`Frame.draw(_:world:local:parts:tint:)`), the text drawing and measuring of the engine's
+  `FontAtlas`, and `Context.lastFrame`, which the trace reads the HUD's quads from.
+- glam's own operations (`glamDot`, `glamRotate`, `simd_quatf(glamRotationY:)`, the
+  `Transform` matrix) and Rust's `f32` rules (`RustF32`), for the game's own float math.
+- The macOS host, `StickShiftAppKit`: `StickShiftApp`, `EngineView`, the native Graphics menu
+  and the watchdog that keeps the game ticking while the window is hidden.
+
+### Layout
 
 - `Sources/OfframpGame` holds the game and its tools, everything testable. Its files mirror the
   Rust modules they port, so the two can be read side by side.
   - `Config.swift` ports `config.rs`, `Rng.swift` `rng.rs`, `Scenery.swift` `scenery.rs`,
     `AssetRoot.swift` `asset_root.rs` and `Components.swift` `components.rs` (the game's four
     components, and the world digest the traces compare).
-  - `Game.swift` (`game.rs`) is `CarRunner`, a `StickShift.Game`.
+  - `Game.swift` (`game.rs`) is `CarRunner`.
   - The drawing:
     - `Assets.swift` (`assets.rs`) loads and fits the thirteen models.
     - `Render.swift` (`render.rs`) gathers the draw list from the engine's world and records
@@ -86,13 +134,14 @@ If `$OFFRAMP_ASSETS` is set, it is the only candidate.
   - `Window.swift` is the window's title, size and engine options (the Rust runner's).
 - `Sources/offramp` is the executable:
   - `main.swift` is the command line.
-  - `App.swift` runs the game in that window with `StickShiftApp` (the package's
-    `StickShiftAppKit`): the application and its menus, the window, and an `EngineView` that
-    ticks the engine on the display link (and from a watchdog while the window is hidden, as
-    Rust's loop never pauses) and forwards keys, the mouse and focus to it.
+  - `App.swift` runs the game in that window with `StickShiftApp`, which forwards keys, the
+    mouse and focus to the engine.
   - `Recorder.swift` writes the recorder's PNG files.
 - `Tests/OfframpTests` holds the Swift Testing suites, many of them against golden values
   captured from the Rust demo (`Tests/OfframpTests/Fixtures`).
+
+`Sources` is about 3,100 lines of Swift: about 1,700 of game, 1,200 of tools, and 170 for the
+executable and its window.
 
 ## How parity is checked
 
@@ -101,11 +150,10 @@ edges, hecs's archetypes and query order, streaming and the rebase, the chase ca
 audio counters are the same code the Rust demo runs. What is left in Swift is the game's own
 float math, which computes every `f32` of the Rust game in `Float`, one IEEE operation at a time,
 in the same order, so the results have the same bits. The glam operations it needs come from
-the engine through the package (`glamDot`, `glamRotate`, `simd_quatf(glamRotationY:)`, the
-`Transform` matrix), never from `simd`'s reductions or fused products, and Rust's `f32` rules
-from `RustF32` (π is Rust's, not `Float.pi`). A lint test keeps those out of the game. Each
-entity is spawned with the same set of components as the Rust tuple, so the archetypes, and the
-order every query walks, are Rust's.
+the engine through the package, never from `simd`'s reductions or fused products, and Rust's
+`f32` rules from `RustF32` (π is Rust's, not `Float.pi`). A lint test (`GameMathTests`) keeps
+those out of the game. Each entity is spawned with the same set of components as the Rust tuple,
+so the archetypes, and the order every query walks, are Rust's.
 
 Three layers check that this holds:
 
@@ -142,31 +190,18 @@ Three layers check that this holds:
 ```
 
 It reports the first differing line or frame, and how many differ, and exits 1 if anything
-does. Its output is in `target/offramp-parity`. Frames are compared by their decoded pixels
-(`scripts/compare-frames.swift`), never by PNG bytes, because the two recorders use different
-PNG encoders. A pixel comparison needs both sides on the same GPU with the same shader build.
-Both compile their shaders at run time unless the library is built with `precompiled-shaders`.
-CI runs the tests and the whole parity script, both sides on the runner's GPU.
+does. Its output is in `target/offramp-parity`. `libstickshift` and the Rust demo are two
+cargo builds, whose features unify apart, so before building it checks that both resolve glam
+and hecs with the same features. It builds both itself, with one profile and one target, so "the
+same Rust" is the same build on both sides. Frames are compared by their decoded pixels (`scripts/compare-frames.swift`), never
+by PNG bytes, because the two recorders use different PNG encoders. A pixel comparison needs
+both sides on the same GPU with the same shader build. Both compile their shaders at run time
+unless the library is built with `precompiled-shaders`. CI runs the tests and the whole parity
+script, both sides on the runner's GPU.
 
 Parity is defined for the drivers that run one fixed update per frame: the tests, `--smoke`, the
 trace and the recorder. The window runs on the real clock, as the Rust one does, so a frame
 there may run zero or several updates.
-
-## What it uses of the engine
-
-Everything through the StickShift package, which wraps the C API:
-
-- `Engine` and the `Game` protocol: the engine's loop calls `CarRunner`'s `initialize`, its
-  fixed-step `update` and its `render`. The tools drive it a fixed step at a time
-  (`Engine.headless` over a null context for `--smoke` and the trace, an offscreen Metal
-  context for the recorder, which reads a frame back within its tick); the window drives it
-  on the display link's clock.
-- `World` and `Query` (hecs), `Scene` and `StreamSlot` (streaming, the floating origin),
-  `EngineCamera` and `ChaseController`, `Input`, `Audio` (kira), and the graphics settings
-  with their menu and persistence.
-- The frame: model draws at `world × (local × node)` with a part filter
-  (`Frame.draw(_:world:local:parts:tint:)`), the text drawing and measuring of the engine's
-  `FontAtlas`, and `Context.lastFrame`, which the trace reads the HUD's quads from.
 
 ## Where it differs from the Rust demo
 
@@ -176,6 +211,17 @@ Everything through the StickShift package, which wraps the C API:
   update, and a rendered, submitted frame with no render error, no draw skipped. A frame that
   fails those, or a run of the wrong length, prints the error and exits 1, never the
   `smoke: ... OK` line. Rust panics.
+- **One executable.** The Rust demo's `record_demo` and `trace` examples are `offramp --record`
+  and `offramp --trace`.
+- **Its own names.** The asset override is `$OFFRAMP_ASSETS` and the installed layout
+  `share/offramp/assets` (Rust: `$STICKSHIFT_DEMO_ASSETS` and `share/stickshift-engine/assets`),
+  and the settings live in the `offramp` defaults domain.
+
+Two quirks of the Rust demo are kept, not fixed, so that the two stay comparable; the
+`GameParityTests` check both. On the frame of a replay the car is still drawn in its crash lane,
+because only a Playing step writes its transform. And `initialize` streams the full 180 ahead
+whatever draw distance a player restored, because the engine scales the reach only after
+`initialize` returns.
 
 ## Testing
 
@@ -184,11 +230,12 @@ Everything through the StickShift package, which wraps the C API:
 ./scripts/test-offramp.sh --filter TraceTests      # one suite
 ```
 
-The Metal tests skip without a Metal device, unless `STICKSHIFT_REQUIRE_GPU=1`. The longest tests
-are the 20 000-step dodging runs, the 5000-frame streaming run and the 12 000-frame trace.
-To compare the recorded frames with the Rust recorder's in the tests as well, record the Rust
-frames and name their directory. Without it, those two tests are reported as skipped;
-`scripts/offramp-parity.sh` compares all 80 frames either way.
+The script fails on any Swift warning, as `scripts/test-swift.sh` does. The Metal tests skip
+without a Metal device, unless `STICKSHIFT_REQUIRE_GPU=1`. The longest tests are the 20 000-step
+dodging runs, the 5000-frame streaming run and the 12 000-frame trace. To compare the recorded
+frames with the Rust recorder's in the tests as well, record the Rust frames and name their
+directory. Without it, those two tests are reported as skipped; `scripts/offramp-parity.sh`
+compares all 80 frames either way.
 
 ```sh
 cargo run --release -p playable-demo --example record_demo -- /tmp/rust-frames
@@ -206,7 +253,8 @@ OFFRAMP_DEVICE_TESTS=1 ./scripts/test-offramp.sh --filter GameAudioTests
 ```
 
 To regenerate the fixtures after a deliberate change to the Rust demo (the
-[fixtures README](Tests/OfframpTests/Fixtures/README.md) says what each holds):
+[fixtures README](Tests/OfframpTests/Fixtures/README.md) says what each holds and which suites
+read it):
 
 ```sh
 F=games/offramp/Tests/OfframpTests/Fixtures

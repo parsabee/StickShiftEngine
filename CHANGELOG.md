@@ -94,6 +94,20 @@ API**.
   Graphics menu from `Engine.menu(fullScreen:)`, and `FrameWatchdog` keeps the game ticking
   while AppKit has stopped the display link. `examples/swift/Cubes` is a small game on it, which
   `scripts/test-swift.sh` builds.
+- **Offramp** (#75), in `games/offramp`: the playable demo as a Swift game on the engine, through
+  the Swift package. It is game code only (its rules, components, spawning, draw list and HUD
+  layout): the engine's world, scene streaming, loop, camera, input, audio and graphics settings
+  run it, and `StickShiftApp.run` gives it the Rust demo's window, Graphics menu (its settings
+  saved in Offramp's own defaults domain), Escape to quit and sound. `offramp --smoke` prints
+  what the Rust `--smoke` prints, `offramp --record <dir>` records the same autopilot run as
+  `record_demo`, and `offramp --trace <smoke|autopilot|long>` prints one JSON line of game state
+  per frame, as the new `trace` example of `playable-demo` does. The Rust demo's tests are
+  ported under their Rust names, and golden values from the Rust demo are checked bit for bit;
+  the new `playable-demo-goldens` crate (`games/playable-demo/goldens`) regenerates those
+  fixtures from the demo's own modules. `scripts/test-offramp.sh` builds `libstickshift` and
+  runs them. `scripts/offramp-parity.sh` runs both games side by side: it checks that both
+  builds resolve the same glam and hecs, then compares `--smoke` and the three traces byte for
+  byte and the 80 recorded frames pixel for pixel. CI runs both scripts.
 - **`stickshift_core::Session`**, the platform-free half of the windowed runner: the frame clock
   (the first frame, and the first after a menu choice or `reset_clock`, banks exactly one step),
   the drawable sized for the view and the render scale, graphics settings restored at start-up

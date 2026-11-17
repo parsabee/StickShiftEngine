@@ -277,6 +277,26 @@ Graphics settings (shadows, shadow distance, draw distance, resolution, full scr
 - [games/playable-demo/README.md](games/playable-demo/README.md): the demo's own README, with the
   code layout, the asset bakers, and asset licences.
 
+### Offramp, the demo in Swift
+
+[`games/offramp`](games/offramp) is the same game as a Swift game on the engine. It is game code
+only: the engine's world, scene streaming, loop, camera, input, audio and graphics settings are
+the Rust engine's, reached through the C API by way of the
+[`StickShift` Swift package](bindings/swift/StickShift), and its window is the package's macOS
+host, `StickShiftAppKit`. For now it is an exact port: the same world, state and HUD on every
+step, frames that match the Rust recorder pixel for pixel, and the same `--smoke` output. It
+becomes the v0.2 reference game ([roadmap](docs/ROADMAP.md)).
+
+```sh
+cargo build -p stickshift-capi                            # SwiftPM cannot run cargo
+swift run --package-path games/offramp offramp            # windowed, Metal (macOS 14+)
+swift run --package-path games/offramp offramp --smoke    # the same oracle as the Rust demo's
+./scripts/test-offramp.sh                                 # its tests
+./scripts/offramp-parity.sh                               # run both games and compare traces and frames
+```
+
+Its [README](games/offramp/README.md) has its architecture and explains how parity is checked.
+
 ## Project status
 
 Stick Shift Engine was built by **migrating and refactoring** an earlier prototype into this repo, module
@@ -324,7 +344,8 @@ Guides and design docs:
 ## Workspace layout
 
 The workspace is `crates/stickshift-*` (the engine) plus `games/playable-demo` (the first title and the
-smoke oracle). The layout follows [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §3.
+smoke oracle). Next to it are the Swift package (`bindings/swift/StickShift`) and Offramp
+(`games/offramp`), which SwiftPM builds. The layout follows [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §3.
 
 | Crate | Purpose |
 |---|---|
@@ -340,6 +361,7 @@ smoke oracle). The layout follows [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) �
 | [`stickshift-perf`](crates/stickshift-perf) | Profiling and frame-timing instrumentation with an injectable clock |
 | [`stickshift-scene`](crates/stickshift-scene) | The `Scene`: the ECS world, world streaming, and floating-origin rebase |
 | [`games/playable-demo`](games/playable-demo) | The reference example game (an endless runner) and host of the headless smoke oracle |
+| [`games/offramp`](games/offramp) | Offramp: the playable demo as a Swift game on the engine, through the Swift package and its macOS host (a SwiftPM package, not a crate) |
 
 ## Contributing
 

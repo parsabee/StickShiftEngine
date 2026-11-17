@@ -60,6 +60,14 @@ Engine:
 Offramp:
 
 - **The port to Swift** ([#75](https://github.com/parsabee/StickShiftEngine/issues/75)), at parity with the Rust demo first.
+  The first milestone is done: [`games/offramp`](../games/offramp) is the playable demo as a Swift
+  game on the engine, through the Swift package. It is game code only: the engine's world, scene
+  streaming, loop, camera, input, audio and graphics settings run it, and its window, Graphics
+  menu and sound are the package's macOS host's. It has the Rust demo's `--smoke`, its recorder
+  and its tests. It matches the Rust demo exactly on three headless runs (smoke, the recorder's
+  autopilot run, and 12 000 frames across four rebases), compared frame by frame, and its
+  recorded frames match the Rust recorder's pixel for pixel. CI checks both with
+  `scripts/offramp-parity.sh`.
 - **Its presentation:** name, logo, font and menus ([#77](https://github.com/parsabee/StickShiftEngine/issues/77)).
 - **A day/night cycle** ([#78](https://github.com/parsabee/StickShiftEngine/issues/78)), **curved roads** ([#79](https://github.com/parsabee/StickShiftEngine/issues/79)) and **car physics** ([#80](https://github.com/parsabee/StickShiftEngine/issues/80)),
   written in Swift as game code.
