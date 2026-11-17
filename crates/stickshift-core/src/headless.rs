@@ -423,9 +423,4 @@ mod tests {
         // updates.
         assert_eq!(harness.lp.accumulator.alpha(), 0.0);
     }
-
-    #[test]
-    fn escape_quits_by_default() {
-        assert!(crate::RunConfig::default().quit_on_escape);
-    }
 }

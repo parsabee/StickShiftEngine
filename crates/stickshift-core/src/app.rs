@@ -5,15 +5,20 @@
 //! The windowed entry: run a [`Game`] inside a `winit` window on
 //! macOS.
 //!
-//! This is the platform half of the engine loop. It opens a window, translates
-//! `winit` events into the engine's backend-agnostic
-//! [`InputState`](crate::InputState), and drives the *same* shared
-//! [`drive_frame`] as the headless driver — the only
-//! difference is the clock. Here the per-frame elapsed time comes from a real
-//! monotonic [`Instant`], so the fixed-timestep
+//! This is the winit half of the engine loop, behind the default `windowed`
+//! feature. It opens a window, translates `winit` events into the engine's
+//! backend-agnostic [`HostEvent`]s, and hands them to a [`Session`]: the
+//! platform-free runner every host shares, which drives the *same* shared
+//! [`drive_frame`](crate::driver::drive_frame) as the headless driver. The only difference is the clock. Here the per-frame
+//! elapsed time comes from a real monotonic [`Instant`](std::time::Instant)
+//! ([`Clock::Engine`]), so the fixed-timestep
 //! [`Accumulator`](crate::timestep::Accumulator) may run 0..N `update`s before the
 //! single `render`; per-frame drawing goes through the backend the game binary
 //! supplies via a **backend factory**.
+//!
+//! What only a window can do, the session asks for with [`Requests`]: this
+//! runner exits the event loop, toggles full screen, and refreshes the AppKit
+//! menu.
 //!
 //! # The backend seam (metal stays out of `stickshift-core`)
 //!
@@ -62,8 +67,6 @@
 //! disturbing the loop structure. The engine loop itself
 //! (`drive_frame`) is platform-neutral.
 
-use std::time::Instant;
-
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton as WinitMouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
@@ -73,10 +76,11 @@ use winit::window::{Fullscreen, Window, WindowId};
 use stickshift_render_api::NullRenderer;
 
 use crate::context::Renderer;
-use crate::driver::{drive_frame, Loop};
+use crate::driver::Loop;
 use crate::game::Game;
 use crate::input::{Key, MouseButton};
-use crate::platform::{self, SettingsMenu};
+use crate::platform::SettingsMenu;
+use crate::session::{Clock, HostEvent, Requests, Session, SettingsStore, View};
 use crate::settings_menu::MenuCommand;
 
 /// A factory that constructs the render backend for a freshly-created window.
@@ -251,21 +255,24 @@ const WINDOW_WIDTH: u32 = 800;
 /// Initial window height in logical pixels.
 const WINDOW_HEIGHT: u32 = 600;
 
-/// The `winit` [`ApplicationHandler`] that owns engine state and drives the game.
+/// The `winit` [`ApplicationHandler`] that drives the game: an adapter over a
+/// [`Session`].
 ///
-/// Holds the shared [`Loop`] (ECS [`World`](stickshift_ecs::hecs::World), input, perf,
-/// and the fixed-timestep [`Accumulator`](crate::timestep::Accumulator)) exactly
-/// like [`Headless`](crate::headless::Headless) does, plus the window, the render
-/// seam, and the game reference. The render seam is a `Box<dyn Renderer>`: a
+/// The session holds the shared [`Loop`] (the scene and its ECS
+/// [`World`](stickshift_ecs::hecs::World), input, perf, and the fixed-timestep
+/// [`Accumulator`](crate::timestep::Accumulator)) and everything a window adds to
+/// it: the frame clock, the drawable size, saved settings, menu choices. This
+/// runner owns the window, the render seam, the game reference and the AppKit
+/// menu; it turns winit's events into [`HostEvent`]s and carries out the
+/// [`Requests`] that come back. The render seam is a `Box<dyn Renderer>`: a
 /// [`NullRenderer`] until (and unless) the backend factory replaces it with a
 /// real backend on first resume.
 struct EngineApp<'g, 'f, G: Game> {
     game: &'g mut G,
     window: Option<Window>,
-    lp: Loop,
+    session: Session,
     renderer: Box<dyn Renderer>,
     factory: Option<BackendFactory<'f>>,
-    last_frame: Option<Instant>,
     /// Runner options.
     config: RunConfig,
     /// Where the built-in menu posts clicks; handed to the menu when it is
@@ -273,8 +280,6 @@ struct EngineApp<'g, 'f, G: Game> {
     proxy: EventLoopProxy<EngineEvent>,
     /// The built-in Graphics menu, once installed (and only if enabled).
     menu: Option<SettingsMenu>,
-    /// The graphics-settings revision this runner last reacted to.
-    seen_graphics_revision: u64,
 }
 
 impl<'g, 'f, G: Game> EngineApp<'g, 'f, G> {
@@ -296,44 +301,50 @@ impl<'g, 'f, G: Game> EngineApp<'g, 'f, G> {
         let mut lp = Loop::new();
         lp.audio = stickshift_audio::Audio::with_output_device();
 
-        // Restore last launch's graphics settings. Queued, so they take
-        // effect before `Game::init` (see `Loop::init_once`).
-        if config.persist_graphics_settings {
-            if let Some(saved) = platform::load_settings() {
-                lp.graphics.request(saved);
-            }
-        }
+        // With persistence, the session restores last launch's graphics
+        // settings. Queued, so they take effect before `Game::init` (see
+        // `Loop::init_once`).
+        let store = config
+            .persist_graphics_settings
+            .then(SettingsStore::standard);
+        let session = Session::new(lp, store, config.quit_on_escape);
 
         Self {
             game,
             window: None,
-            lp,
+            session,
             renderer: Box::new(NullRenderer::new()),
             factory,
-            last_frame: None,
             config,
             proxy,
             menu: None,
-            seen_graphics_revision: 0,
         }
     }
 
-    /// Size the drawable for the window's native pixels and the render scale in
-    /// effect (a queued change counts, so this is right before `Game::init` has
-    /// applied the restored settings), and report the matching UI scale.
-    fn resize_surface(&mut self) {
-        let Some(window) = &self.window else {
-            return;
-        };
+    /// The window's native pixels and scale factor, as the session sizes the
+    /// drawable from them.
+    fn view_of(window: &Window) -> View {
         let size = window.inner_size();
-        let graphics = &self.lp.graphics;
-        let (width, height, pixels_per_point) = graphics
-            .pending()
-            .unwrap_or_else(|| graphics.current())
-            .render_scale
-            .surface_for(size.width, size.height, window.scale_factor());
-        self.renderer
-            .resize_surface(width, height, pixels_per_point);
+        View::new(size.width, size.height, window.scale_factor())
+    }
+
+    /// Hand `event` to the session, then carry out what it asks for.
+    fn event(&mut self, event_loop: &ActiveEventLoop, event: HostEvent) {
+        let requests = self.session.event(event, self.game, self.renderer.as_mut());
+        self.carry_out(event_loop, requests);
+    }
+
+    /// Do what the session asked: what only the window can.
+    fn carry_out(&self, event_loop: &ActiveEventLoop, requests: Requests) {
+        if requests.contains(Requests::TOGGLE_FULLSCREEN) {
+            self.toggle_fullscreen();
+        }
+        if requests.contains(Requests::MENU_SYNC) {
+            self.sync_menu();
+        }
+        if requests.contains(Requests::EXIT) {
+            event_loop.exit();
+        }
     }
 
     /// Refresh the built-in menu's checkmarks, enabled states and full-screen
@@ -344,23 +355,7 @@ impl<'g, 'f, G: Game> EngineApp<'g, 'f, G> {
                 .window
                 .as_ref()
                 .is_some_and(|w| w.fullscreen().is_some());
-            menu.sync(&self.lp.graphics.current(), fullscreen);
-        }
-    }
-
-    /// React to applied graphics-settings changes, whatever made them (the menu,
-    /// or the game through `EngineCtx`): resize the drawable, refresh the menu,
-    /// and persist.
-    fn after_graphics_change(&mut self) {
-        let revision = self.lp.graphics.revision();
-        if revision == self.seen_graphics_revision {
-            return;
-        }
-        self.seen_graphics_revision = revision;
-        self.resize_surface();
-        self.sync_menu();
-        if self.config.persist_graphics_settings {
-            platform::save_settings(&self.lp.graphics.current());
+            menu.sync(&self.session.lp.graphics.current(), fullscreen);
         }
     }
 
@@ -374,166 +369,114 @@ impl<'g, 'f, G: Game> EngineApp<'g, 'f, G> {
             window.set_fullscreen(next);
         }
     }
-
-    /// Run one display frame through the shared [`drive_frame`].
-    ///
-    /// Measures the real seconds since the previous frame from a monotonic
-    /// [`Instant`] (the *only* thing this driver adds over the headless one) and
-    /// hands that elapsed time to the shared accumulator-based loop, which runs
-    /// 0..N fixed `update`s and one `render`. The game records its frame through
-    /// the seam (`begin_frame` … `submit`), which the real backend turns into a
-    /// GPU present.
-    fn drive_frame(&mut self) {
-        // A change the game queued through `EngineCtx` last frame is applied
-        // here, and the drawable resized for it, *before* the frame. Left to
-        // the shared `drive_frame`, it would be applied at the start of the
-        // frame and the drawable resized only after it, so that one frame would
-        // render the new settings at the old size. (The built-in menu applies
-        // its changes the same way, between frames.)
-        self.lp
-            .apply_pending_graphics(self.game, self.renderer.as_mut());
-        self.after_graphics_change();
-
-        let now = Instant::now();
-        let elapsed = match self.last_frame {
-            Some(prev) => now.duration_since(prev),
-            // First frame: bank exactly one fixed step so a game still ticks once.
-            None => crate::FIXED_DT_DURATION,
-        };
-        self.last_frame = Some(now);
-
-        drive_frame(&mut self.lp, self.game, self.renderer.as_mut(), elapsed);
-    }
 }
 
 impl<G: Game> ApplicationHandler<EngineEvent> for EngineApp<'_, '_, G> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_none() {
-            let window = create_window(event_loop);
-
-            // Match the engine camera's aspect to the real window before the first
-            // frame; resize events keep it current thereafter.
-            let size = window.inner_size();
-            self.lp
-                .camera
-                .set_aspect_ratio(size.width as f32 / size.height.max(1) as f32);
-
-            // Construct the real backend now that a window exists. Consuming the
-            // factory (an `Option`) makes this happen exactly once.
-            if let Some(factory) = self.factory.take() {
-                self.renderer = factory(&window, size.width, size.height);
+        let window = match self.window.take() {
+            Some(window) => window,
+            None => {
+                let window = create_window(event_loop);
+                // Construct the real backend now that a window exists.
+                // Consuming the factory (an `Option`) makes this happen exactly
+                // once.
+                if let Some(factory) = self.factory.take() {
+                    let size = window.inner_size();
+                    self.renderer = factory(&window, size.width, size.height);
+                }
+                window.request_redraw();
+                window
             }
+        };
+        let view = Self::view_of(&window);
+        self.window = Some(window);
 
-            window.request_redraw();
-            self.window = Some(window);
-        }
+        // On first resume the session matches the engine camera's aspect to the
+        // real window before the first frame (resize events keep it current
+        // thereafter). Then it sizes the drawable for the render scale, runs the
+        // game's one-time init against the live seam, and sizes the drawable
+        // again for the settings now in effect.
+        let requests = self.session.resume(view, self.game, self.renderer.as_mut());
 
-        // Size the drawable for the render scale before the game's init sees
-        // it: a new backend's drawable is the window's full pixel size.
-        self.resize_surface();
-        // First activation: run the game's one-time init against the live seam
-        // through the shared loop (idempotent).
-        self.lp.init_once(self.game, self.renderer.as_mut());
-
-        // Size the drawable for the settings now in effect, then add the
-        // built-in Graphics menu next to winit's application menu.
-        self.resize_surface();
+        // Add the built-in Graphics menu next to winit's application menu,
+        // before the session's request to show the settings on it.
         if self.config.native_settings_menu && self.menu.is_none() {
             self.menu = SettingsMenu::install(self.proxy.clone());
         }
-        self.sync_menu();
-        self.seen_graphics_revision = self.lp.graphics.revision();
+        self.carry_out(event_loop, requests);
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: EngineEvent) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: EngineEvent) {
         match event {
-            EngineEvent::Menu(command) => {
-                // Build on a request still in flight, so two quick choices compose.
-                let base = self
-                    .lp
-                    .graphics
-                    .pending()
-                    .unwrap_or_else(|| self.lp.graphics.current());
-                match command.apply(base) {
-                    Some(settings) => {
-                        // Apply right away, between frames, through the same path a
-                        // game's own request takes.
-                        self.lp.graphics.request(settings);
-                        self.lp
-                            .apply_pending_graphics(self.game, self.renderer.as_mut());
-                        self.after_graphics_change();
-                    }
-                    None => self.toggle_fullscreen(),
-                }
-                // AppKit's menu tracking held the main thread while the menu was
-                // open. Restart the frame clock so that time is not simulated in
-                // one catch-up burst.
-                self.last_frame = None;
-            }
+            // A settings change is applied right away, between frames, and the
+            // frame clock restarts: AppKit's menu tracking held the main thread
+            // while the menu was open.
+            EngineEvent::Menu(command) => self.event(event_loop, HostEvent::Menu(command)),
         }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
-            WindowEvent::CloseRequested => {
-                event_loop.exit();
-            }
+            WindowEvent::CloseRequested => self.event(event_loop, HostEvent::Close),
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     if let Some(key) = translate_key(code) {
-                        if event.state.is_pressed() {
-                            // Escape quits, matching the close button, unless
-                            // the game asked to handle it.
-                            if key == Key::Escape && self.config.quit_on_escape {
-                                event_loop.exit();
+                        // Escape quits (unless the game handles it) and still
+                        // reaches the input: the session decides.
+                        let host = if event.state.is_pressed() {
+                            HostEvent::KeyDown {
+                                key,
+                                repeat: event.repeat,
                             }
-                            self.lp.input.press_key(key);
                         } else {
-                            self.lp.input.release_key(key);
-                        }
+                            HostEvent::KeyUp(key)
+                        };
+                        self.event(event_loop, host);
                     }
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                if let Some(btn) = translate_mouse_button(button) {
-                    match state {
-                        ElementState::Pressed => self.lp.input.press_mouse(btn),
-                        ElementState::Released => self.lp.input.release_mouse(btn),
-                    }
+                if let Some(button) = translate_mouse_button(button) {
+                    let host = match state {
+                        ElementState::Pressed => HostEvent::MouseDown(button),
+                        ElementState::Released => HostEvent::MouseUp(button),
+                    };
+                    self.event(event_loop, host);
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let scale = self.window.as_ref().map_or(1.0, |w| w.scale_factor());
                 let (x, y) = cursor_to_logical(position, scale);
-                self.lp.input.set_cursor_position(x, y);
+                self.event(event_loop, HostEvent::Cursor(x, y));
             }
             WindowEvent::Focused(false) => {
                 // macOS sends no key-up for a key released while another window
                 // has focus; let go of everything so nothing stays held.
-                self.lp.input.release_all();
+                self.event(event_loop, HostEvent::FocusLost);
             }
             WindowEvent::Resized(size) => {
-                // Keep the engine camera's projection correct as the window
-                // resizes. The backend below the seam owns no camera, so
-                // aspect is maintained here on the engine-owned `Camera`.
-                let aspect = size.width as f32 / size.height.max(1) as f32;
-                self.lp.camera.set_aspect_ratio(aspect);
-                // Keep the drawable matched to the window. The window may
-                // also have entered or left full screen, so refresh the menu's
-                // full-screen title.
-                self.resize_surface();
-                self.sync_menu();
+                // The camera's aspect follows the window, the drawable is
+                // resized, and the menu's full-screen title refreshed (the
+                // window may have entered or left full screen).
+                let scale = self.window.as_ref().map_or(1.0, |w| w.scale_factor());
+                let view = View::new(size.width, size.height, scale);
+                self.event(event_loop, HostEvent::Resized(view));
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 // Moved to a display with a different pixel density.
-                self.resize_surface();
+                if let Some(window) = &self.window {
+                    let view = Self::view_of(window);
+                    self.event(event_loop, HostEvent::ScaleChanged(view));
+                }
             }
             WindowEvent::RedrawRequested => {
                 // Applies a graphics change the game queued, and resizes for
-                // it, before the frame (see `EngineApp::drive_frame`).
-                self.drive_frame();
-                if self.lp.exit_requested {
-                    event_loop.exit();
+                // it, before the frame (see `Session::frame`).
+                let (_, requests) =
+                    self.session
+                        .frame(Clock::Engine, self.game, self.renderer.as_mut());
+                self.carry_out(event_loop, requests);
+                if requests.contains(Requests::EXIT) {
                     return;
                 }
                 // Request the next frame to keep the loop pumping.
@@ -609,6 +552,11 @@ fn translate_mouse_button(button: WinitMouseButton) -> Option<MouseButton> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escape_quits_by_default() {
+        assert!(RunConfig::default().quit_on_escape);
+    }
 
     #[test]
     fn cursor_positions_are_reported_in_logical_pixels() {

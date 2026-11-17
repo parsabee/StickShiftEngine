@@ -136,7 +136,12 @@ Lights are shaded with clustered forward shading; §4c has the design and the bu
 The user-facing `GraphicsSettings` presets live in `stickshift-core`, which applies them to the seam and
 to `Scene` streaming. Its windowed runner installs a native macOS **Graphics** menu by default,
 opt-out via `RunConfig`. That menu is built with `objc2` in `stickshift-core::platform`, so AppKit stays
-out of every crate but `stickshift-core`, and `metal` stays out of `stickshift-core`.
+out of every crate but `stickshift-core`, and `metal` stays out of `stickshift-core`. The winit runner and
+the menu are `stickshift-core`'s default `windowed` feature. What the runner adds to the loop (the frame
+clock, the drawable size, saved settings, menu choices, Escape and resizes) is the platform-free
+`session::Session`, which the runner adapts winit's events to. A host with its own view builds the crate
+without the feature and drives a `Session` itself, with no `winit` and no AppKit; settings persistence
+(`NSUserDefaults`) is Foundation only and stays.
 
 ## 3. Workspace layout
 

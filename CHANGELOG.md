@@ -57,6 +57,19 @@ API**.
   on, so AppKit does not beep. Without a handler it takes no focus and passes keys on. A key
   released while Command is held arrives too: `NSApplication` never hands a window that key-up,
   so the view's local event monitor sends it to the window, as winit does.
+- **`stickshift_core::Session`**, the platform-free half of the windowed runner: the frame clock
+  (the first frame, and the first after a menu choice or `reset_clock`, banks exactly one step),
+  the drawable sized for the view and the render scale, graphics settings restored at start-up
+  and saved on every change, the Graphics menu's choices, Escape, focus loss and resizes. It
+  takes the platform's events as `HostEvent`s and returns what only the platform can do as
+  `Requests` (`EXIT`, `TOGGLE_FULLSCREEN`, `MENU_SYNC`). The winit runner is now an adapter over
+  it, with unchanged behaviour, so a host that owns its own view drives the same code.
+  `SettingsStore` keeps the settings in `NSUserDefaults` (the standard defaults or a named
+  suite), on every Apple target. The Graphics menu model, `stickshift_core::settings_menu`
+  (`MenuCommand`, `submenus`, `ACTIONS`), is public for such a host to build its menu from.
+- **`stickshift-core` builds without a platform.** Its new default feature, `windowed`, holds
+  `winit` and the AppKit menu (`run`, `run_with_backend`, `run_with_config`). With
+  `default-features = false` the crate has neither, and builds for `aarch64-apple-ios`.
 - `Camera::fov_y`, `Camera::set_fov_y` and `Camera::aspect_ratio`.
 - `Scene::try_set_config`, which returns `StreamingConfigError::AxisOrIntervalChanged` where
   `Scene::set_config` panics, and changes nothing.

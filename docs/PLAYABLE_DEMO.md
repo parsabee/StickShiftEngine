@@ -49,7 +49,7 @@ the collision test, the difficulty ramp, and the game-side ECS components
 
 **Backend injection.** `stickshift-core` must not depend on `metal`, so it does not construct the
 renderer. The *game binary* does: `main.rs` calls
-[`run_with_backend`](../crates/stickshift-core/src/app.rs#L154) with a factory closure that builds a
+[`run_with_backend`](../crates/stickshift-core/src/app.rs#L158) with a factory closure that builds a
 `stickshift_render::MetalRenderer` and boxes it as `dyn Renderer`
 ([main.rs:144](../games/playable-demo/src/main.rs#L144)). `metal` therefore reaches the process
 through `stickshift-render` and the game binary only, never through `stickshift-core` (ARCHITECTURE §2).
@@ -452,7 +452,7 @@ Five crates carry a self-scanning **guard test** that embeds the crate's own sou
 
 | Guard test | Crate |
 |---|---|
-| `boundary_tests::no_game_specific_symbols` ([lib.rs:122](../crates/stickshift-core/src/lib.rs#L122)) | `stickshift-core` |
+| `boundary_tests::no_game_specific_symbols` ([lib.rs:140](../crates/stickshift-core/src/lib.rs#L140)) | `stickshift-core` |
 | `tests::no_game_specific_symbols` ([lib.rs:858](../crates/stickshift-scene/src/lib.rs#L858)) | `stickshift-scene` |
 | `guard_tests::no_game_specific_symbols` ([lib.rs:74](../crates/stickshift-assets/src/lib.rs#L74)) | `stickshift-assets` |
 | `guard_tests::no_game_specific_symbols` ([lib.rs](../crates/stickshift-audio/src/lib.rs)) | `stickshift-audio` |
