@@ -91,11 +91,68 @@ view.start()
   `StickShiftMath.rotation(axis:angle:)` call the engine's own math instead, for results that
   match a Rust game bit for bit; `Camera.perspective` multiplies with it.
 
+### The engine
+
+`Engine` runs a `Game` on a context: the engine's own loop, the code a Rust game runs, driven by
+the host. The game is game code only:
+
+```swift
+@MainActor
+final class Spinner: Game {
+    var angle: Float = 0
+
+    func initialize(_ ctx: EngineContext) throws {
+        try ctx.renderer.setSunSky(.default)
+    }
+
+    func update(_ ctx: EngineContext, dt: Float) {   // once per fixed step
+        angle += dt
+    }
+
+    func render(_ ctx: EngineContext, into frame: Frame) throws {   // once per tick
+        try frame.draw(Quad(rect: [10, 10, 40 + 20 * angle, 20], color: [1, 0.5, 0, 1]))
+    }
+}
+
+let engine = try Engine.headless(Spinner())   // a null context, 1280 × 720
+try engine.initialize()
+engine.advance()                                // one fixed step and one frame
+```
+
+- **The host drives it.** A tool calls `initialize()` and then `advance()` (one fixed step) or
+  `runHeadless(frames:)`. A view calls `resume(ViewMetrics(...))` when it appears, forwards its
+  input and resizes with `push(.keyDown(.space), ...)`, and calls `tick(.engine)` from its display
+  link. Each tick runs as many `update`s as its clock banked (`.fixedStep`, `.elapsed`,
+  `.timestamp`, `.engine`; at most `Engine.maxStepsPerFrame`), then `render` once, on a frame
+  the engine opens and submits. `tick` and `push` return the `HostRequests` the host acts on:
+  `.exit`, `.toggleFullScreen`, `.syncMenu`. `Engine.Options` picks the audio output, saved
+  settings, Escape-quits and the frame pacing; `.headless` and `.app` are the two usual sets.
+- **Hooks get an `EngineContext`**, Rust's `EngineCtx`: the renderer (the attached `Context`),
+  `alpha`, `perf`, `requestExit()`. It is valid only during its hook: using one after its hook
+  returned traps, naming the hook. So do the engine's other misuses (ticking from a hook, an
+  event the engine refuses); failures that can happen at run time throw.
+- **Init is synchronous**, as in Rust: `ctx.renderer.startLoadingModel(contentsOf:)` and
+  `model.wait()` load a model inside `initialize`. A Swift game may instead create resources in
+  an optional `load(_:) async` phase, which `await engine.load()` (or `start()`) runs first.
+- **A thrown `initialize`** fails the engine, and `initialize()` (or `resume`) rethrows the
+  game's own error. **A thrown `render`** still submits its frame; the error is kept as
+  `engine.lastRenderError`.
+- `engine.state` and `engine.perf` report the engine's counters and frame timing; a tick on an
+  offscreen context can read its frame back into a `PixelBuffer`.
+- **Exact math.** `glamDot`, `glamCross`, `glamLength`, `glamNormalizeOrZero`, `glamLerp`,
+  `simd_quatf(glamRotationY:)`, `glamRotate`, `glamMultiply`, `glamTransformPoint` and
+  `glamTransformVector` run glam itself, inside the engine, so a Swift game computes what a Rust
+  game computes. `RustF32` has Rust's `PI` (Swift's `Float.pi` is one bit lower), its NaN-ignoring
+  `max` and `min`, `clamp`, `rem_euclid`, `to_radians`, `Duration::as_secs_f32` and its
+  saturating casts.
+
 ### Threading
 
 The C API lets one thread at a time use a context, so `Context`, its resources and `Frame` are
 `@MainActor`. Create and use them on the main actor. `StickShiftView`'s display link calls
-`onFrame` there.
+`onFrame` there. An `Engine` binds its context to the thread that created it, the main one, and
+runs every hook there; dropping the last reference to an engine on another thread destroys it on
+the main thread, and its context after it.
 
 ### The host view
 
@@ -126,6 +183,15 @@ started. Each refresh calls `onFrame` and then `pollEvents()`.
   discarded one and a frame used too late), lights and their limit, emission, settings, fonts
   and quads, `async` model loads (from a file, from memory, failing), and model draws that
   select their textured or untextured parts.
+- **Engine (null backend):** a tick's updates and render as the Rust loop runs them for each
+  clock kind (steps, the five-step cap, alpha, the timestamp clock's first step and its reset),
+  init and resume (once), a thrown `initialize` rethrown and a thrown `render` still submitted,
+  exit requests, host events and their requests, a menu choice reaching the settings hook, the
+  asynchronous load phase and a synchronous model load in `initialize`, a tick read-back (also on
+  Metal), destroy on the main thread when the last reference goes elsewhere, and, as exit
+  tests, a stale `EngineContext` and `LoadContext` trapping.
+- **glam and Rust's `f32`:** the glam functions round as glam does, quaternions cross in their
+  field order, and `RustF32`'s constants, comparisons and casts behave as Rust's.
 - **Math:** `StickShiftMath.multiply` matches the engine's unfused product bit for bit,
   `StickShiftMath.rotation` matches its quaternions (signed zeros included), and
   `Camera.perspective` multiplies with it.
