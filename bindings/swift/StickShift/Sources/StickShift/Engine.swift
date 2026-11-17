@@ -428,8 +428,9 @@ public final class Engine {
         out.size = UInt32(MemoryLayout<StickShiftEngineState>.size)
         let result = stickshift_engine_get_state(raw, &out)
         if result == STICKSHIFT_ERROR_INTERNAL {
-            // A library that answers nothing on a poisoned engine, this call
-            // included: all that is known is that it is poisoned.
+            // The library answers this call on a poisoned engine, so this
+            // call itself panicked, which poisons the engine: all that is
+            // known is that it is poisoned.
             out = StickShiftEngineState()
             out.poisoned = 1
         } else if result < 0 {

@@ -44,6 +44,18 @@ final class WorldProbe: Game {
         axis: [0, 0, -1], spawnInterval: 6, spawnAhead: 60, despawnBehind: 12, rebaseThreshold: 150
     )
     static let playerStart = Transform(position: [0, 0.5, 0])
+    /// The chase camera the probe follows the player with.
+    static let chase = ChaseController(distance: 7.5, height: 3, lookAtHeight: 1.25, up: [0, 1, 0], halfLife: 0.15)
+
+    /// The draw distance the probe requests at update `n`, if any: once
+    /// before the reach change halfway, once after.
+    static func drawDistance(at n: Int) -> GraphicsSettings.DrawDistance? {
+        switch n {
+        case frames / 3: .near
+        case 2 * frames / 3: .medium
+        default: nil
+        }
+    }
 
     var player: Entity?
     var updates = 0
@@ -134,15 +146,28 @@ final class WorldProbe: Game {
         var t = world.get(Transform.self, of: player)!
         t.position.z -= Self.speed * dt
         world.set(t, for: player)
-        if scene.maybeRebase(focus: t.position) != .zero {
+        let offset = scene.maybeRebase(focus: t.position)
+        if offset != .zero {
             rebases += 1
+            // Carry the camera through the coordinate change, as the demo does.
+            let camera = ctx.camera
+            let position = camera.position + offset
+            let target = camera.target + offset
+            camera.position = position
+            camera.target = target
         }
         let pos = world.get(Transform.self, of: player)!.position
+        ctx.camera.follow(Self.chase, target: pos, forward: [0, 0, -1], dt: dt)
         if n == Self.frames / 2 {
             var c = scene.config
             c.spawnAhead = 90
             c.despawnBehind = 18
             try! scene.setConfig(c)
+        }
+        if let drawDistance = Self.drawDistance(at: n) {
+            var s = ctx.graphics.current
+            s.drawDistance = drawDistance
+            ctx.graphics.request(s)
         }
         scene.stream(focus: pos, Self.fill)
 
@@ -225,6 +250,30 @@ final class WorldProbe: Game {
             "\(frame) len \(engine.world.count) streamed \(engine.scene.streamedCount) "
                 + "digest \(hex(digest, width: 16)) rebases \(rebases)"
         )
+        func f(_ v: Float) -> String { hex(UInt64(v.bitPattern), width: 8) }
+        func v(_ p: SIMD3<Float>) -> String { "\(f(p.x)) \(f(p.y)) \(f(p.z))" }
+        func hashMatrix(_ m: simd_float4x4) -> String {
+            var h = fnvOffset
+            for c in 0..<4 {
+                for r in 0..<4 {
+                    withUnsafeBytes(of: m[c][r].bitPattern.littleEndian) { h = fnv(h, $0) }
+                }
+            }
+            return hex(h, width: 16)
+        }
+        let config = engine.scene.config
+        log.add("reach \(f(config.spawnAhead)) \(f(config.despawnBehind)) revision \(engine.graphics.revision)")
+        // Between ticks the context's camera is what the engine pushed last;
+        // nothing is pushed before the first frame.
+        let camera = engine.camera
+        var pushed = "none"
+        if frame != "init" {
+            let c = engine.context.camera
+            pushed = "\(hashMatrix(c.viewProjection)) \(v(c.position))"
+        }
+        log.add(
+            "camera \(v(camera.position)) | \(v(camera.target)) | \(hashMatrix(camera.viewProjection)) pushed \(pushed)"
+        )
         Self.dump(engine.world, into: log)
     }
 }
@@ -246,6 +295,8 @@ struct WorldProbeTests {
         log.finish()
         // The run went through what it is meant to cover.
         #expect(game.rebases >= 5, "only \(game.rebases) rebases")
+        // Both settings requests applied.
+        #expect(engine.graphics.revision == 2)
         #expect(log.kept.count == 1)
     }
 }
