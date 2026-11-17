@@ -70,6 +70,16 @@ API**.
   `Model.wait`, `Frame.surface`, glam's operations (`glamDot`, `simd_quatf(glamRotationY:)`,
   `glamRotate`, `glamTransformPoint`, ...) and `RustF32`. `scripts/test-swift.sh` now fails on
   any Swift warning.
+- **The Swift package reaches the engine's services** (second half): `Component` (any
+  bitwise-copyable struct; an empty one is a tag), the engine's `Transform`, `RenderComponent`,
+  `StaticTag` and `DynamicTag`, `Entity`, and `World` (`spawn`, `insert` and `query` over
+  parameter packs, with `with`, `without` and `Optional` terms, in hecs order), `Scene` (streaming
+  through a noncopyable `StreamSlot`, `maybeRebase`), `EngineCamera` and `ChaseController`,
+  `Input` and the host's `HostInput`, `Audio`, `Graphics` and `GraphicsControl`, and
+  `GraphicsMenu` as data, from a hook's `EngineContext` or the `Engine`. Components register on
+  first use. Swift ports of the C API's probe games print the Rust probes' lines. `EngineState`
+  gains `isPoisoned`, and a mesh, texture, font or model released off the main thread while an
+  engine is attached is now destroyed on the main thread instead of leaking.
 - **`stickshift_core::Session`**, the platform-free half of the windowed runner: the frame clock
   (the first frame, and the first after a menu choice or `reset_clock`, banks exactly one step),
   the drawable sized for the view and the render scale, graphics settings restored at start-up
