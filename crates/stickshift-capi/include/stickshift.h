@@ -1350,7 +1350,9 @@ float stickshift_vec3_length(struct StickShiftVec3 v);
 struct StickShiftVec3 stickshift_vec3_normalize_or_zero(struct StickShiftVec3 v);
 
 /**
- * `a + (b - a) * t`: glam's `Vec3::lerp`. `t` is not clamped.
+ * `a * (1 - t) + b * t`, each multiply and add rounded on its own (no fused
+ * multiply-add): glam's `Vec3::lerp`. `t` is not clamped. This is not
+ * `a + (b - a) * t`, whose last bit differs on many inputs.
  */
 struct StickShiftVec3 stickshift_vec3_lerp(struct StickShiftVec3 a,
                                            struct StickShiftVec3 b,

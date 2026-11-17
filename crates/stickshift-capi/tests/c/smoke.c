@@ -91,6 +91,10 @@ static int check_math(void) {
     StickShiftVec3 far = {2, 4, 8};
     StickShiftVec3 mid = stickshift_vec3_lerp(zero, far, 0.5f);
     REQUIRE(mid.x == 1.0f && mid.y == 2.0f && mid.z == 4.0f);
+    /* lerp is a * (1 - t) + b * t, so t = 1 gives b exactly; a + (b - a) * t would give 0 here. */
+    StickShiftVec3 huge = {1e8f, 1e8f, 1e8f}, unit = {1, 1, 1};
+    StickShiftVec3 end = stickshift_vec3_lerp(huge, unit, 1.0f);
+    REQUIRE(end.x == 1.0f && end.y == 1.0f && end.z == 1.0f);
 
     StickShiftQuat identity = stickshift_quat_from_rotation_y(0.0f);
     REQUIRE(identity.x == 0.0f && identity.y == 0.0f && identity.z == 0.0f && identity.w == 1.0f);

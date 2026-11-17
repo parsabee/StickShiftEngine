@@ -175,7 +175,9 @@ pub extern "C" fn stickshift_vec3_normalize_or_zero(v: StickShiftVec3) -> StickS
     Vec3::from(v).normalize_or_zero().into()
 }
 
-/// `a + (b - a) * t`: glam's `Vec3::lerp`. `t` is not clamped.
+/// `a * (1 - t) + b * t`, each multiply and add rounded on its own (no fused
+/// multiply-add): glam's `Vec3::lerp`. `t` is not clamped. This is not
+/// `a + (b - a) * t`, whose last bit differs on many inputs.
 #[no_mangle]
 pub extern "C" fn stickshift_vec3_lerp(
     a: StickShiftVec3,
@@ -555,6 +557,23 @@ mod tests {
             stickshift_vec3_normalize_or_zero(v(0.0, 0.0, -3.0)),
             v(0.0, 0.0, -1.0)
         );
+    }
+
+    #[test]
+    fn lerp_is_a_times_one_minus_t_plus_b_times_t() {
+        // At t = 1 this form gives b exactly; `a + (b - a) * t` gives 0 here,
+        // because 1 - 1e8 rounds to -1e8 in f32.
+        assert_eq!(
+            stickshift_vec3_lerp(v(1e8, 1e8, 1e8), v(1.0, 1.0, 1.0), 1.0),
+            v(1.0, 1.0, 1.0)
+        );
+        // An ordinary input where the two forms differ in the last bit.
+        let (a, b, t) = (-7.31f32, 6.95f32, 0.76f32);
+        let ours = stickshift_vec3_lerp(v(a, a, a), v(b, b, b), t);
+        let documented = black_box(a) * (1.0 - black_box(t)) + black_box(b) * black_box(t);
+        let other_form = black_box(a) + (black_box(b) - black_box(a)) * black_box(t);
+        assert_ne!(documented.to_bits(), other_form.to_bits());
+        assert_eq!(ours, v(documented, documented, documented));
     }
 
     // The demo's inputs (games/playable-demo/src/config.rs).
