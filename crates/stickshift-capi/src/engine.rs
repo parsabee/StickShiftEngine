@@ -64,6 +64,13 @@ use crate::core::{call, input, output, read_sized, utf8, write_sized, Error, Out
 use crate::frame::{self, Close};
 use crate::types::*;
 
+// The engine's services through C. Each is a child module, so its functions
+// reach the scopes and the state exactly as this module's own do.
+pub(crate) mod audio;
+pub(crate) mod camera;
+pub(crate) mod graphics;
+pub(crate) mod input;
+
 /// How long `STICKSHIFT_FRAME_PACING_WAIT` waits for a free frame slot.
 const SLOT_WAIT: Duration = Duration::from_secs(1);
 
@@ -108,6 +115,10 @@ pub struct StickShiftEngine {
     game: StickShiftGame,
     pacing: StickShiftFramePacing,
     hold_until_loaded: bool,
+    /// The sounds the game loaded, by handle ([`audio`]).
+    sounds: RefCell<audio::Sounds>,
+    /// The Graphics menu the host last asked for ([`graphics`]).
+    menu: RefCell<graphics::MenuCache>,
     /// A panic was caught in an engine call: every later call but destroy is
     /// `STICKSHIFT_ERROR_INTERNAL`.
     poisoned: Cell<bool>,
@@ -902,6 +913,7 @@ pub unsafe extern "C" fn stickshift_engine_create(
             ));
         }
 
+        let sounds = audio::Sounds::new()?;
         let mut lp = Loop::new();
         if desc.audio == STICKSHIFT_AUDIO_DEVICE {
             lp.audio = Audio::with_output_device();
@@ -919,6 +931,8 @@ pub unsafe extern "C" fn stickshift_engine_create(
             game,
             pacing: desc.pacing,
             hold_until_loaded: desc.flags & STICKSHIFT_ENGINE_HOLD_UNTIL_LOADED != 0,
+            sounds: RefCell::new(sounds),
+            menu: RefCell::new(graphics::MenuCache::default()),
             poisoned: Cell::new(false),
             failed: Cell::new(false),
             initialized: Cell::new(false),
@@ -1411,9 +1425,8 @@ pub unsafe extern "C" fn stickshift_engine_get_perf(
     })
 }
 
-/// Hooks for the crate's own tests, reaching what later stages expose through
-/// the C API (the camera, the input) through the same scope rules. Not part of
-/// the C API.
+/// Hooks for the crate's own tests: what the C API does not expose, reached
+/// through the same scope rules. Not part of the C API.
 #[doc(hidden)]
 pub mod testing {
     use super::{game_call, Access, StickShiftEngine};
@@ -1422,77 +1435,20 @@ pub mod testing {
     use crate::types::*;
     use stickshift_math::glam::{Mat4, Vec3};
 
-    /// Move the engine camera as a game does: `EngineCtx::camera_mut` in a hook
-    /// (which arms the push rule), the loop's camera between calls.
+    /// The scene's streaming reach (`Scene::config().spawn_ahead`), as the game
+    /// sees it: what the draw distance rescales.
     ///
     /// # Safety
     /// `engine` must be NULL or a live engine.
-    pub unsafe fn set_camera_position(
+    pub unsafe fn scene_spawn_ahead(
         engine: *mut StickShiftEngine,
-        position: Vec3,
+        out: &mut f32,
     ) -> StickShiftResult {
-        game_call(engine, "set_camera_position", |_, access| {
-            match access {
-                Access::Idle(state) => state.session.lp.camera.set_position(position),
-                Access::Hook(ctx) => ctx.camera_mut().set_position(position),
-            }
-            Ok(STICKSHIFT_OK)
-        })
-    }
-
-    /// The engine camera's view-projection and position, as the game sees them.
-    ///
-    /// # Safety
-    /// `engine` must be NULL or a live engine.
-    pub unsafe fn camera(
-        engine: *mut StickShiftEngine,
-        out: &mut (Mat4, Vec3),
-    ) -> StickShiftResult {
-        game_call(engine, "camera", |_, access| {
-            let camera = match access {
-                Access::Idle(state) => &state.session.lp.camera,
-                Access::Hook(ctx) => ctx.camera(),
-            };
-            *out = (camera.view_projection_matrix(), camera.position());
-            Ok(STICKSHIFT_OK)
-        })
-    }
-
-    /// The camera's aspect ratio, as the game sees it.
-    ///
-    /// # Safety
-    /// `engine` must be NULL or a live engine.
-    pub unsafe fn camera_aspect(engine: *mut StickShiftEngine, out: &mut f32) -> StickShiftResult {
-        game_call(engine, "camera_aspect", |_, access| {
+        game_call(engine, "scene_spawn_ahead", |_, access| {
             *out = match access {
-                Access::Idle(state) => state.session.lp.camera.aspect_ratio(),
-                Access::Hook(ctx) => ctx.camera().aspect_ratio(),
+                Access::Idle(state) => state.session.lp.scene.config().spawn_ahead,
+                Access::Hook(ctx) => ctx.scene().config().spawn_ahead,
             };
-            Ok(STICKSHIFT_OK)
-        })
-    }
-
-    /// `key`'s state as the game's input shows it: down, just pressed, just
-    /// released.
-    ///
-    /// # Safety
-    /// `engine` must be NULL or a live engine.
-    pub unsafe fn key_state(
-        engine: *mut StickShiftEngine,
-        key: StickShiftKey,
-        out: &mut [bool; 3],
-    ) -> StickShiftResult {
-        game_call(engine, "key_state", |_, access| {
-            let key = super::key(key).ok_or_else(|| Error::invalid_argument("not a key"))?;
-            let input = match access {
-                Access::Idle(state) => &state.session.lp.input,
-                Access::Hook(ctx) => ctx.input(),
-            };
-            *out = [
-                input.is_key_down(key),
-                input.is_key_just_pressed(key),
-                input.is_key_just_released(key),
-            ];
             Ok(STICKSHIFT_OK)
         })
     }

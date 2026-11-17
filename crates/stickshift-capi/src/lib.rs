@@ -75,6 +75,23 @@ pub use core::{
     stickshift_api_minor, stickshift_api_version, stickshift_fixed_dt,
     stickshift_last_error_message, stickshift_result_name, stickshift_version_string,
 };
+pub use engine::audio::{
+    stickshift_audio_get_path, stickshift_audio_get_stats, stickshift_audio_load,
+    stickshift_audio_one_shots_of, stickshift_audio_play_looping, stickshift_audio_play_once,
+    stickshift_audio_set_master_volume, stickshift_audio_stop_looping,
+};
+pub use engine::camera::{
+    stickshift_camera_follow, stickshift_camera_get, stickshift_camera_set_aspect_ratio,
+    stickshift_camera_set_clip_planes, stickshift_camera_set_fov_y, stickshift_camera_set_position,
+    stickshift_camera_set_target, stickshift_camera_set_up, stickshift_chase_init,
+};
+pub use engine::graphics::{
+    stickshift_engine_get_menu, stickshift_graphics_get_current, stickshift_graphics_get_state,
+    stickshift_graphics_label, stickshift_graphics_request, stickshift_graphics_settings_default,
+    stickshift_graphics_settings_from_codes, stickshift_graphics_settings_render_settings,
+    stickshift_graphics_settings_to_codes, stickshift_render_scale_surface_for,
+};
+pub use engine::input::stickshift_input_get;
 pub use engine::{
     stickshift_engine_create, stickshift_engine_destroy, stickshift_engine_get_context,
     stickshift_engine_get_perf, stickshift_engine_get_state, stickshift_engine_init,

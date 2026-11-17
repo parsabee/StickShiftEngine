@@ -81,6 +81,17 @@ API**.
   own calls, so archetypes, query order and id reuse match Rust types. Queries copy their rows
   into an aligned `Rows` buffer that borrows nothing from the world. Engine components keep
   their Rust types and get a byte form through a `Codec`.
+- **The engine's camera, input, audio and graphics settings in the C API.** A C game moves the
+  engine camera (`stickshift_camera_*`) and follows with its chase controller
+  (`stickshift_camera_follow`); reads the input the host pushed (`stickshift_input_get`); loads
+  and plays sounds by handle and reads the audio counters (`stickshift_audio_*`, silent engines
+  count too); and reads and requests graphics settings (`stickshift_graphics_*`). A host builds
+  its native Graphics menu from `stickshift_engine_get_menu` and sends choices back as menu
+  events. `STICKSHIFT_ENGINE_PERSIST_SETTINGS` keeps the settings in the same user defaults the
+  Rust runner uses, or in a named suite.
+- `SettingsStore::clear`, which forgets the saved graphics settings.
+- `GraphicsSettings::from_codes` no longer overflows (a debug-build panic) on a stored code of
+  `i64::MIN`; it decodes to the default like any other unknown code.
 
 ### Changed
 

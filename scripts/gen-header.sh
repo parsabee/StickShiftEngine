@@ -26,8 +26,9 @@ fi
 generated="$(mktemp)"
 trap 'rm -f "$generated"' EXIT
 cbindgen --quiet --config "$crate/cbindgen.toml" --crate stickshift-capi --output "$generated" "$crate"
-# Parenthesise negative constants so `x - STICKSHIFT_ERROR_BUSY` stays one expression.
-sed -E -i.bak 's/^(#define [A-Z0-9_]+) (-[0-9]+)$/\1 (\2)/' "$generated" && rm -f "$generated.bak"
+# Parenthesise negative constants (integer and decimal) so `x - STICKSHIFT_ERROR_BUSY`
+# stays one expression.
+sed -E -i.bak 's/^(#define [A-Z0-9_]+) (-[0-9]+(\.[0-9]+)?)$/\1 (\2)/' "$generated" && rm -f "$generated.bak"
 
 if [[ "${1:-}" == "--check" ]]; then
     if ! diff -u "$header" "$generated"; then
