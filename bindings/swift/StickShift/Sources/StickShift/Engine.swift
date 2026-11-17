@@ -222,7 +222,7 @@ public final class Engine {
         }
         core.loadPhase = .loading
         do {
-            try await core.load()
+            try await core.load(raw)
         } catch {
             core.loadPhase = .notLoaded
             throw error

@@ -132,12 +132,20 @@ public struct LoadContext {
     /// Unowned, so a context a game keeps by mistake keeps nothing alive; the
     /// scope check traps before any use of it.
     unowned let core: EngineCore
+    let raw: OpaquePointer
     let scope: HookScope
 
     /// The context the engine renders through.
     public var renderer: Context {
         scope.check("LoadContext.renderer")
         return core.context
+    }
+
+    /// The scene's streaming configuration as it stands before init: what a
+    /// game may size its loads by.
+    public var streaming: StreamingConfig {
+        scope.check("LoadContext.streaming")
+        return Scene(handle: EngineHandle(raw: raw, core: core, scope: scope, owner: nil)).config
     }
 }
 
@@ -154,6 +162,13 @@ final class HookScope {
         case update = "update(_:dt:)"
         case render = "render(_:into:)"
         case graphicsSettingsChanged = "graphicsSettingsChanged(_:_:)"
+        /// A ``Scene/stream(focus:_:)`` pass's closure, for one slot.
+        case streamFill = "Scene.stream(focus:_:) closure"
+
+        /// What ended, for a message.
+        var ended: String {
+            self == .streamFill ? "the \(rawValue) returned for its slot" : "the game's \(rawValue) hook returned"
+        }
     }
 
     let kind: Kind
@@ -172,7 +187,7 @@ final class HookScope {
     func check(_ what: @autoclosure () -> String) {
         guard isLive else {
             fatalError(
-                "StickShift: \(what()) was used after the game's \(kind.rawValue) hook returned. "
+                "StickShift: \(what()) was used after \(kind.ended). "
                     + "A context is valid only during the hook it is passed to; don't keep it."
             )
         }
@@ -254,6 +269,8 @@ final class EngineCore {
     var lastRenderError: (any Error)?
     /// Where ``Engine/load()`` is.
     var loadPhase: LoadPhase = .notLoaded
+    /// The game's components, registered with the engine on first use.
+    let components = ComponentRegistry()
 
     enum LoadPhase {
         case notLoaded, loading, loaded
@@ -313,10 +330,10 @@ final class EngineCore {
     }
 
     /// Run ``Game/load(_:)`` with a context that is dead once it returns.
-    func load() async throws {
+    func load(_ raw: OpaquePointer) async throws {
         let scope = HookScope(.load)
         defer { scope.end() }
-        try await game.load(LoadContext(core: self, scope: scope))
+        try await game.load(LoadContext(core: self, raw: raw, scope: scope))
     }
 }
 

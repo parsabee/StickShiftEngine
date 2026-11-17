@@ -161,21 +161,3 @@ public struct ViewMetrics: Sendable, Equatable {
         }
     }
 }
-
-/// The engine's Graphics menu.
-///
-/// A host builds its native menu from the engine's description of it, and
-/// sends the engine a ``HostEvent/menu(_:)`` event with the tag of the item
-/// the player chose.
-public struct GraphicsMenu: Sendable {
-    /// A menu item's tag: what a ``HostEvent/menu(_:)`` event names.
-    public struct Tag: RawRepresentable, Hashable, Sendable {
-        /// The engine's number for the item.
-        public let rawValue: UInt32
-
-        /// Creates a tag from the engine's number for an item.
-        public init(rawValue: UInt32) {
-            self.rawValue = rawValue
-        }
-    }
-}
