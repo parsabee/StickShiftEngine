@@ -33,6 +33,12 @@
 //! not streamed, change the reach mid-run, and request two graphics settings
 //! changes (one before the reach change and one after) that rescale it.
 //!
+//! The Swift package ports both probes (`bindings/swift/StickShift/Tests`) and
+//! checks its lines against fixtures made from this file's `rust_run`: after
+//! changing what either probe does or prints, regenerate them with
+//! `bindings/swift/StickShift/Tests/Fixtures/generate-probe-fixtures.sh` and
+//! change the Swift port to match.
+//!
 //! C hooks never assert (a panic cannot unwind out of `extern "C"`): they
 //! record unexpected results, and the test checks them at the end.
 

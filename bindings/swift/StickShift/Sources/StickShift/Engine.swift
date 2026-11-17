@@ -601,7 +601,8 @@ public struct EngineState: Sendable, Equatable {
     /// In a call the game makes from a hook (a world, scene, camera, input,
     /// audio or graphics call), the process traps at that call, as at any
     /// failed call: the call has no result to give the game. On a poisoned
-    /// engine every other call but this state traps.
+    /// engine every other call on the engine or its services but this state
+    /// traps; calls on its ``Context`` still work.
     public var isPoisoned: Bool
     /// The game, the host or an event asked to exit.
     public var exitRequested: Bool
