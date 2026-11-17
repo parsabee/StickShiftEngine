@@ -2761,9 +2761,10 @@ StickShiftResult stickshift_engine_resume(struct StickShiftEngine *engine,
 
 /**
  * One display frame. See `docs/C_API.md`: housekeeping, the load hold, then
- * the session's frame (hosted) or the loop's (unhosted), whose render step
- * opens the context's frame, runs the render hook and submits it. `out` is
- * optional.
+ * the session's frame (a settings change applied, resized for and saved, then
+ * the fixed updates and the render), whose render step opens the context's
+ * frame, runs the render hook and submits it. An engine with no view yet runs
+ * the same frame with nothing to resize. `out` is optional.
  *
  * # Safety
  * `engine` must be NULL or a live engine; `tick` NULL or valid for its

@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use stickshift::*;
 use stickshift_camera::{Camera, ChaseController};
-use stickshift_core::driver::{drive_frame, Loop};
+use stickshift_core::driver::Loop;
 use stickshift_core::graphics::{DrawDistance, RenderScale, ShadowDistance, ShadowQuality};
 use stickshift_core::{
     Audio, Clock, EngineCtx, Game, GraphicsSettings, HostEvent, InputState, Key, MenuCommand,
@@ -1106,7 +1106,8 @@ fn c_event(e: HostEvent) -> StickShiftHostEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
-    /// `stickshift_engine_init` and `drive_frame`: tools and traces.
+    /// `stickshift_engine_init`, and the session's frame with no view: tools
+    /// and traces.
     Unhosted,
     /// `stickshift_engine_resume` and the session's frame: a view.
     Hosted,
@@ -1155,13 +1156,8 @@ fn rust_run(mode: Mode, frames: u32) -> Vec<String> {
             }
         }
         let elapsed = Duration::from_nanos(elapsed_ns(f));
-        let (steps, requests) = match mode {
-            Mode::Unhosted => (
-                drive_frame(&mut session.lp, &mut game, &mut renderer, elapsed),
-                Requests::NONE,
-            ),
-            Mode::Hosted => session.frame(Clock::Elapsed(elapsed), &mut game, &mut renderer),
-        };
+        // Hosted or not, the engine ticks the session's frame.
+        let (steps, requests) = session.frame(Clock::Elapsed(elapsed), &mut game, &mut renderer);
         let lp = &mut session.lp;
         let line = format!(
             "F{f} ev={} tick={steps} {} gfx={} cam={} in={} aud={} rnd={}",
@@ -1790,24 +1786,42 @@ fn persisted_settings_round_trip_through_a_throwaway_suite() {
         assert_eq!((g.has_pending, g.revision), (0, 0));
         assert_eq!(rust_settings(g.current), off_near);
         assert!(rig.mini().settings.is_empty(), "no hook for a restore");
-        // Unhosted, a request applies at the next tick but is not saved (as
-        // with Rust's own driver); a menu choice still is.
+        // Unhosted, as hosted: the game's own request is saved when the next
+        // tick applies it, and so is a menu choice, at once.
         rig.request(GraphicsSettings::default());
         assert_eq!(
-            rig.tick(STICKSHIFT_CLOCK_FIXED_STEP, 0).graphics_revision,
-            1
+            suite.0.load(),
+            Some(off_near),
+            "a request alone saves nothing"
         );
-        assert_eq!(suite.0.load(), Some(off_near));
-        push(rig.e, &[menu_event(303)]);
+        let out = rig.tick(STICKSHIFT_CLOCK_FIXED_STEP, 0);
+        assert_eq!(
+            (out.graphics_revision, out.requests),
+            (1, STICKSHIFT_REQUEST_MENU_SYNC)
+        );
         assert_eq!(suite.0.load(), Some(GraphicsSettings::default()));
+        // A tick that applies nothing saves nothing and asks for no sync.
+        assert_eq!(rig.tick(STICKSHIFT_CLOCK_FIXED_STEP, 0).requests, 0);
+        push(rig.e, &[menu_event(301)]);
+        assert_eq!(
+            suite.0.load(),
+            Some(GraphicsSettings {
+                draw_distance: DrawDistance::Near,
+                ..GraphicsSettings::default()
+            })
+        );
     }
     {
         // Without the flag nothing is restored or saved.
         let rig = Rig::plain();
         assert_eq!(rig.graphics().has_pending, 0);
         rig.init();
+        let saved = suite.0.load();
         push(rig.e, &[menu_event(102)]);
-        assert_eq!(suite.0.load(), Some(GraphicsSettings::default()));
+        rig.request(off_near);
+        rig.tick(STICKSHIFT_CLOCK_FIXED_STEP, 0);
+        assert_eq!(rig.graphics().revision, 2);
+        assert_eq!(suite.0.load(), saved);
     }
 }
 

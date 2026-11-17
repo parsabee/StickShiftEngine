@@ -573,8 +573,10 @@ impl Session {
     /// the next reading.
     ///
     /// For a host that drives [`drive_frame`] on [`lp`](Self::lp) itself, with
-    /// none of the frame's settings side effects (no resize, no save): a tool,
-    /// a test, or the C API's engine before a view is reported.
+    /// none of the frame's settings side effects (no resize, no save): a tool
+    /// or a test. A host with no view yet can still call [`frame`](Self::frame),
+    /// which then has nothing to resize but saves an applied change; the C
+    /// API's engine does that.
     pub fn read_clock(&mut self, clock: Clock) -> Duration {
         self.elapsed(clock)
     }

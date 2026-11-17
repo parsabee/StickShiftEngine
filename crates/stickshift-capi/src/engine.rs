@@ -6,8 +6,8 @@
 //!
 //! An engine owns a core [`Session`] (which owns the [`Loop`]) and renders
 //! through the context it is attached to. The host drives it: one
-//! `stickshift_engine_tick` per display refresh runs the real [`drive_frame`],
-//! through two adapters:
+//! `stickshift_engine_tick` per display refresh runs the session's frame, and so
+//! the real [`drive_frame`], through two adapters:
 //!
 //! - [`CGame`] is a [`Game`] whose hooks call the C game's callbacks, so
 //!   [`Loop::init_once`] and [`drive_frame`] call the C game exactly where they
@@ -36,6 +36,8 @@
 //! Inside a hook, the first context call after the game moved the camera
 //! pushes the camera to the context first, as Rust's `EngineCtx::renderer` does
 //! ([`before_context_call`]).
+//!
+//! [`drive_frame`]: stickshift_core::driver::drive_frame
 
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::ffi::c_void;
@@ -43,7 +45,7 @@ use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use stickshift_core::driver::{drive_frame, Loop};
+use stickshift_core::driver::Loop;
 use stickshift_core::graphics::{DrawDistance, RenderScale, ShadowDistance};
 use stickshift_core::{
     Audio, Clock, EngineCtx, Game, GraphicsSettings, HostEvent, Key, MenuCommand, MouseButton,
@@ -1255,9 +1257,10 @@ pub unsafe extern "C" fn stickshift_engine_resume(
 }
 
 /// One display frame. See `docs/C_API.md`: housekeeping, the load hold, then
-/// the session's frame (hosted) or the loop's (unhosted), whose render step
-/// opens the context's frame, runs the render hook and submits it. `out` is
-/// optional.
+/// the session's frame (a settings change applied, resized for and saved, then
+/// the fixed updates and the render), whose render step opens the context's
+/// frame, runs the render hook and submits it. An engine with no view yet runs
+/// the same frame with nothing to resize. `out` is optional.
 ///
 /// # Safety
 /// `engine` must be NULL or a live engine; `tick` NULL or valid for its
@@ -1351,15 +1354,10 @@ pub unsafe extern "C" fn stickshift_engine_tick(
         } else {
             e.holding.set(false);
             game.readback = readback;
-            let (steps, requests) = if e.hosted.get() {
-                session.frame(clock, game, renderer)
-            } else {
-                let elapsed = session.read_clock(clock);
-                (
-                    drive_frame(&mut session.lp, game, renderer, elapsed),
-                    Requests::NONE,
-                )
-            };
+            // Hosted or not, the session's frame: with no view it has nothing
+            // to resize, but it still saves an applied settings change and
+            // asks for a menu sync, as a menu choice does.
+            let (steps, requests) = session.frame(clock, game, renderer);
             game.readback = None;
             e.bump(|c| c.frames += 1);
             let frame = e.frame_out.take();
