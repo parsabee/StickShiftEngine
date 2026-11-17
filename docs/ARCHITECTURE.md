@@ -64,7 +64,8 @@ tree) packed onto the render seam's `MeshData`/`VertexLayout`, with a load-once/
 depends only on `gltf`, `stickshift-math`, `stickshift-render-api`, and (for `spawn_scene`, behind the default
 `ecs` feature) `stickshift-ecs` — the `stickshift-assets → stickshift-ecs` edge stays acyclic (`stickshift-ecs` never
 depends on `stickshift-assets`) and no `metal` enters the tree. The C API uses the crate without the
-`ecs` feature, so no ECS crate reaches `libstickshift`. Imported geometry packs onto `[pos,normal,color]` with a default vertex color so it renders
+`ecs` feature, so its `spawn_scene` glue stays out of `libstickshift`; the library's ECS is the
+engine's own world (§3a). Imported geometry packs onto `[pos,normal,color]` with a default vertex color so it renders
 through the existing pipeline immediately; parsed UVs are retained on `MeshAsset::uvs` for the
 textured pipeline. `playable-demo` loads every mesh it draws this way: the player and
 traffic are real committed CC0 car models (`assets/*.glb`), and the road, skyline, and scenery come
@@ -176,16 +177,76 @@ the top. Game concepts (car, road, score) never enter engine crates — the boun
 `stickshift-scene`, `stickshift-assets`, `stickshift-audio` and `stickshift-ecs` fail if a game-named symbol appears in
 them.
 
-For how `games/playable-demo` sits on that boundary in practice — the only consumer of the public
-API today — see [PLAYABLE_DEMO.md](PLAYABLE_DEMO.md); for standing up a new game on it, see
+For how `games/playable-demo` sits on that boundary in practice, see
+[PLAYABLE_DEMO.md](PLAYABLE_DEMO.md); for standing up a new game on it, see
 [GETTING_STARTED.md](GETTING_STARTED.md).
+
+### 3a. Layers: one engine, two ways in
+
+A game reaches the engine in one of two ways, and both run the same loop:
+
+```
+  Rust game (games/playable-demo)            C or Swift game (examples/c/engine.c, a Swift Game)
+    impl stickshift_core::Game                 StickShiftGame callbacks  (Swift: import StickShift)
+            |                                          |  stickshift.h: API 4, minor 1
+            |                                  crates/stickshift-capi (libstickshift)
+            |                                    StickShiftEngine: the CGame adapter (a Game),
+            |                                    CapiRenderer (a Renderer onto the context),
+            |                                    run-time scopes, world / scene / camera / input /
+            |                                    audio / graphics / menu calls
+  stickshift_core::run (feature `windowed`)            |
+    winit window and event loop,               the host's view and display link:
+    the AppKit Graphics menu                   stickshift_engine_tick, _push_events
+    winit events -> HostEvent                          |
+            \_____________________   _______________/
+                                  \ /
+                    stickshift_core::session::Session
+        the frame clock, the drawable size, settings restored and saved, menu choices,
+        Escape, focus loss and resizes; what only the platform can do comes back as Requests
+                                   |
+               stickshift_core::driver::Loop and drive_frame
+        Accumulator, InputState, Camera, Audio, GraphicsState, Scene (the hecs World)
+                                   |
+                    Renderer (the stickshift-render-api seam)
+         MetalRenderer (stickshift-render)    CapiRenderer -> StickShiftContext -> Metal or null
+```
+
+- **One loop, one session.** The winit runner is an adapter: it maps winit's window events to
+  `HostEvent`s and acts on the returned `Requests` (exit, full screen, the native menu). A C or
+  Swift host does the same through `stickshift_engine_push_events` and the request bits of each
+  call. Both drive `Session`, which runs `drive_frame`, so the frame cadence, the settings side
+  effects and the clock are one implementation, not two that agree.
+- **The host drives.** Nothing in the engine owns a thread, a window or a timer. The winit runner
+  calls `Session::frame` on each redraw; a C host calls `stickshift_engine_tick` from its display
+  link, which runs the same `Session::frame` (with nothing to resize before a view is reported).
+  `STICKSHIFT_CLOCK_ENGINE` reads `Instant::now()` where the runner reads it; tools tick with a
+  fixed step, as the headless driver does.
+- **Adapters, not reimplementations.** `CGame` is a `Game` whose hooks call the C callbacks, so
+  `Loop::init_once` and `drive_frame` call a C game exactly where they call a Rust one.
+  `CapiRenderer` is the `Renderer` the loop pushes the camera, render settings and drawable sizes
+  through, onto the attached context; the game itself draws through the C frame the engine opens
+  for its render hook.
+- **Borrows become scopes.** During a tick the loop holds the engine's state mutably, so a C hook
+  reaches it only through the `EngineCtx` the loop passed that hook, and a stream spawn callback
+  only through the world its pass lends it. The C layer records the running hook on a scope stack
+  and refuses, with `STICKSHIFT_ERROR_WRONG_STATE`, any call Rust's borrows would not allow there
+  (`docs/C_API.md`, "Scopes and threads").
+- **The ECS is the engine's own.** C games register components at run time through
+  `stickshift-ecs`'s `dynamic` feature, which gives each one a Rust type of its own, so hecs
+  partitions archetypes, orders queries and reuses ids exactly as for a Rust game's types. The
+  engine components keep their Rust types. Queries copy rows into snapshots, so nothing borrowed
+  from the world crosses the boundary.
+- **No windowing in the library.** `libstickshift` builds `stickshift-core` without `windowed`, so
+  neither winit nor the AppKit menu reaches it (a CI dependency firewall checks), and settings
+  persistence is Foundation only. The library still links AppKit through `stickshift-render`'s
+  `cocoa` dependency; gating that on macOS comes with iOS.
 
 ## 4. Engine stack
 
 | Concern | Choice | Notes |
 |---|---|---|
 | Rendering | raw Metal (`metal`) | Apple-only; behind `stickshift-render-api` |
-| Windowing | `winit` (macOS, in the Rust runner) | iOS (v0.9): the host app owns the view and the display link |
+| Windowing | `winit` (macOS, in the Rust runner) | A C or Swift host owns its view and display link and drives the same `Session` (§3a); iOS (v0.9) works that way |
 | Math | `glam` | leaf crate |
 | ECS | `hecs` | already integrated in the prototype |
 | Physics | none | removed in v0.2; a game brings its own (see §5) |
