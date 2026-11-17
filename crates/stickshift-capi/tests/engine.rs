@@ -1842,14 +1842,28 @@ unsafe extern "C" fn calls_from_completion(user: *mut c_void, _: *const StickShi
     probe.calls = engine_calls(probe.engine, null_mut());
 }
 
-/// Every function that takes an engine, from the header, without the
-/// `stickshift_` prefix (and without `engine_create`, which makes one).
-fn header_engine_functions() -> Vec<String> {
-    let header =
-        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/include/stickshift.h"))
-            .expect("the generated header");
+/// The header with its comments removed, so a parenthesis in a doc comment
+/// cannot hide the declaration after it.
+fn without_comments(header: &str) -> String {
+    let mut code = String::with_capacity(header.len());
+    let mut rest = header;
+    while let Some(start) = rest.find("/*") {
+        code.push_str(&rest[..start]);
+        let end = rest[start..].find("*/").expect("every comment is closed");
+        rest = &rest[start + end + 2..];
+    }
+    code.push_str(rest);
+    code.lines()
+        .map(|line| line.split("//").next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Every function in `header` whose first parameter is an engine, without
+/// the `stickshift_` prefix (so not `engine_create`, which makes one).
+fn engine_functions(header: &str) -> Vec<String> {
     let mut names = Vec::new();
-    for declaration in header.split(';') {
+    for declaration in without_comments(header).split(';') {
         let Some(open) = declaration.find('(') else {
             continue;
         };
@@ -1862,17 +1876,56 @@ fn header_engine_functions() -> Vec<String> {
             continue;
         };
         let first = params[1..].split(',').next().unwrap_or("");
-        if first.contains("StickShiftEngine *") && name != "engine_create" {
+        if first.contains("StickShiftEngine *") {
             names.push(name.to_owned());
         }
     }
     names
 }
 
+/// The generated header's engine functions ([`engine_functions`]).
+fn header_engine_functions() -> Vec<String> {
+    let header =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/include/stickshift.h"))
+            .expect("the generated header");
+    let names = engine_functions(&header);
+    // Counted another way, so a parser that drops a declaration fails here:
+    // every `(` that opens a parameter list on an engine, comments removed.
+    let code = without_comments(&header);
+    let opens = code.matches("(struct StickShiftEngine *").count()
+        + code.matches("(const struct StickShiftEngine *").count();
+    assert_eq!(names.len(), opens, "{names:?}");
+    names
+}
+
+#[test]
+fn the_header_parser_reads_past_a_parenthesis_in_a_comment() {
+    let header = "/**\n * Run it (once); see stickshift_a(engine).\n */\n\
+                  StickShiftResult stickshift_engine_init(struct StickShiftEngine *engine);\n\
+                  // stickshift_b(struct StickShiftEngine *engine);\n\
+                  StickShiftResult stickshift_engine_create(struct StickShiftContext *ctx,\n\
+                  \x20   struct StickShiftEngine **out);\n\
+                  /* (x) */ StickShiftResult stickshift_engine_get_state(const struct \
+                  StickShiftEngine *engine, struct StickShiftEngineState *out);\n";
+    assert_eq!(
+        engine_functions(header),
+        ["engine_init", "engine_get_state"]
+    );
+}
+
 #[test]
 fn the_scope_matrix_names_every_engine_function() {
     let header = header_engine_functions();
-    assert!(header.len() > 40, "{header:?}");
+    // Each of these has a parenthesis in its doc comment.
+    for name in [
+        "engine_init",
+        "world_remove",
+        "world_query_release",
+        "audio_play_once",
+        "audio_play_looping",
+    ] {
+        assert!(header.iter().any(|h| h == name), "{name} in {header:?}");
+    }
     let named: Vec<&str> = CALLS.iter().map(|(n, _)| *n).collect();
     for name in &header {
         assert!(
