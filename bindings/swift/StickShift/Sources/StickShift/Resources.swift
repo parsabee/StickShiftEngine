@@ -67,12 +67,16 @@ public enum ColorSpace: Sendable {
 /// otherwise sent to it, holding the context until then. A context with an
 /// engine attached refuses every call from another thread, so a resource
 /// whose last reference goes on a background thread would otherwise leak.
-/// On the main thread, a destroy the context cannot take now (inside a
-/// callback, or a stream pass's closure) is retried once the call returns.
+///
+/// On the main thread the context refuses a call only while another call on
+/// it is in progress (`STICKSHIFT_ERROR_BUSY`); inside hooks, callbacks and
+/// stream closures it takes the destroy at once. No path reaches the busy
+/// case today (the context delivers its callbacks after the call that queued
+/// them returns), but should a deinit ever run inside a call, the destroy is
+/// sent to the main queue to run after it rather than lost.
 func destroyResource(of context: Context, _ destroy: @escaping @Sendable (OpaquePointer) -> StickShiftResult) {
     if Thread.isMainThread {
-        let result = destroy(context.raw)
-        guard result == STICKSHIFT_ERROR_BUSY || result == STICKSHIFT_ERROR_WRONG_STATE else { return }
+        guard destroy(context.raw) == STICKSHIFT_ERROR_BUSY else { return }
     }
     DispatchQueue.main.async { _ = destroy(context.raw) }
 }

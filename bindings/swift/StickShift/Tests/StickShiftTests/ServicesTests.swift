@@ -131,11 +131,11 @@ struct ServicesTests {
         engine.input.press(.space)
         engine.input.press(.space, isRepeat: true)
         engine.input.moveCursor(to: [10.5, 20.25])
-        engine.input.press(MouseButton.left)
+        engine.input.pressMouse(.left)
         engine.advance()
         #expect(game.presses == 2 && engine.input.isKeyDown(.space) && !engine.input.isKeyJustPressed(.space))
         #expect(engine.input.cursorPosition == [10.5, 20.25] && engine.input.isMouseDown(.left))
-        engine.input.release(MouseButton.left)
+        engine.input.releaseMouse(.left)
         #expect(!engine.input.isMouseDown(.left))
         engine.input.releaseAll()
         #expect(engine.input.isKeyJustReleased(.space))
@@ -143,12 +143,29 @@ struct ServicesTests {
         #expect(game.releases == 2 && game.held == [false, false, true, false])
     }
 
+    @Test func theArrowKeysAreKeysNotMouseButtons() throws {
+        // `Key` and `MouseButton` share `.left` and `.right`: the bare calls
+        // press and release the keys, as a driver steering a car writes them.
+        let engine = try idleEngine()
+        engine.input.press(.left)
+        engine.input.press(.right)
+        #expect(engine.input.isKeyDown(.left) && engine.input.isKeyDown(.right))
+        #expect(!engine.input.isMouseDown(.left) && !engine.input.isMouseDown(.right))
+        engine.input.release(.left)
+        engine.input.release(.right)
+        #expect(!engine.input.isKeyDown(.left) && !engine.input.isKeyDown(.right))
+        engine.input.pressMouse(.right)
+        #expect(engine.input.isMouseDown(.right) && !engine.input.isKeyDown(.right))
+        engine.input.releaseMouse(.right)
+        #expect(!engine.input.isMouseDown(.right))
+    }
+
     @Test func soundsAreCountedOnASilentEngine() throws {
         let audio = try idleEngine().audio
         let chime = audio.load("sounds/chime.wav")
-        let music = audio.load("sounds/music.ogg")
+        let music = audio.load("sounds/music.wav")
         #expect(audio.load("sounds/chime.wav") == chime, "a path loads once")
-        #expect(audio.path(of: music) == "sounds/music.ogg")
+        #expect(audio.path(of: music) == "sounds/music.wav")
         audio.playOnce(chime, volume: Volume(decibels: -6))
         audio.playOnce(chime)
         audio.playLooping(music, volume: .silent)
@@ -227,7 +244,7 @@ struct ServicesTests {
         #expect(game.streaming == .default)
     }
 
-    @Test func aResourceDroppedInAStreamClosureIsDestroyedAfterIt() async throws {
+    @Test func aResourceDroppedInAStreamClosureIsDestroyedAtOnce() throws {
         let context = try nullContext()
         let (vertices, indices) = triangle()
         var mesh: Mesh? = try context.makeMesh(layout: .positionNormalColor, vertices: vertices, indices: indices)
@@ -235,13 +252,14 @@ struct ServicesTests {
         func state() -> ResourceState { ResourceState(stickshift_resource_state(context.raw, id)) }
         let engine = try Engine(context: context, game: Scripted())
         try engine.initialize()
-        // The context takes no call inside a stream pass's closure: the
-        // destroy waits for the pass to end.
-        engine.scene.stream(focus: .zero) { _ in mesh = nil }
-        #expect(mesh == nil)
-        for _ in 0..<1000 where state() != .invalid {
-            try await Task.sleep(for: .milliseconds(2))
+        // A stream pass's closure may make context calls: the destroy is
+        // taken there, not sent for later.
+        var stateInside: ResourceState?
+        engine.scene.stream(focus: .zero) { _ in
+            guard mesh != nil else { return }
+            mesh = nil
+            stateInside = state()
         }
-        #expect(state() == .invalid)
+        #expect(stateInside == .invalid)
     }
 }

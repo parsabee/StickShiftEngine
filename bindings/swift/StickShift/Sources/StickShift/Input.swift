@@ -86,15 +86,17 @@ public struct HostInput {
         engine.push(.keyUp(key))
     }
 
-    /// Press `button`: ``HostEvent/mouseDown(_:)``.
+    /// Press the mouse `button`: ``HostEvent/mouseDown(_:)``. Named apart
+    /// from ``press(_:isRepeat:)``, as Rust's `press_mouse` is, because
+    /// ``Key`` and ``MouseButton`` share `.left` and `.right`.
     @discardableResult
-    public func press(_ button: MouseButton) -> HostRequests {
+    public func pressMouse(_ button: MouseButton) -> HostRequests {
         engine.push(.mouseDown(button))
     }
 
-    /// Release `button`: ``HostEvent/mouseUp(_:)``.
+    /// Release the mouse `button`: ``HostEvent/mouseUp(_:)``.
     @discardableResult
-    public func release(_ button: MouseButton) -> HostRequests {
+    public func releaseMouse(_ button: MouseButton) -> HostRequests {
         engine.push(.mouseUp(button))
     }
 

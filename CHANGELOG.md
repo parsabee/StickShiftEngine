@@ -79,7 +79,11 @@ API**.
   `GraphicsMenu` as data, from a hook's `EngineContext` or the `Engine`. Components register on
   first use. Swift ports of the C API's probe games print the Rust probes' lines. `EngineState`
   gains `isPoisoned`, and a mesh, texture, font or model released off the main thread while an
-  engine is attached is now destroyed on the main thread instead of leaking.
+  engine is attached is now destroyed on the main thread instead of leaking. A panic in the
+  engine's own work during `Engine.tick` or `Engine.push` no longer traps: the call returns
+  `.exit` (a tick with `TickResult.isPoisoned`) so the host can drop the engine; a panic in a
+  call the game makes from a hook still traps at that call. `HostInput` presses and releases
+  mouse buttons with `pressMouse(_:)` and `releaseMouse(_:)`, so `press(.left)` is the key.
 - **`stickshift_core::Session`**, the platform-free half of the windowed runner: the frame clock
   (the first frame, and the first after a menu choice or `reset_clock`, banks exactly one step),
   the drawable sized for the view and the render scale, graphics settings restored at start-up

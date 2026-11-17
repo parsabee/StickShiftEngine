@@ -99,8 +99,12 @@ public struct Scene {
     /// per new slot, in slot order. The ``StreamSlot`` it gets spawns into
     /// the world and tracks what it spawns for despawning later.
     ///
-    /// Inside `fill`, only the world may be used: spawning, reading and
-    /// changing it. Anything else (the scene, the camera, another pass) traps.
+    /// Inside `fill`, the world is the only engine service it may use:
+    /// spawning, reading and changing it. The scene's other calls (another
+    /// pass, a rebase), the camera, input, audio and graphics trap, and
+    /// ``setConfig(_:)`` throws ``StickShiftError/Code-swift.struct/wrongState``.
+    /// The ``Context``'s calls (making or dropping a mesh, a texture, a model)
+    /// are allowed.
     public func stream(focus: SIMD3<Float>, _ fill: (borrowing StreamSlot) -> Void) {
         handle.check("Scene.stream(focus:_:)")
         withoutActuallyEscaping(fill) { fill in

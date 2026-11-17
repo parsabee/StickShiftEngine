@@ -65,10 +65,10 @@ public struct AudioStats: Sendable, Equatable {
 public struct Audio {
     let handle: EngineHandle
 
-    /// Load the sound at `path` (a file kira can decode: WAV, OGG, FLAC, MP3).
-    /// Loading a path again returns the same sound. A file that cannot be
-    /// read or decoded gives a sound that plays silence, with a line on
-    /// stderr, as in Rust.
+    /// Load the sound at `path`, a PCM WAV file: the engine's audio decodes
+    /// WAV only. Loading a path again returns the same sound. Any other file,
+    /// or one that cannot be read or decoded, gives a sound that plays
+    /// silence, with a line on stderr, as in Rust.
     public func load(_ path: String) -> Sound {
         var out = StickShiftSound()
         handle.call("Audio.load(_:)") { raw in
