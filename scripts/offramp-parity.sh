@@ -82,9 +82,13 @@ echo "== building"
 # feature on one side only (fast-math, scalar-math, ...) would make "the same
 # Rust" compute other bits, so both must resolve the same builds of each. Both
 # invocations run here, with this environment and no --target, so they share
-# the target and the profile.
+# the target and the profile. Every kind of dependency counts (`-e features`
+# alone means normal, build and dev): the demo's binary and its two examples
+# are built in one invocation, so its dev-dependencies' features are unified
+# into all three. For libstickshift, whose build uses no dev-dependency, that
+# is stricter than it needs to be.
 resolved() {
-    cargo tree --quiet -p "$1" -e normal,features -f '{p} {f}' --prefix none \
+    cargo tree --quiet -p "$1" -e features -f '{p} {f}' --prefix none \
         | grep -E '^(glam|hecs) v' | sed 's/ (\*)$//' | sort -u
 }
 demo_deps="$(resolved playable-demo)" || { echo "cargo tree -p playable-demo failed" >&2; exit 1; }
