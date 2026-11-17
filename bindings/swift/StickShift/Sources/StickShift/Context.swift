@@ -9,9 +9,9 @@ import simd
 /// A rendering context: the GPU device, every resource, and the frames drawn
 /// with them.
 ///
-/// A context renders into a `CAMetalLayer` you own (see ``StickShiftView``), into
-/// an offscreen texture you can read back, or, with ``Backend/null``, nowhere at
-/// all, for tests on machines without a GPU.
+/// A context renders into a `CAMetalLayer` you own (see `StickShiftView`, in
+/// `StickShiftAppKit`), into an offscreen texture you can read back, or, with
+/// ``Backend/null``, nowhere at all, for tests on machines without a GPU.
 ///
 /// The C API lets one thread at a time use a context, so a `Context` and
 /// everything it creates are bound to the main actor. Resources (``Mesh``,
@@ -254,7 +254,7 @@ public final class Context {
     /// Housekeeping uploads finished model loads, notices finished GPU frames
     /// and copies finished read-backs; their completions (``loadModel(contentsOf:)``,
     /// ``PixelReadback``) arrive here. Call it once per frame:
-    /// ``StickShiftView`` does. While a model load or read-back is pending, the
+    /// `StickShiftView` does. While a model load or read-back is pending, the
     /// context also polls by itself, so an `await` on one completes without a
     /// render loop.
     @discardableResult
