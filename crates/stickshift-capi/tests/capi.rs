@@ -1514,9 +1514,22 @@ fn settings_round_trip_and_are_validated() {
             stickshift_context_set_settings(ctx.0, &settings),
             STICKSHIFT_ERROR_INVALID_ARGUMENT
         );
+        // A null context resizes (a Metal offscreen one keeps its size), and
+        // keeps the scale it is given.
+        assert_eq!(stickshift_context_resize(ctx.0, 16, 12, 2.0), STICKSHIFT_OK);
+        let (mut width, mut height, mut scale) = (0, 0, 0.0);
         assert_eq!(
-            stickshift_context_resize(ctx.0, 16, 16, 1.0),
-            STICKSHIFT_ERROR_UNSUPPORTED
+            stickshift_context_get_size(ctx.0, &mut width, &mut height),
+            STICKSHIFT_OK
+        );
+        assert_eq!(
+            stickshift_context_get_scale(ctx.0, &mut scale),
+            STICKSHIFT_OK
+        );
+        assert_eq!((width, height, scale), (16, 12, 2.0));
+        assert_eq!(
+            stickshift_context_resize(ctx.0, 0, 12, 2.0),
+            STICKSHIFT_ERROR_INVALID_ARGUMENT
         );
     }
 }

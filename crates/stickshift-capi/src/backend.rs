@@ -80,6 +80,9 @@ pub(crate) trait Backend {
     ) -> Result<TextureHandle, Error>;
     fn destroy_texture(&mut self, texture: TextureHandle);
     fn surface_size(&self) -> (u32, u32);
+    /// Whether [`resize`](Self::resize) changes the drawable: a layer or the
+    /// null backend, not a Metal offscreen texture.
+    fn can_resize(&self) -> bool;
     fn resize(&mut self, width: u32, height: u32, scale: f32);
     fn settings(&self) -> RenderSettings;
     fn set_settings(&mut self, settings: &RenderSettings);
@@ -93,6 +96,16 @@ pub(crate) trait Backend {
     /// Encode and commit `frame` without waiting for the GPU, or `None` if the
     /// frame had to be skipped (no free frame slot, no drawable).
     fn submit(&mut self, frame: &FrameData<'_>) -> Option<Submitted>;
+    /// Wait, at most `timeout`, until a frame slot is free (fewer than the most
+    /// frames in flight). Whether one is.
+    fn wait_for_slot(&self, timeout: std::time::Duration) -> bool;
+    /// Wait, at most `timeout`, until the GPU has finished frame `frame`.
+    /// Whether it has.
+    fn wait_for_frame(&self, frame: u64, timeout: std::time::Duration) -> bool;
+    /// The null backend, for the crate's tests.
+    fn as_null(&mut self) -> Option<&mut NullBackend> {
+        None
+    }
 }
 
 /// No GPU: handles are counters, frames complete as they are submitted, and
@@ -103,6 +116,8 @@ pub(crate) struct NullBackend {
     next_mesh: u32,
     next_texture: u32,
     submitted: u64,
+    /// Frame slots a test holds, as if that many frames were on a GPU.
+    pub(crate) held_slots: u64,
 }
 
 impl NullBackend {
@@ -113,6 +128,7 @@ impl NullBackend {
             next_mesh: 0,
             next_texture: 0,
             submitted: 0,
+            held_slots: 0,
         }
     }
 }
@@ -164,6 +180,10 @@ impl Backend for NullBackend {
         self.size
     }
 
+    fn can_resize(&self) -> bool {
+        true
+    }
+
     fn resize(&mut self, width: u32, height: u32, _: f32) {
         self.size = (width, height);
     }
@@ -177,7 +197,7 @@ impl Backend for NullBackend {
     }
 
     fn frames_in_flight(&self) -> u64 {
-        0
+        self.held_slots
     }
 
     fn submitted_frames(&self) -> u64 {
@@ -193,6 +213,20 @@ impl Backend for NullBackend {
         (1..=self.submitted)
             .contains(&frame)
             .then_some(std::time::Duration::ZERO)
+    }
+
+    /// Frames complete as they are submitted, so only slots a test holds are
+    /// ever taken, and they stay taken: no waiting changes anything.
+    fn wait_for_slot(&self, _: std::time::Duration) -> bool {
+        self.held_slots < crate::context::MAX_FRAMES_IN_FLIGHT
+    }
+
+    fn wait_for_frame(&self, frame: u64, _: std::time::Duration) -> bool {
+        frame <= self.submitted
+    }
+
+    fn as_null(&mut self) -> Option<&mut NullBackend> {
+        Some(self)
     }
 
     fn submit(&mut self, frame: &FrameData<'_>) -> Option<Submitted> {

@@ -5,8 +5,9 @@
  *
  * Exercises the whole lifecycle through the header (context, mesh, borrowed
  * texture data, a model loaded off-thread with a completion callback and drawn
- * whole and by part, a frame with a read-back, events, stats) and checks the
- * pixels: something was drawn
+ * whole and by part, a frame with a read-back, events, stats, and the context's sticky
+ * camera, sun, scale, safe area and last-frame record) and checks the pixels: something
+ * was drawn
  * on Metal, zeros on the null backend. Exits 0 on success, 1 on failure, and 0
  * with a message when Metal is requested but no device exists.
  *
@@ -121,6 +122,31 @@ int main(int argc, char **argv) {
     CHECK(stickshift_context_flush(ctx), STICKSHIFT_OK);
     REQUIRE(model_events == 1);
     CHECK(model_result, STICKSHIFT_OK);
+    /* Waiting on a model that has loaded returns at once. */
+    CHECK(stickshift_model_wait(ctx, model, 0), STICKSHIFT_OK);
+    StickShiftModel no_model = {12345};
+    CHECK(stickshift_model_wait(ctx, no_model, 0), STICKSHIFT_ERROR_INVALID_HANDLE);
+
+    /* The sticky state can be set and read outside a frame. */
+    float ui_scale = 0.0f;
+    CHECK(stickshift_context_get_scale(ctx, &ui_scale), STICKSHIFT_OK);
+    REQUIRE(ui_scale == 1.0f);
+    float insets[4] = {4, 0, 2, 0}, read_insets[4] = {0};
+    CHECK(stickshift_context_set_safe_area(ctx, insets), STICKSHIFT_OK);
+    CHECK(stickshift_context_get_safe_area(ctx, read_insets), STICKSHIFT_OK);
+    REQUIRE(memcmp(insets, read_insets, sizeof insets) == 0);
+    insets[1] = -1.0f;
+    CHECK(stickshift_context_set_safe_area(ctx, insets), STICKSHIFT_ERROR_INVALID_ARGUMENT);
+    StickShiftSunSky sun;
+    stickshift_sun_sky_default(&sun);
+    sun.sun_azimuth_deg = 75.0f;
+    CHECK(stickshift_context_set_sun_sky(ctx, &sun), STICKSHIFT_OK);
+    StickShiftSunSky read_sun;
+    CHECK(stickshift_context_get_sun_sky(ctx, &read_sun), STICKSHIFT_OK);
+    REQUIRE(read_sun.sun_azimuth_deg == 75.0f);
+    /* A null context resizes; a Metal offscreen one keeps its size. */
+    CHECK(stickshift_context_resize(ctx, WIDTH, HEIGHT, 1.0f),
+          use_null ? STICKSHIFT_OK : STICKSHIFT_ERROR_UNSUPPORTED);
     StickShiftVec3 lo, hi;
     CHECK(stickshift_model_get_bounds(ctx, model, &lo, &hi), STICKSHIFT_OK);
     REQUIRE(hi.x > lo.x);
@@ -139,6 +165,10 @@ int main(int argc, char **argv) {
         stickshift_mat4_mul(stickshift_mat4_perspective(0.9f, (float)WIDTH / HEIGHT, 0.1f, 50.0f),
                        stickshift_mat4_look_at(eye, target, up));
     camera.position = eye;
+    CHECK(stickshift_context_set_camera(ctx, &camera), STICKSHIFT_OK);
+    StickShiftCamera read_camera;
+    CHECK(stickshift_context_get_camera(ctx, &read_camera), STICKSHIFT_OK);
+    REQUIRE(memcmp(&read_camera, &camera, sizeof camera) == 0);
     CHECK(stickshift_frame_set_camera(frame, &camera), STICKSHIFT_OK);
 
     StickShiftLight lamp = {STICKSHIFT_LIGHT_POINT, {0.5f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f},
@@ -177,6 +207,19 @@ int main(int argc, char **argv) {
     uint64_t number = 0;
     CHECK(stickshift_frame_submit(frame, NULL, &number), STICKSHIFT_OK);
     REQUIRE(number == 1);
+
+    /* What the frame recorded: the triangle and the model's parts, the HUD bar, two
+     * lights, the camera and the sun. */
+    StickShiftFrameRecord record;
+    memset(&record, 0, sizeof record);
+    record.size = sizeof record;
+    CHECK(stickshift_context_get_last_frame(ctx, &record), STICKSHIFT_OK);
+    REQUIRE(record.submitted == 1 && record.frame_number == 1);
+    REQUIRE(record.draw_count >= 4 && (record.draw_count - 1) % 3 == 0);
+    REQUIRE(record.draws[0].source == mesh.id && record.draws[1].source == model.id);
+    REQUIRE(record.quad_count == 1 && record.quads[0].width == 20.0f);
+    REQUIRE(record.light_count == 2 && record.sun.sun_azimuth_deg == 75.0f);
+    REQUIRE(memcmp(&record.camera, &camera, sizeof camera) == 0);
 
     CHECK(stickshift_context_flush(ctx), STICKSHIFT_OK);
     int completed = 0, read_back = 0;

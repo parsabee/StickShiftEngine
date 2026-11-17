@@ -36,6 +36,15 @@ include = [
     "StickShiftVertexLayout",
     "StickShiftShadowQuality",
     "StickShiftFill",
+    "StickShiftAudioOutput",
+    "StickShiftFramePacing",
+    "StickShiftClock",
+    "StickShiftHostEventKind",
+    "StickShiftKey",
+    "StickShiftMouseButton",
+    "StickShiftShadowDistance",
+    "StickShiftDrawDistance",
+    "StickShiftRenderScale",
 ]
 
 [const]

@@ -29,6 +29,10 @@ stickshift-render-api.workspace = true
 # A path dependency rather than `workspace = true` so `default-features = false`
 # takes effect.
 stickshift-assets = { path = "../stickshift-assets", default-features = false }
+# The engine loop the C API's engine object runs (`Loop`, `drive_frame`, `Session`),
+# without its `windowed` feature, so neither winit nor the AppKit menu reaches
+# libstickshift. Also a path dependency, for `default-features = false`.
+stickshift-core = { path = "../stickshift-core", default-features = false }
 
 [dev-dependencies]
 # Only to check that the projection helper matches the camera's.

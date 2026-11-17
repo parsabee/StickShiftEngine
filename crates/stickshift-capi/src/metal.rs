@@ -146,8 +146,32 @@ impl Backend for MetalBackend {
         self.renderer.surface_size()
     }
 
+    fn can_resize(&self) -> bool {
+        !self.offscreen
+    }
+
     fn resize(&mut self, width: u32, height: u32, scale: f32) {
         self.renderer.resize_surface(width, height, scale);
+    }
+
+    fn wait_for_slot(&self, timeout: std::time::Duration) -> bool {
+        self.renderer.wait_for_frame_slot(timeout)
+    }
+
+    fn wait_for_frame(&self, frame: u64, timeout: std::time::Duration) -> bool {
+        // Frames complete in submission order on the one queue; the completion
+        // handler counts a frame after returning its slot and filling its
+        // read-back, so polling the count is enough.
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if self.renderer.completed_frame_count() >= frame {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_micros(100));
+        }
     }
 
     fn settings(&self) -> RenderSettings {

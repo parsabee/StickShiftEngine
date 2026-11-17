@@ -11,6 +11,8 @@
 
 use std::ffi::{c_char, c_void};
 
+use crate::engine::StickShiftEngine;
+
 // ---------------------------------------------------------------------------
 // Versioning
 // ---------------------------------------------------------------------------
@@ -18,6 +20,11 @@ use std::ffi::{c_char, c_void};
 /// The API version this header describes. It increases with every incompatible
 /// change; set [`StickShiftContextDesc::api_version`] to it.
 pub const STICKSHIFT_API_VERSION: u32 = 4;
+
+/// The additive level within [`STICKSHIFT_API_VERSION`]: it grows by one with
+/// each release that only adds to the API. 0 is the surface before the engine
+/// object; 1 adds it. `stickshift_api_minor()` reports the library's.
+pub const STICKSHIFT_API_MINOR: u32 = 1;
 
 // ---------------------------------------------------------------------------
 // Results
@@ -58,6 +65,19 @@ pub const STICKSHIFT_ERROR_INTERNAL: StickShiftResult = -10;
 /// A wait gave up before what it was waiting for finished (a hung GPU, or a
 /// load that never completed).
 pub const STICKSHIFT_ERROR_TIMEOUT: StickShiftResult = -11;
+
+/// Not an error: the entity is gone or lacks the component, and nothing was
+/// done.
+pub const STICKSHIFT_ABSENT: StickShiftResult = 3;
+
+/// An engine call, or a call on a context with an engine attached, from a
+/// thread other than the one that created the engine.
+pub const STICKSHIFT_ERROR_WRONG_THREAD: StickShiftResult = -12;
+
+/// The game's init hook failed: the engine is failed, and every later
+/// `stickshift_engine_init`, `_resume` and `_tick` is
+/// `STICKSHIFT_ERROR_WRONG_STATE`. Destroy it.
+pub const STICKSHIFT_ERROR_ABORTED: StickShiftResult = -13;
 
 // ---------------------------------------------------------------------------
 // Enum-like values
@@ -571,4 +591,465 @@ pub struct StickShiftQuad {
     pub fill: StickShiftFill,
     /// The texture for `STICKSHIFT_FILL_TEXTURE` and `STICKSHIFT_FILL_SDF`.
     pub texture: StickShiftTexture,
+}
+
+// ---------------------------------------------------------------------------
+// The engine: fixed timestep, loop, hooks and host events
+// ---------------------------------------------------------------------------
+
+/// The fixed simulation step in integer nanoseconds: `1_000_000_000 / 60`.
+/// `STICKSHIFT_CLOCK_FIXED_STEP` banks exactly this much per tick.
+pub const STICKSHIFT_FIXED_DT_NS: u64 = 16_666_666;
+
+/// The most update hooks one tick runs; time past them is dropped.
+pub const STICKSHIFT_MAX_STEPS_PER_FRAME: u32 = 5;
+
+/// Where an engine's sound goes.
+pub type StickShiftAudioOutput = u32;
+/// Nowhere: every audio call is accepted and counted, nothing plays. Tools and
+/// tests (the default).
+pub const STICKSHIFT_AUDIO_SILENT: StickShiftAudioOutput = 0;
+/// The default output device, or silent (with one line on stderr) if there is
+/// none.
+pub const STICKSHIFT_AUDIO_DEVICE: StickShiftAudioOutput = 1;
+
+/// What a tick does when the GPU has no free frame slot.
+pub type StickShiftFramePacing = u32;
+/// Wait (at most a second) for a free frame slot before the render hook (the
+/// default). A tick read-back also waits for its frame to finish.
+pub const STICKSHIFT_FRAME_PACING_WAIT: StickShiftFramePacing = 0;
+/// Never wait: with no free slot the render hook still runs, into a frame that
+/// is then discarded and counted.
+pub const STICKSHIFT_FRAME_PACING_SKIP: StickShiftFramePacing = 1;
+
+/// Restore the player's graphics settings at create, and save them on every
+/// change.
+pub const STICKSHIFT_ENGINE_PERSIST_SETTINGS: u32 = 1 << 0;
+/// An Escape key-down event returns `STICKSHIFT_REQUEST_EXIT` (and still
+/// presses the key).
+pub const STICKSHIFT_ENGINE_QUIT_ON_ESCAPE: u32 = 1 << 1;
+/// After init, run no update or render while a model of the context is still
+/// loading: such a tick returns `STICKSHIFT_NOT_READY`.
+pub const STICKSHIFT_ENGINE_HOLD_UNTIL_LOADED: u32 = 1 << 2;
+
+/// Close the view and stop ticking: the view was closed, Escape was pressed
+/// with `STICKSHIFT_ENGINE_QUIT_ON_ESCAPE`, or the game asked to exit.
+pub const STICKSHIFT_REQUEST_EXIT: u32 = 1 << 0;
+/// Enter or leave full screen: the menu's full-screen item was chosen.
+pub const STICKSHIFT_REQUEST_TOGGLE_FULLSCREEN: u32 = 1 << 1;
+/// The settings or the full-screen state may have changed: refresh the
+/// native Graphics menu.
+pub const STICKSHIFT_REQUEST_MENU_SYNC: u32 = 1 << 2;
+
+/// Where a tick's elapsed time comes from.
+pub type StickShiftClock = u32;
+/// Exactly `STICKSHIFT_FIXED_DT_NS`: one update per tick. Tools and tests.
+pub const STICKSHIFT_CLOCK_FIXED_STEP: StickShiftClock = 0;
+/// `nanoseconds` passed since the last tick.
+pub const STICKSHIFT_CLOCK_ELAPSED: StickShiftClock = 1;
+/// `nanoseconds` is the host's monotonic clock now (`CLOCK_UPTIME_RAW` on
+/// Apple platforms); the tick banks the time since the last timestamp tick,
+/// saturating at 0. The first timestamp tick, and the first after a menu
+/// choice, `stickshift_engine_reset_clock` or a held tick, banks exactly
+/// `STICKSHIFT_FIXED_DT_NS`.
+pub const STICKSHIFT_CLOCK_TIMESTAMP: StickShiftClock = 2;
+/// As `STICKSHIFT_CLOCK_TIMESTAMP`, with the engine reading the monotonic clock
+/// itself, after the tick's settings step.
+pub const STICKSHIFT_CLOCK_ENGINE: StickShiftClock = 3;
+
+/// A host event's kind. Append-only.
+pub type StickShiftHostEventKind = u32;
+/// A key went down: `code` is a `STICKSHIFT_KEY_*` value, `flags` may hold
+/// `STICKSHIFT_HOST_EVENT_REPEAT`. A press of a key already held makes no edge.
+pub const STICKSHIFT_HOST_KEY_DOWN: StickShiftHostEventKind = 1;
+/// A key went up: `code` is a `STICKSHIFT_KEY_*` value.
+pub const STICKSHIFT_HOST_KEY_UP: StickShiftHostEventKind = 2;
+/// A mouse button went down: `code` is a `STICKSHIFT_MOUSE_*` value.
+pub const STICKSHIFT_HOST_MOUSE_DOWN: StickShiftHostEventKind = 3;
+/// A mouse button went up.
+pub const STICKSHIFT_HOST_MOUSE_UP: StickShiftHostEventKind = 4;
+/// The cursor moved to `x`, `y`, in points from the view's top-left.
+pub const STICKSHIFT_HOST_CURSOR: StickShiftHostEventKind = 5;
+/// The view lost the keyboard: every key and button is released.
+pub const STICKSHIFT_HOST_FOCUS_LOST: StickShiftHostEventKind = 6;
+/// The view is now `width` × `height` physical pixels at `scale_factor`: the
+/// camera's aspect follows, the drawable is resized, and
+/// `STICKSHIFT_REQUEST_MENU_SYNC` is returned.
+pub const STICKSHIFT_HOST_VIEW_RESIZED: StickShiftHostEventKind = 7;
+/// The view moved to a display of another pixel density: the drawable is
+/// resized, the aspect is left alone.
+pub const STICKSHIFT_HOST_SCALE_CHANGED: StickShiftHostEventKind = 8;
+/// The view's safe-area insets changed: `insets`, in points.
+pub const STICKSHIFT_HOST_SAFE_AREA: StickShiftHostEventKind = 9;
+/// A Graphics menu item was chosen: `code` is its tag.
+pub const STICKSHIFT_HOST_MENU: StickShiftHostEventKind = 10;
+/// The user asked to close the view: `STICKSHIFT_REQUEST_EXIT`.
+pub const STICKSHIFT_HOST_CLOSE: StickShiftHostEventKind = 11;
+/// `STICKSHIFT_HOST_KEY_DOWN`: the platform marked the press an auto-repeat.
+pub const STICKSHIFT_HOST_EVENT_REPEAT: u32 = 1 << 0;
+
+/// A key, by physical position. Append-only.
+pub type StickShiftKey = u32;
+/// The `W` key.
+pub const STICKSHIFT_KEY_W: StickShiftKey = 0;
+/// The `A` key.
+pub const STICKSHIFT_KEY_A: StickShiftKey = 1;
+/// The `S` key.
+pub const STICKSHIFT_KEY_S: StickShiftKey = 2;
+/// The `D` key.
+pub const STICKSHIFT_KEY_D: StickShiftKey = 3;
+/// The `Q` key.
+pub const STICKSHIFT_KEY_Q: StickShiftKey = 4;
+/// The `E` key.
+pub const STICKSHIFT_KEY_E: StickShiftKey = 5;
+/// The left arrow.
+pub const STICKSHIFT_KEY_LEFT: StickShiftKey = 6;
+/// The right arrow.
+pub const STICKSHIFT_KEY_RIGHT: StickShiftKey = 7;
+/// The up arrow.
+pub const STICKSHIFT_KEY_UP: StickShiftKey = 8;
+/// The down arrow.
+pub const STICKSHIFT_KEY_DOWN: StickShiftKey = 9;
+/// The space bar.
+pub const STICKSHIFT_KEY_SPACE: StickShiftKey = 10;
+/// The escape key.
+pub const STICKSHIFT_KEY_ESCAPE: StickShiftKey = 11;
+
+/// A mouse button. Append-only.
+pub type StickShiftMouseButton = u32;
+/// The left button.
+pub const STICKSHIFT_MOUSE_LEFT: StickShiftMouseButton = 0;
+/// The right button.
+pub const STICKSHIFT_MOUSE_RIGHT: StickShiftMouseButton = 1;
+/// The middle button.
+pub const STICKSHIFT_MOUSE_MIDDLE: StickShiftMouseButton = 2;
+
+/// How to create an engine.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct StickShiftEngineDesc {
+    /// Must be `STICKSHIFT_API_VERSION`.
+    pub api_version: u32,
+    /// `sizeof(StickShiftEngineDesc)`.
+    pub size: u32,
+    /// A `STICKSHIFT_AUDIO_*` value.
+    pub audio: StickShiftAudioOutput,
+    /// A `STICKSHIFT_FRAME_PACING_*` value.
+    pub pacing: StickShiftFramePacing,
+    /// `STICKSHIFT_ENGINE_*` bits; any other bit is invalid.
+    pub flags: u32,
+    /// Reserved; must be 0.
+    pub reserved: u32,
+    /// With `STICKSHIFT_ENGINE_PERSIST_SETTINGS`: NULL for the standard user
+    /// defaults, else the name of a defaults suite (copied). Must be NULL
+    /// without the flag.
+    pub settings_suite: *const c_char,
+}
+
+/// The view an engine draws into, for `stickshift_engine_resume`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct StickShiftViewDesc {
+    /// `sizeof(StickShiftViewDesc)`.
+    pub size: u32,
+    /// The view's width in physical pixels.
+    pub width: u32,
+    /// The view's height in physical pixels.
+    pub height: u32,
+    /// Reserved; must be 0.
+    pub reserved: u32,
+    /// Physical pixels per point.
+    pub scale_factor: f64,
+    /// Safe-area insets in points: top, right, bottom, left.
+    pub safe_area: [f32; 4],
+}
+
+/// One tick, for `stickshift_engine_tick`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct StickShiftTickDesc {
+    /// `sizeof(StickShiftTickDesc)`.
+    pub size: u32,
+    /// A `STICKSHIFT_CLOCK_*` value.
+    pub clock: StickShiftClock,
+    /// `STICKSHIFT_CLOCK_ELAPSED` and `_TIMESTAMP`: the elapsed time or the
+    /// clock reading, in nanoseconds. Otherwise 0.
+    pub nanoseconds: u64,
+    /// Optional: `width * height * 4` bytes of BGRA8, top row first, filled
+    /// with this tick's frame before the call returns. Offscreen contexts with
+    /// `STICKSHIFT_FRAME_PACING_WAIT` only.
+    pub readback: *mut c_void,
+    /// The length of `readback` in bytes.
+    pub readback_len: usize,
+}
+
+/// What one tick did.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StickShiftTickResult {
+    /// `sizeof(StickShiftTickResult)`.
+    pub size: u32,
+    /// Update hooks run.
+    pub steps: u32,
+    /// 1 if the render hook ran.
+    pub rendered: u8,
+    /// 1 if the frame went to the GPU; 0 if it was discarded or had no
+    /// drawable.
+    pub submitted: u8,
+    /// 1 if the tick's `readback` holds this frame.
+    pub readback_ready: u8,
+    /// 1 if `STICKSHIFT_ENGINE_HOLD_UNTIL_LOADED` held this tick.
+    pub held: u8,
+    /// `STICKSHIFT_REQUEST_*` bits.
+    pub requests: u32,
+    /// The submitted frame's number, or 0.
+    pub frame: u64,
+    /// The graphics settings' revision after the tick.
+    pub graphics_revision: u64,
+}
+
+/// One platform event, for `stickshift_engine_push_events`. 64 bytes; arrays
+/// of them cross with an explicit stride, so it can grow.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StickShiftHostEvent {
+    /// A `STICKSHIFT_HOST_*` value.
+    pub kind: StickShiftHostEventKind,
+    /// The key, mouse button or menu tag.
+    pub code: u32,
+    /// `STICKSHIFT_HOST_EVENT_*` bits.
+    pub flags: u32,
+    /// `VIEW_RESIZED`, `SCALE_CHANGED`: the view's width in physical pixels.
+    pub width: u32,
+    /// `VIEW_RESIZED`, `SCALE_CHANGED`: the view's height in physical pixels.
+    pub height: u32,
+    /// Reserved; must be 0.
+    pub reserved: u32,
+    /// `VIEW_RESIZED`, `SCALE_CHANGED`: physical pixels per point.
+    pub scale_factor: f64,
+    /// `CURSOR`: points from the view's left edge.
+    pub x: f64,
+    /// `CURSOR`: points from the view's top edge.
+    pub y: f64,
+    /// `SAFE_AREA`: top, right, bottom, left, in points.
+    pub insets: [f32; 4],
+}
+
+/// An engine's flags and counters.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StickShiftEngineState {
+    /// `sizeof(StickShiftEngineState)`.
+    pub size: u32,
+    /// 1 once the game's init hook has run.
+    pub initialized: u8,
+    /// 1 once `stickshift_engine_resume` has run.
+    pub hosted: u8,
+    /// 1 if the init hook failed.
+    pub failed: u8,
+    /// 1 if a panic was caught in an engine call.
+    pub poisoned: u8,
+    /// 1 once the game, the host or an event asked to exit.
+    pub exit_requested: u8,
+    /// 1 if the last tick was held by `STICKSHIFT_ENGINE_HOLD_UNTIL_LOADED`.
+    pub holding: u8,
+    /// Reserved.
+    pub reserved: [u8; 2],
+    /// Ticks that ran the frame.
+    pub frames: u64,
+    /// Update hooks run.
+    pub updates: u64,
+    /// Render hooks run.
+    pub frames_rendered: u64,
+    /// Frames recorded but not submitted.
+    pub frames_discarded: u64,
+}
+
+/// Frame timing, durations in nanoseconds.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StickShiftPerf {
+    /// `sizeof(StickShiftPerf)`.
+    pub size: u32,
+    /// The interpolation factor `0..1` in the render hook, else 0.
+    pub alpha: f32,
+    /// Frames measured.
+    pub frame_count: u64,
+    /// Frames per second over the last frame.
+    pub current_fps: f64,
+    /// Frames per second over the window.
+    pub avg_fps: f64,
+    /// Mean frame time.
+    pub avg_frame_ns: u64,
+    /// Shortest frame time.
+    pub min_frame_ns: u64,
+    /// Longest frame time.
+    pub max_frame_ns: u64,
+    /// Mean CPU time per frame.
+    pub avg_cpu_ns: u64,
+    /// Mean GPU time per frame, where the backend measures it.
+    pub avg_gpu_ns: u64,
+    /// Mean time in the render hook.
+    pub avg_render_ns: u64,
+}
+
+/// Shadow range, for [`StickShiftGraphicsSettings`].
+pub type StickShiftShadowDistance = u32;
+/// Shadows reach as far as the draw distance (the default).
+pub const STICKSHIFT_SHADOW_DISTANCE_MATCH_DRAW_DISTANCE: StickShiftShadowDistance = 0;
+/// Shadows reach part of the way.
+pub const STICKSHIFT_SHADOW_DISTANCE_MEDIUM: StickShiftShadowDistance = 1;
+/// Shadows reach only nearby.
+pub const STICKSHIFT_SHADOW_DISTANCE_NEAR: StickShiftShadowDistance = 2;
+
+/// Draw distance, for [`StickShiftGraphicsSettings`].
+pub type StickShiftDrawDistance = u32;
+/// The nearest draw distance.
+pub const STICKSHIFT_DRAW_DISTANCE_NEAR: StickShiftDrawDistance = 0;
+/// A medium draw distance.
+pub const STICKSHIFT_DRAW_DISTANCE_MEDIUM: StickShiftDrawDistance = 1;
+/// The full draw distance (the default).
+pub const STICKSHIFT_DRAW_DISTANCE_FAR: StickShiftDrawDistance = 2;
+
+/// Render resolution, for [`StickShiftGraphicsSettings`].
+pub type StickShiftRenderScale = u32;
+/// Half the view's points per side, times its pixels per point (the default).
+pub const STICKSHIFT_RENDER_SCALE_HALF: StickShiftRenderScale = 0;
+/// Three quarters.
+pub const STICKSHIFT_RENDER_SCALE_THREE_QUARTERS: StickShiftRenderScale = 1;
+/// The view's full physical resolution.
+pub const STICKSHIFT_RENDER_SCALE_FULL: StickShiftRenderScale = 2;
+
+/// The player-facing graphics settings. A value mirror: frozen, no size field.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StickShiftGraphicsSettings {
+    /// A `STICKSHIFT_SHADOW_QUALITY_*` value.
+    pub shadows: StickShiftShadowQuality,
+    /// A `STICKSHIFT_SHADOW_DISTANCE_*` value.
+    pub shadow_distance: StickShiftShadowDistance,
+    /// A `STICKSHIFT_DRAW_DISTANCE_*` value.
+    pub draw_distance: StickShiftDrawDistance,
+    /// A `STICKSHIFT_RENDER_SCALE_*` value.
+    pub render_scale: StickShiftRenderScale,
+    /// Reserved for future settings; 0.
+    pub reserved: [u32; 4],
+}
+
+/// The game's init hook: exactly once, before any update. A negative result
+/// fails the engine (`STICKSHIFT_ERROR_ABORTED`).
+pub type StickShiftGameInitFn = Option<
+    unsafe extern "C" fn(user: *mut c_void, engine: *mut StickShiftEngine) -> StickShiftResult,
+>;
+/// The game's update hook: 0 to `STICKSHIFT_MAX_STEPS_PER_FRAME` times a
+/// tick, `dt` always `stickshift_fixed_dt()`.
+pub type StickShiftGameUpdateFn =
+    Option<unsafe extern "C" fn(user: *mut c_void, engine: *mut StickShiftEngine, dt: f32)>;
+/// The game's render hook: exactly once a tick, after the tick's updates, with
+/// an open frame the engine submits when the hook returns.
+pub type StickShiftGameRenderFn = Option<
+    unsafe extern "C" fn(
+        user: *mut c_void,
+        engine: *mut StickShiftEngine,
+        frame: *mut crate::context::StickShiftFrame,
+    ),
+>;
+/// The game's settings hook: between frames, after a settings change reaches
+/// the renderer and the scene.
+pub type StickShiftGameSettingsFn = Option<
+    unsafe extern "C" fn(
+        user: *mut c_void,
+        engine: *mut StickShiftEngine,
+        settings: *const StickShiftGraphicsSettings,
+    ),
+>;
+/// Called exactly once, from `stickshift_engine_destroy`.
+pub type StickShiftGameReleaseFn = Option<unsafe extern "C" fn(user: *mut c_void)>;
+
+/// A game: its hooks and their user pointer. Copied at create.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct StickShiftGame {
+    /// `sizeof(StickShiftGame)`.
+    pub size: u32,
+    /// Reserved; must be 0.
+    pub reserved: u32,
+    /// Passed to every hook; borrowed until `release`.
+    pub user: *mut c_void,
+    /// Required.
+    pub init: StickShiftGameInitFn,
+    /// Required.
+    pub update: StickShiftGameUpdateFn,
+    /// Required.
+    pub render: StickShiftGameRenderFn,
+    /// Optional: NULL does nothing on a settings change.
+    pub graphics_settings_changed: StickShiftGameSettingsFn,
+    /// Optional.
+    pub release: StickShiftGameReleaseFn,
+}
+
+// ---------------------------------------------------------------------------
+// Inspection
+// ---------------------------------------------------------------------------
+
+/// One 3D draw of a recorded frame.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StickShiftDrawRecord {
+    /// The mesh or model handle id the draw named.
+    pub source: u64,
+    /// The mesh draw's texture handle id, or 0 (always 0 for a model part).
+    pub texture: u64,
+    /// The model's node-part index, or 0 for a mesh.
+    pub part: u32,
+    /// The `STICKSHIFT_VERTEX_LAYOUT_*` value of the drawn mesh.
+    pub layout: StickShiftVertexLayout,
+    /// The matrix the backend draws with: for a model part,
+    /// `world × (local × node)`.
+    pub model: StickShiftMat4,
+    /// The base colour, after the tint.
+    pub base_color: StickShiftColor,
+    /// Linear RGB emission.
+    pub emissive: [f32; 3],
+    /// Reserved.
+    pub reserved: u32,
+}
+
+/// What the last frame to reach submit on a context recorded.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct StickShiftFrameRecord {
+    /// `sizeof(StickShiftFrameRecord)`.
+    pub size: u32,
+    /// 1 if the frame went to the GPU; 0 if it was discarded or had no
+    /// drawable.
+    pub submitted: u8,
+    /// Reserved.
+    pub reserved: [u8; 3],
+    /// The frame's number, or 0 (before any frame, or not submitted).
+    pub frame_number: u64,
+    /// The draws still valid at submit, in record order. Context-owned: valid
+    /// until the next frame is opened on the context.
+    pub draws: *const StickShiftDrawRecord,
+    /// The number of `draws`.
+    pub draw_count: u32,
+    /// Bytes from one draw record to the next.
+    pub draw_stride: u32,
+    /// The overlay quads still valid at submit, in record order (text as its
+    /// glyph quads). Valid as long as `draws`.
+    pub quads: *const StickShiftQuad,
+    /// The number of `quads`.
+    pub quad_count: u32,
+    /// Bytes from one quad to the next.
+    pub quad_stride: u32,
+    /// The camera the frame used.
+    pub camera: StickShiftCamera,
+    /// The sun and sky the frame used.
+    pub sun: StickShiftSunSky,
+    /// The render settings in effect.
+    pub settings: StickShiftRenderSettings,
+    /// The frame's point and spot lights.
+    pub light_count: u32,
+    /// Reserved.
+    pub reserved2: u32,
 }

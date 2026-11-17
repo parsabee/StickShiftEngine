@@ -13,6 +13,39 @@ cd "$root"
 package="bindings/swift/StickShift"
 
 cargo build --quiet -p stickshift-capi --features "${STICKSHIFT_FEATURES:-}"
+
+# The link-line gate: Package.swift must link exactly what libstickshift.a needs, as rustc
+# reports it, less the libraries every link gets. Touch the crate root so rustc runs (and
+# prints them) even when the library is up to date.
+touch crates/stickshift-capi/src/lib.rs
+native_libs="$(cargo rustc --quiet -p stickshift-capi --lib --features "${STICKSHIFT_FEATURES:-}" \
+    --crate-type staticlib -- \
+    --print native-static-libs 2>&1 | sed -n 's/.*native-static-libs: //p' | tail -n 1)"
+python3 -I - "$package/Package.swift" "$native_libs" <<'PY'
+import re
+import sys
+
+package, native = open(sys.argv[1]).read(), sys.argv[2].split()
+implicit = {"System", "c", "m"}
+want_frameworks = {native[i + 1] for i, word in enumerate(native) if word == "-framework"}
+want_libraries = {word[2:] for word in native if word.startswith("-l")} - implicit
+have_frameworks = set(re.findall(r'\.linkedFramework\("([^"]+)"\)', package))
+have_libraries = set(re.findall(r'\.linkedLibrary\("([^"]+)"\)', package))
+problems = []
+for kind, want, have in [
+    ("framework", want_frameworks, have_frameworks),
+    ("library", want_libraries, have_libraries),
+]:
+    for name in sorted(want - have):
+        problems.append(f"Package.swift does not link the {kind} {name}, which libstickshift.a needs")
+    for name in sorted(have - want):
+        problems.append(f"Package.swift links the {kind} {name}, which libstickshift.a does not need")
+if problems:
+    print("\n".join(problems), file=sys.stderr)
+    sys.exit(1)
+print(f"link line: Package.swift matches libstickshift.a ({len(want_frameworks)} frameworks, "
+      f"{len(want_libraries)} libraries)")
+PY
 # Link the library just built, wherever cargo builds: target/ unless
 # $CARGO_TARGET_DIR or a build.target-dir setting moves it.
 target_dir="$(cargo metadata --no-deps --format-version 1 \

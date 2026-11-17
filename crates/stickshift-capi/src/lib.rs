@@ -20,11 +20,17 @@
 //! - A context is used by one thread at a time; an overlapping call returns
 //!   `STICKSHIFT_ERROR_BUSY` instead of waiting. No panic crosses the boundary:
 //!   every function catches one and returns `STICKSHIFT_ERROR_INTERNAL`.
+//! - A [`StickShiftEngine`] attached to a context runs the engine's own loop
+//!   (`stickshift-core`'s `drive_frame`, through its platform-free `Session`)
+//!   for a host that calls `stickshift_engine_tick` once per display refresh.
+//!   The game is C callbacks. An engine and its context are used on the
+//!   engine's thread only (`STICKSHIFT_ERROR_WRONG_THREAD`).
 //!
-//! The crate is graphics-only: it links `stickshift-render`, `stickshift-render-api`,
-//! `stickshift-assets` (without its ECS feature) and `stickshift-math`, and none of the
-//! windowing, audio or ECS crates. On platforms without Metal only the
-//! null backend exists, so the crate and its tests build everywhere.
+//! The crate links `stickshift-render`, `stickshift-render-api`, `stickshift-assets`
+//! (without its ECS feature), `stickshift-math`, and `stickshift-core` without its
+//! `windowed` feature, so no windowing crate and no AppKit menu reach it. On
+//! platforms without Metal only the null backend exists, so the crate and its
+//! tests build everywhere.
 //!
 //! # Safety
 //!
@@ -43,6 +49,7 @@
 mod backend;
 mod context;
 mod core;
+mod engine;
 mod fonts;
 mod frame;
 mod handles;
@@ -55,14 +62,24 @@ pub mod types;
 
 pub use context::{
     stickshift_context_create, stickshift_context_destroy, stickshift_context_device_name,
-    stickshift_context_flush, stickshift_context_get_settings, stickshift_context_get_size,
-    stickshift_context_get_stats, stickshift_context_gpu_frame_time, stickshift_context_resize,
-    stickshift_context_set_settings, stickshift_poll_events, stickshift_render_settings_default,
-    stickshift_resource_state, StickShiftContext, StickShiftFrame,
+    stickshift_context_flush, stickshift_context_get_camera, stickshift_context_get_last_frame,
+    stickshift_context_get_safe_area, stickshift_context_get_scale,
+    stickshift_context_get_settings, stickshift_context_get_size, stickshift_context_get_stats,
+    stickshift_context_get_sun_sky, stickshift_context_gpu_frame_time, stickshift_context_resize,
+    stickshift_context_set_camera, stickshift_context_set_safe_area,
+    stickshift_context_set_settings, stickshift_context_set_sun_sky, stickshift_poll_events,
+    stickshift_render_settings_default, stickshift_resource_state, StickShiftContext,
+    StickShiftFrame,
 };
 pub use core::{
-    stickshift_api_version, stickshift_last_error_message, stickshift_result_name,
-    stickshift_version_string,
+    stickshift_api_minor, stickshift_api_version, stickshift_fixed_dt,
+    stickshift_last_error_message, stickshift_result_name, stickshift_version_string,
+};
+pub use engine::{
+    stickshift_engine_create, stickshift_engine_destroy, stickshift_engine_get_context,
+    stickshift_engine_get_perf, stickshift_engine_get_state, stickshift_engine_init,
+    stickshift_engine_push_events, stickshift_engine_request_exit, stickshift_engine_reset_clock,
+    stickshift_engine_resume, stickshift_engine_tick, testing, StickShiftEngine,
 };
 pub use fonts::{stickshift_font_create, stickshift_font_destroy, stickshift_font_measure};
 pub use frame::{
@@ -78,7 +95,7 @@ pub use math::{
 };
 pub use models::{
     stickshift_model_destroy, stickshift_model_get_bounds, stickshift_model_load_file,
-    stickshift_model_load_memory,
+    stickshift_model_load_memory, stickshift_model_wait,
 };
 pub use resources::{
     stickshift_mesh_create, stickshift_mesh_destroy, stickshift_texture_create,

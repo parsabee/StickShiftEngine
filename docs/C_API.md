@@ -348,7 +348,7 @@ Types: `StickShiftVec3 { x, y, z }`, `StickShiftQuat { x, y, z, w }`, `StickShif
 |---|---|
 | `StickShiftResult stickshift_context_create(const StickShiftContextDesc *desc, StickShiftContext **out)` | |
 | `StickShiftResult stickshift_context_destroy(StickShiftContext *ctx)` | Frees everything. `BUSY` if a call is in progress; `WRONG_STATE` from inside a callback. |
-| `StickShiftResult stickshift_context_resize(StickShiftContext *ctx, uint32_t width, uint32_t height, float scale)` | Layer contexts: new drawable size in pixels and pixels-per-point. Offscreen contexts keep their size (`UNSUPPORTED`). |
+| `StickShiftResult stickshift_context_resize(StickShiftContext *ctx, uint32_t width, uint32_t height, float scale)` | Layer and null contexts: new drawable size in pixels and pixels-per-point. A Metal offscreen context keeps its size (`UNSUPPORTED`). |
 | `StickShiftResult stickshift_context_get_size(StickShiftContext *ctx, uint32_t *width, uint32_t *height)` | Current drawable size in pixels. |
 | `StickShiftResult stickshift_context_set_settings(StickShiftContext *ctx, const StickShiftRenderSettings *settings)` | Applies from the next frame. May reallocate the shadow map. |
 | `StickShiftResult stickshift_context_get_settings(StickShiftContext *ctx, StickShiftRenderSettings *out)` | |
