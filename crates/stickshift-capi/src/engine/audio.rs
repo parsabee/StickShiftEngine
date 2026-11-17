@@ -86,11 +86,14 @@ impl Access<'_> {
     }
 }
 
-/// Load the sound at `path` (a file path, UTF-8): decoded now, once per exact
-/// path string; loading a path again returns the same sound. A file that cannot
-/// be read or decoded gives a silent sound (and a line on stderr), as in Rust,
-/// so this fails only for a NULL or non-UTF-8 path. Silent engines decode
-/// nothing. In a hook, or between engine calls.
+/// Load the sound at `path` (a file path, UTF-8): decoded now, once per path;
+/// loading a path again returns the same sound. Paths compare as Rust's `Path`s
+/// do: a repeated `/`, a `.` component inside the path or a trailing `/` does
+/// not make a new sound, while a leading `./` does, and
+/// `stickshift_audio_get_path` returns the spelling the sound was first loaded
+/// by. A file that cannot be read or decoded gives a silent sound (and a line on
+/// stderr), as in Rust, so this fails only for a NULL or non-UTF-8 path. Silent
+/// engines decode nothing. In a hook, or between engine calls.
 ///
 /// # Safety
 /// `engine` must be NULL or a live engine; `path` NULL or a NUL-terminated

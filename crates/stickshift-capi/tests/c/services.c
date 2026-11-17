@@ -39,13 +39,24 @@
         }                                                                                  \
     } while (0)
 
+/* The volume constants are floats, as the parameters they are passed to are (an unsuffixed
+ * decimal would be a double, which Swift then cannot pass). */
+_Static_assert(_Generic(STICKSHIFT_VOLUME_UNCHANGED_DB, float: 1, default: 0), "a float");
+_Static_assert(_Generic(STICKSHIFT_VOLUME_SILENT_DB, float: 1, default: 0), "a float");
+
 /* What the hooks saw. Hooks cannot fail the test themselves, so they record. */
 typedef struct Game {
     int updates, space_presses, space_releases, failures;
     StickShiftSound chime;
     StickShiftResult state_in_hook; /* stickshift_graphics_get_state from update */
     float camera_z;                 /* the chase camera's eye, from render */
+    StickShiftVec3 camera_up;       /* and its up, from render */
 } Game;
+
+static int near(float a, float b) {
+    float d = a - b;
+    return d < 1e-6f && d > -1e-6f;
+}
 
 static void expect_ok(Game *game, StickShiftResult r) {
     if (r != STICKSHIFT_OK) game->failures++;
@@ -73,6 +84,7 @@ static void update(void *user, StickShiftEngine *engine, float dt) {
 
     StickShiftChase chase;
     stickshift_chase_init(&chase, 8.0f, 4.0f);
+    chase.up = (StickShiftVec3){3.0f, 4.0f, 0.0f}; /* tilted toward +X, length 5 */
     StickShiftVec3 target = {0.0f, 0.0f, -(float)game->updates};
     StickShiftVec3 forward = {0.0f, 0.0f, -1.0f};
     expect_ok(game, stickshift_camera_follow(engine, &chase, target, forward, dt));
@@ -91,6 +103,7 @@ static void render(void *user, StickShiftEngine *engine, StickShiftFrame *frame)
     camera.size = sizeof camera;
     expect_ok(game, stickshift_camera_get(engine, &camera));
     game->camera_z = camera.position.z;
+    game->camera_up = camera.up;
 }
 
 static StickShiftResult push(StickShiftEngine *engine, const StickShiftHostEvent *events,
@@ -170,9 +183,12 @@ int main(void) {
     CHECK(stickshift_engine_tick(engine, &one, &result), STICKSHIFT_OK);
     REQUIRE(game.space_releases == 2);
 
-    /* The chase camera trails 8 behind the target the last update set. */
+    /* The chase camera trails 8 behind the target the last update set, with the chase's up
+     * normalized (the tilt has no z, so the eye's z is exact). */
     REQUIRE(game.failures == 0);
     REQUIRE(game.camera_z == 8.0f - (float)game.updates);
+    REQUIRE(near(game.camera_up.x, 0.6f) && near(game.camera_up.y, 0.8f) &&
+            game.camera_up.z == 0.0f);
     CHECK(game.state_in_hook, STICKSHIFT_ERROR_WRONG_STATE);
 
     /* Audio: one sound, two one-shots asked for, nothing decoded in silent mode. */

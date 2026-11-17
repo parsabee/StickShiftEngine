@@ -360,15 +360,16 @@ const PATHS: [&str; 4] = [
     "probe/chime.wav",
 ];
 
-/// The chase camera: an unnormalized up, a look-at height and smoothing.
+/// The chase camera: a tilted, unnormalized up (so the up, the height offset
+/// and the look-at height all depend on it), a look-at height and smoothing.
 const CHASE: StickShiftChase = StickShiftChase {
     distance: 7.5,
     height: 3.0,
     look_at_height: 1.25,
     up: StickShiftVec3 {
-        x: 0.0,
+        x: 0.3,
         y: 2.0,
-        z: 0.0,
+        z: -0.2,
     },
     half_life: 0.15,
 };
@@ -2045,14 +2046,25 @@ fn the_camera_and_chase_are_the_engines() {
             up: StickShiftVec3::default(),
             ..chase
         };
+        // A tilted, unnormalized up: the controller normalizes it.
+        let tilted_up = Vec3::new(1.0, 3.0, 0.5);
+        let tilted = StickShiftChase {
+            up: tilted_up.into(),
+            look_at_height: 0.75,
+            ..chase
+        };
         let rust = ChaseController::new(6.0, 2.5);
+        let rust_tilted = ChaseController::new(6.0, 2.5)
+            .with_up(tilted_up)
+            .with_look_at_height(0.75);
         let smooth = rust_chase();
-        for i in 0..50 {
+        for i in 0..60 {
             let target = Vec3::new(i as f32 * 0.3, 0.0, -(i as f32));
             let forward = Vec3::new(0.1, 0.0, -1.0);
-            let (c, r) = match i % 3 {
+            let (c, r) = match i % 4 {
                 0 => (&chase, &rust),
                 1 => (&zeroed_up, &rust),
+                2 => (&tilted, &rust_tilted),
                 _ => (&CHASE, &smooth),
             };
             let dt = if i % 5 == 0 { 0.0 } else { FIXED_DT };
@@ -2162,8 +2174,14 @@ fn sounds_are_checked_handles_of_their_engine() {
     assert_eq!(r, STICKSHIFT_OK);
     assert_ne!(a.id, 0);
     assert_eq!(load(rig.e, c"sounds/a.ogg").1, a, "a path loads once");
+    // Compared as Rust's `Path`s: a repeated `/`, an interior `.` and a
+    // trailing `/` collapse, a leading `./` stays. (get_path, below, still
+    // gives the first spelling.)
+    for same in [c"sounds//a.ogg", c"sounds/./a.ogg", c"sounds/a.ogg/"] {
+        assert_eq!(load(rig.e, same).1, a, "{same:?} is the same path");
+    }
     let (_, b) = load(rig.e, c"./sounds/a.ogg");
-    assert_ne!(b, a, "keyed by the exact path string, as in Rust");
+    assert_ne!(b, a, "a leading ./ is a different path, as in Rust");
     // SAFETY: a live engine and valid locals.
     unsafe {
         let mut sound = StickShiftSound { id: 7 };
@@ -2187,7 +2205,7 @@ fn sounds_are_checked_handles_of_their_engine() {
             stickshift_audio_get_path(rig.e, a, &mut path),
             STICKSHIFT_OK
         );
-        assert_eq!(CStr::from_ptr(path), c"sounds/a.ogg");
+        assert_eq!(CStr::from_ptr(path), c"sounds/a.ogg", "the first spelling");
         stickshift_audio_play_once(rig.e, a, -6.0);
         stickshift_audio_play_once(rig.e, a, -6.0);
         stickshift_audio_play_looping(rig.e, b, 0.0);
@@ -2613,6 +2631,22 @@ fn the_menu_is_data_built_from_the_engines_model() {
     );
     assert!(groups[1].1.iter().all(|i| i.3 == 0));
     assert_eq!(groups[4].1[1].3, 1);
+
+    // A queued request is not in effect: the menu keeps the current checkmarks
+    // and revision until the next frame applies it, as the Rust host's menu
+    // syncs from the settings in effect.
+    let draw_distance = |(_, revision, groups): MenuData| {
+        let checked = groups[2].1.iter().filter(|i| i.2 == 1).map(|i| i.0);
+        (revision, checked.collect::<Vec<_>>())
+    };
+    rig.request(GraphicsSettings {
+        shadows: ShadowQuality::Off,
+        draw_distance: DrawDistance::Near,
+        ..GraphicsSettings::default()
+    });
+    assert_eq!(draw_distance(menu_of(rig.e, 0)), (1, vec![303]), "current");
+    rig.tick(STICKSHIFT_CLOCK_FIXED_STEP, 0);
+    assert_eq!(draw_distance(menu_of(rig.e, 0)), (2, vec![301]), "applied");
 
     // SAFETY: a live engine and valid locals.
     unsafe {
