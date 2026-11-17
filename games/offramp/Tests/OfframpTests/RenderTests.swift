@@ -111,23 +111,41 @@ struct RenderTests {
         let draws = try #require(record).draws
         #expect(draws.count == 563)
 
-        // Each part the engine drew, in order: what it drew from, and for a mesh
-        // its matrix (a model part's is `world × (local × node)`).
-        var expected: [(source: UInt64, matrix: [UInt32]?)] = []
-        func model(_ m: Model, parts: Int) {
-            expected += Array(repeating: (m.id, nil), count: parts)
+        // Each model part's node matrix, as the engine records it for the model
+        // drawn at world = local = identity.
+        var nodes: [UInt64: [UInt32: simd_float4x4]] = [:]
+        for m in [models.road, models.skyline, models.playerCar.model] + models.trafficCars.map(\.model)
+            + models.buildings.map(\.model)
+        {
+            let r = try recordedFrame(context) { _ = try $0.draw(m, world: matrix_identity_float4x4) }
+            nodes[m.id] = Dictionary(uniqueKeysWithValues: r.draws.map { ($0.part, $0.model) })
+        }
+
+        // Each part the engine drew, in order: what it drew from, and where. A
+        // mesh is drawn at its transform's TRS, a model part at `world × (local ×
+        // node)`: the entity's TRS, the model's fit, and the part's node.
+        enum Placement {
+            case mesh(trs: [UInt32])
+            case model(world: simd_float4x4, local: simd_float4x4)
+        }
+        var expected: [(source: UInt64, placement: Placement)] = []
+        func model(_ m: Model, parts: Int, at world: Transform, local: simd_float4x4 = matrix_identity_float4x4) {
+            expected += Array(repeating: (m.id, Placement.model(world: world.matrix, local: local)), count: parts)
+        }
+        func fitted(_ f: FittedModel, parts: Int, at world: Transform) {
+            model(f.model, parts: parts, at: world, local: f.local)
         }
         func mesh(_ m: Mesh, _ t: Transform) {
-            expected.append((m.id, glamTRS(t)))
+            expected.append((m.id, Placement.mesh(trs: glamTRS(t))))
         }
         // 1. The backdrop.
-        model(models.skyline, parts: Self.texturedParts.skyline)
+        model(models.skyline, parts: Self.texturedParts.skyline, at: list.backdrop)
         // 2. The road tiles, then each placement's textured parts.
-        for _ in list.roads {
-            model(models.road, parts: Self.texturedParts.road)
+        for tile in list.roads {
+            model(models.road, parts: Self.texturedParts.road, at: tile)
         }
         for p in list.models where p.model == .player {
-            model(models.playerCar.model, parts: Self.texturedParts.player)
+            fitted(models.playerCar, parts: Self.texturedParts.player, at: p.transform)
         }
         // 3. The terrain, the guardrails, then each placement's untextured parts.
         mesh(resources.terrain, list.terrain)
@@ -136,21 +154,41 @@ struct RenderTests {
         }
         for p in list.models {
             switch p.model {
-            case .player: model(models.playerCar.model, parts: Self.untexturedParts.player)
-            case let .traffic(v): model(models.trafficCars[v].model, parts: Self.untexturedParts.traffic[v])
-            case let .building(v): model(models.buildings[v].model, parts: Self.untexturedParts.buildings[v])
+            case .player: fitted(models.playerCar, parts: Self.untexturedParts.player, at: p.transform)
+            case let .traffic(v): fitted(models.trafficCars[v], parts: Self.untexturedParts.traffic[v], at: p.transform)
+            case let .building(v): fitted(models.buildings[v], parts: Self.untexturedParts.buildings[v], at: p.transform)
             }
         }
         #expect(draws.count == expected.count)
+        var modelDraws = 0
+        // The model draws not at `world × (local × node)`.
+        var misplaced: [Int] = []
         for (i, (d, e)) in zip(draws, expected).enumerated() {
             #expect(d.source == e.source, "draw \(i)")
-            if let matrix = e.matrix {
-                #expect(bits(d.model) == matrix, "draw \(i): a mesh is drawn at its transform's TRS")
+            switch e.placement {
+            case let .mesh(trs):
+                #expect(bits(d.model) == trs, "draw \(i): a mesh is drawn at its transform's TRS")
                 #expect(d.baseColor == .one && d.texture == 0 && d.emissive == .zero, "MaterialParams::default()")
-            } else {
+            case let .model(world, local):
+                modelDraws += 1
                 #expect(d.baseColor.w == 1, "draw \(i): the default tint keeps the base colour's alpha")
+                let node = try #require(nodes[d.source]?[d.part], "draw \(i): part \(d.part) of model \(d.source)")
+                // By value, not bits: the node read back at identity may differ
+                // from the node itself in the sign of a zero.
+                if d.model != StickShiftMath.multiply(world, StickShiftMath.multiply(local, node)) {
+                    misplaced.append(i)
+                }
             }
         }
+        #expect(
+            misplaced.first == nil,
+            """
+            \(misplaced.count) of \(modelDraws) model draws are not at the entity's TRS × (the fit × the part's \
+            node); the first is draw \(misplaced.first ?? -1)
+            """
+        )
+        // Golden: 63 meshes (the terrain and 62 rails), the rest model parts.
+        #expect(modelDraws == 500 && draws.count - modelDraws == 63)
     }
 
     @Test func theRecordersFrame150DrawsWhatTheRustFrameDrew() throws {
