@@ -1974,6 +1974,7 @@ name = "stickshift-ecs"
 version = "0.1.0"
 dependencies = [
  "hecs",
+ "stickshift-ecs",
  "stickshift-math",
 ]
 
