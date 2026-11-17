@@ -1809,7 +1809,10 @@ fn persisted_settings_round_trip_through_a_throwaway_suite() {
         );
     }
     {
-        // Without the flag nothing is restored or saved.
+        // Without the flag nothing is restored, and the suite is untouched by
+        // a menu choice and an applied request. (That such an engine has no
+        // store at all, so it cannot save to the standard defaults either, is
+        // checked where the store is visible: the unit test in src/engine.rs.)
         let rig = Rig::plain();
         assert_eq!(rig.graphics().has_pending, 0);
         rig.init();

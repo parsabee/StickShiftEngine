@@ -1645,3 +1645,161 @@ pub mod testing {
         (*(*engine).state.get()).renderer.violations
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::{stickshift_context_create, stickshift_context_destroy};
+    use crate::engine::graphics::{stickshift_graphics_get_state, stickshift_graphics_request};
+
+    unsafe extern "C" fn init(_: *mut c_void, _: *mut StickShiftEngine) -> StickShiftResult {
+        STICKSHIFT_OK
+    }
+    unsafe extern "C" fn update(_: *mut c_void, _: *mut StickShiftEngine, _: f32) {}
+    unsafe extern "C" fn render(
+        _: *mut c_void,
+        _: *mut StickShiftEngine,
+        _: *mut crate::context::StickShiftFrame,
+    ) {
+    }
+
+    /// An engine with no settings hook on a new null context.
+    fn engine(flags: u32, suite: *const std::ffi::c_char) -> *mut StickShiftEngine {
+        let ctx_desc = StickShiftContextDesc {
+            api_version: STICKSHIFT_API_VERSION,
+            backend: STICKSHIFT_BACKEND_NULL,
+            metal_layer: std::ptr::null_mut(),
+            width: 4,
+            height: 4,
+            scale: 1.0,
+        };
+        let desc = StickShiftEngineDesc {
+            api_version: STICKSHIFT_API_VERSION,
+            size: std::mem::size_of::<StickShiftEngineDesc>() as u32,
+            audio: STICKSHIFT_AUDIO_SILENT,
+            pacing: STICKSHIFT_FRAME_PACING_WAIT,
+            flags,
+            reserved: 0,
+            settings_suite: suite,
+        };
+        let game = StickShiftGame {
+            size: std::mem::size_of::<StickShiftGame>() as u32,
+            reserved: 0,
+            user: std::ptr::null_mut(),
+            init: Some(init),
+            update: Some(update),
+            render: Some(render),
+            graphics_settings_changed: None,
+            release: None,
+        };
+        let mut ctx = std::ptr::null_mut();
+        let mut e = std::ptr::null_mut();
+        // SAFETY: valid locals; the game has no user data to outlive.
+        unsafe {
+            assert_eq!(
+                stickshift_context_create(&ctx_desc, &mut ctx),
+                STICKSHIFT_OK
+            );
+            assert_eq!(
+                stickshift_engine_create(ctx, &desc, &game, &mut e),
+                STICKSHIFT_OK
+            );
+        }
+        e
+    }
+
+    /// Where the engine's session saves settings, if anywhere.
+    ///
+    /// # Safety
+    /// `e` must be a live engine, between engine calls on its own thread.
+    unsafe fn suite_of(e: *mut StickShiftEngine) -> Option<Option<String>> {
+        (*(*e).state.get())
+            .session
+            .settings_store()
+            .map(|s| s.suite_name().map(str::to_owned))
+    }
+
+    /// Destroy `e`, then its context.
+    ///
+    /// # Safety
+    /// `e` must be a live engine, between engine calls on its own thread.
+    unsafe fn destroy(e: *mut StickShiftEngine) {
+        let ctx = (*e).ctx;
+        assert_eq!(stickshift_engine_destroy(e), STICKSHIFT_OK);
+        assert_eq!(stickshift_context_destroy(ctx), STICKSHIFT_OK);
+    }
+
+    /// An engine created without `STICKSHIFT_ENGINE_PERSIST_SETTINGS` has no
+    /// settings store, so neither a menu choice nor an applied request can
+    /// save anywhere, the standard user defaults included.
+    #[test]
+    fn an_engine_without_the_persist_flag_has_no_settings_store() {
+        let e = engine(0, std::ptr::null());
+        // SAFETY: a live engine, between engine calls on this thread.
+        unsafe {
+            assert_eq!(suite_of(e), None);
+            assert_eq!(stickshift_engine_init(e), STICKSHIFT_OK);
+            let menu = StickShiftHostEvent {
+                kind: STICKSHIFT_HOST_MENU,
+                code: 102,
+                ..Default::default()
+            };
+            assert_eq!(
+                stickshift_engine_push_events(
+                    e,
+                    &menu,
+                    1,
+                    std::mem::size_of::<StickShiftHostEvent>() as u32,
+                    std::ptr::null_mut(),
+                ),
+                STICKSHIFT_OK
+            );
+            assert_eq!(suite_of(e), None);
+            let near = StickShiftGraphicsSettings {
+                draw_distance: STICKSHIFT_DRAW_DISTANCE_NEAR,
+                ..graphics_settings_to_c(&GraphicsSettings::default())
+            };
+            assert_eq!(stickshift_graphics_request(e, &near), STICKSHIFT_OK);
+            let tick = StickShiftTickDesc {
+                size: std::mem::size_of::<StickShiftTickDesc>() as u32,
+                clock: STICKSHIFT_CLOCK_FIXED_STEP,
+                nanoseconds: 0,
+                readback: std::ptr::null_mut(),
+                readback_len: 0,
+            };
+            let mut out = StickShiftTickResult {
+                size: std::mem::size_of::<StickShiftTickResult>() as u32,
+                ..Default::default()
+            };
+            assert_eq!(stickshift_engine_tick(e, &tick, &mut out), STICKSHIFT_OK);
+            // Both changes were applied, and still there is nowhere to save.
+            let mut g = StickShiftGraphicsState {
+                size: std::mem::size_of::<StickShiftGraphicsState>() as u32,
+                ..Default::default()
+            };
+            assert_eq!(stickshift_graphics_get_state(e, &mut g), STICKSHIFT_OK);
+            assert_eq!(g.revision, 2);
+            assert_eq!(g.current.draw_distance, STICKSHIFT_DRAW_DISTANCE_NEAR);
+            assert_eq!(suite_of(e), None);
+            destroy(e);
+        }
+        // With the flag the store exists: the standard defaults without a
+        // suite, else the suite. (Nothing is chosen or applied, so neither is
+        // written.)
+        let suite = std::ffi::CString::new("dev.stickshift.capi-unit.never-written").unwrap();
+        for (name, expected) in [
+            (std::ptr::null(), None),
+            (
+                suite.as_ptr(),
+                Some("dev.stickshift.capi-unit.never-written"),
+            ),
+        ] {
+            let e = engine(STICKSHIFT_ENGINE_PERSIST_SETTINGS, name);
+            // SAFETY: a live engine, between engine calls on this thread.
+            unsafe {
+                assert_eq!(suite_of(e), Some(expected.map(str::to_owned)));
+                destroy(e);
+            }
+        }
+    }
+}
