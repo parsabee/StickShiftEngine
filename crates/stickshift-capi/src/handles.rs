@@ -24,6 +24,8 @@ pub(crate) enum Kind {
     Texture = 2,
     Model = 3,
     Font = 4,
+    /// An engine's sound: the engine holds a tag of its own for them.
+    Sound = 5,
 }
 
 const KIND_SHIFT: u32 = 60;
@@ -45,13 +47,14 @@ fn encode(kind: Kind, context: u16, index: u32, generation: u32) -> u64 {
         | u64::from(generation)
 }
 
-/// The kind of `id`, if it names one of the four kinds.
+/// The kind of `id`, if it names one of the kinds.
 pub(crate) fn kind_of(id: u64) -> Option<Kind> {
     match (id >> KIND_SHIFT) as u8 {
         1 => Some(Kind::Mesh),
         2 => Some(Kind::Texture),
         3 => Some(Kind::Model),
         4 => Some(Kind::Font),
+        5 => Some(Kind::Sound),
         _ => None,
     }
 }

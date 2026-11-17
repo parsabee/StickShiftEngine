@@ -1249,3 +1249,222 @@ pub struct StickShiftFrameRecord {
     /// Reserved.
     pub reserved2: u32,
 }
+
+// ---------------------------------------------------------------------------
+// Camera, input, audio, graphics settings and the menu
+// ---------------------------------------------------------------------------
+
+/// The engine camera, as `stickshift_camera_get` reads it. The matrices are
+/// computed when it is read.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StickShiftCameraState {
+    /// `sizeof(StickShiftCameraState)`.
+    pub size: u32,
+    /// Reserved.
+    pub reserved: u32,
+    /// The eye's world position.
+    pub position: StickShiftVec3,
+    /// The point looked at.
+    pub target: StickShiftVec3,
+    /// The world up axis the view is oriented by.
+    pub up: StickShiftVec3,
+    /// The vertical field of view in radians (45° by default).
+    pub fov_y: f32,
+    /// Width over height (4/3 until a view or the game sets it).
+    pub aspect_ratio: f32,
+    /// The near clip distance.
+    pub near_plane: f32,
+    /// The far clip distance.
+    pub far_plane: f32,
+    /// World to view.
+    pub view: StickShiftMat4,
+    /// View to clip.
+    pub projection: StickShiftMat4,
+    /// World to clip: `projection × view`.
+    pub view_projection: StickShiftMat4,
+    /// The unit direction from the eye to the target (`-Z` if they meet).
+    pub forward: StickShiftVec3,
+    /// The unit direction to the eye's right.
+    pub right: StickShiftVec3,
+}
+
+/// A chase camera: the inputs of the engine's chase controller, applied by
+/// `stickshift_camera_follow`. A frozen value type, with no `size` field;
+/// `stickshift_chase_init` fills in the defaults.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StickShiftChase {
+    /// How far behind the target the camera trails, along its facing.
+    pub distance: f32,
+    /// How far above the target the camera sits, along `up`.
+    pub height: f32,
+    /// How far above the target the camera aims.
+    pub look_at_height: f32,
+    /// The world up axis, as given: it is normalized when used, and a zero or
+    /// non-finite axis means `+Y`. `{0, 1, 0}` by default.
+    pub up: StickShiftVec3,
+    /// Seconds for the camera to close half the gap to its pose; `0` (the
+    /// default) snaps, and a negative value counts as `0`.
+    pub half_life: f32,
+}
+
+/// `StickShiftInputState::keys`: the key is held.
+pub const STICKSHIFT_KEY_STATE_DOWN: u8 = 1 << 0;
+/// `StickShiftInputState::keys`: the key went down since the last update.
+pub const STICKSHIFT_KEY_STATE_JUST_PRESSED: u8 = 1 << 1;
+/// `StickShiftInputState::keys`: the key went up since the last update.
+pub const STICKSHIFT_KEY_STATE_JUST_RELEASED: u8 = 1 << 2;
+
+/// The keyboard and mouse as the game sees them. Edges last until the end of
+/// the next update, so a tap between two frames reaches the next update.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StickShiftInputState {
+    /// `sizeof(StickShiftInputState)`.
+    pub size: u32,
+    /// Per `STICKSHIFT_KEY_*` value: `STICKSHIFT_KEY_STATE_*` bits. 0 past the
+    /// last key.
+    pub keys: [u8; 32],
+    /// Per `STICKSHIFT_MOUSE_*` value: 1 while the button is held.
+    pub mouse_buttons: [u8; 8],
+    /// 1 once the host has reported a cursor position.
+    pub has_cursor: u8,
+    /// Reserved.
+    pub reserved: [u8; 3],
+    /// The cursor, in points from the view's left edge.
+    pub cursor_x: f64,
+    /// The cursor, in points from the view's top edge.
+    pub cursor_y: f64,
+}
+
+/// A sound an engine loaded. Valid until the engine is destroyed (sounds are
+/// never unloaded). `id == 0` is the null handle.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct StickShiftSound {
+    /// The handle's identity; meaningful only to the engine that issued it.
+    pub id: u64,
+}
+
+/// A volume of 0 dB: the level the sound was recorded at.
+pub const STICKSHIFT_VOLUME_UNCHANGED_DB: f32 = 0.0;
+/// -60 dB: at and below it a sound is inaudible.
+pub const STICKSHIFT_VOLUME_SILENT_DB: f32 = -60.0;
+
+/// The engine's audio counters: what the game asked for, counted in silent
+/// mode too.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StickShiftAudioStats {
+    /// `sizeof(StickShiftAudioStats)`.
+    pub size: u32,
+    /// Distinct sounds loaded (one per path).
+    pub sound_count: u32,
+    /// Sounds actually decoded: 0 in silent mode.
+    pub decode_count: u32,
+    /// Loops that began playing.
+    pub loop_starts: u32,
+    /// One-shots asked for.
+    pub one_shots_played: u32,
+    /// The master volume in dB.
+    pub master_volume_db: f32,
+    /// The sound on the loop channel, or the null handle.
+    pub looping: StickShiftSound,
+    /// 1 if the engine plays to no device.
+    pub is_silent: u8,
+    /// Reserved.
+    pub reserved: [u8; 7],
+}
+
+/// The graphics settings, with what is queued and how often they changed.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StickShiftGraphicsState {
+    /// `sizeof(StickShiftGraphicsState)`.
+    pub size: u32,
+    /// 1 if `pending` holds a request not yet applied.
+    pub has_pending: u8,
+    /// 1 if `base_spawn_ahead` is set (after init).
+    pub has_base_spawn_ahead: u8,
+    /// Reserved.
+    pub reserved: [u8; 2],
+    /// The settings in effect.
+    pub current: StickShiftGraphicsSettings,
+    /// The request the next frame applies, if `has_pending`.
+    pub pending: StickShiftGraphicsSettings,
+    /// The streaming reach the game set up in init, which the draw distance
+    /// scales.
+    pub base_spawn_ahead: f32,
+    /// Reserved.
+    pub reserved2: u32,
+    /// How many changes have been applied since create (a restore is not
+    /// one).
+    pub revision: u64,
+}
+
+/// A section of the Graphics menu, and the setting it chooses: the hundreds of
+/// a menu tag, for `stickshift_graphics_label`.
+pub type StickShiftGraphicsSection = u32;
+/// Shadow quality: a `STICKSHIFT_SHADOW_QUALITY_*` value.
+pub const STICKSHIFT_GRAPHICS_SECTION_SHADOWS: StickShiftGraphicsSection = 1;
+/// Shadow range: a `STICKSHIFT_SHADOW_DISTANCE_*` value.
+pub const STICKSHIFT_GRAPHICS_SECTION_SHADOW_DISTANCE: StickShiftGraphicsSection = 2;
+/// Draw distance: a `STICKSHIFT_DRAW_DISTANCE_*` value.
+pub const STICKSHIFT_GRAPHICS_SECTION_DRAW_DISTANCE: StickShiftGraphicsSection = 3;
+/// Render resolution: a `STICKSHIFT_RENDER_SCALE_*` value.
+pub const STICKSHIFT_GRAPHICS_SECTION_RENDER_SCALE: StickShiftGraphicsSection = 4;
+
+/// One item of the Graphics menu.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct StickShiftMenuItem {
+    /// The item's tag, `section * 100 + index` (never 0): the `code` of the
+    /// `STICKSHIFT_HOST_MENU` event that chooses it.
+    pub tag: i32,
+    /// The item's title. Engine-owned, as the menu is.
+    pub label: *const c_char,
+    /// 1 if the item shows a checkmark: the current choice of its section.
+    pub checked: u8,
+    /// 1 if the item can be chosen.
+    pub enabled: u8,
+    /// Reserved.
+    pub reserved: [u8; 2],
+}
+
+/// A group of the Graphics menu: a submenu of choices, or the actions shown
+/// after a separator.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct StickShiftMenuGroup {
+    /// The submenu's title, or NULL for the actions after a separator.
+    pub title: *const c_char,
+    /// The group's items, `item_stride` bytes apart.
+    pub items: *const StickShiftMenuItem,
+    /// The number of `items`.
+    pub item_count: u32,
+    /// Bytes from one item to the next.
+    pub item_stride: u32,
+}
+
+/// The engine's Graphics menu, as data for a host to build its native menu
+/// from. Engine-owned: valid until the next `stickshift_engine_get_menu` or
+/// the engine's destroy.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct StickShiftMenu {
+    /// `sizeof(StickShiftMenu)`.
+    pub size: u32,
+    /// The number of `groups`.
+    pub group_count: u32,
+    /// The menu's title.
+    pub title: *const c_char,
+    /// The groups, in menu order, `group_stride` bytes apart.
+    pub groups: *const StickShiftMenuGroup,
+    /// Bytes from one group to the next.
+    pub group_stride: u32,
+    /// Reserved.
+    pub reserved: u32,
+    /// The settings revision the checkmarks show.
+    pub revision: u64,
+}

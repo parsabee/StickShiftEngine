@@ -391,6 +391,48 @@ fn key_down(code: StickShiftKey) -> StickShiftHostEvent {
     }
 }
 
+/// `key`'s state as the game's input shows it (`stickshift_input_get`): down,
+/// just pressed, just released. All false if the call fails, which a hook
+/// cannot assert.
+fn key_state(e: *mut StickShiftEngine, key: StickShiftKey) -> [bool; 3] {
+    let mut input = StickShiftInputState {
+        size: std::mem::size_of::<StickShiftInputState>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: a live engine, used on its thread, and a valid local.
+    if unsafe { stickshift_input_get(e, &mut input) } != STICKSHIFT_OK {
+        return [false; 3];
+    }
+    let bits = input.keys[key as usize];
+    [
+        STICKSHIFT_KEY_STATE_DOWN,
+        STICKSHIFT_KEY_STATE_JUST_PRESSED,
+        STICKSHIFT_KEY_STATE_JUST_RELEASED,
+    ]
+    .map(|bit| bits & bit != 0)
+}
+
+/// The engine camera as the game sees it (`stickshift_camera_get`), or zeroed
+/// if the call fails.
+fn camera_state(e: *mut StickShiftEngine) -> StickShiftCameraState {
+    let mut camera = StickShiftCameraState {
+        size: std::mem::size_of::<StickShiftCameraState>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: as in `key_state`.
+    unsafe { stickshift_camera_get(e, &mut camera) };
+    camera
+}
+
+/// The engine camera's view-projection and eye.
+fn camera_of(e: *mut StickShiftEngine) -> (Mat4, Vec3) {
+    let camera = camera_state(e);
+    (
+        camera.view_projection.into_mat4(),
+        camera.position.into_vec3(),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Versions and constants
 // ---------------------------------------------------------------------------
@@ -634,9 +676,7 @@ fn the_timestamp_and_engine_clocks_bank_one_step_first() {
 fn an_edge_waits_for_an_update_and_only_the_first_sees_it() {
     let h = Harness::new(|p, at, e, _| {
         if at == At::Update {
-            let mut state = [false; 3];
-            // SAFETY: inside a hook, on the engine's thread.
-            unsafe { testing::key_state(e, STICKSHIFT_KEY_SPACE, &mut state) };
+            let state = key_state(e, STICKSHIFT_KEY_SPACE);
             p.seen.push(format!("{state:?}"));
         }
     });
@@ -866,7 +906,7 @@ fn the_context_camera_follows_the_rust_push_points() {
                 camera
             };
             if let Some((position, touch)) = camera_move(at, n) {
-                testing::set_camera_position(e, position);
+                stickshift_camera_set_position(e, position.into());
                 let before = unpushed();
                 if touch {
                     // Any context call: the push rule runs before it.
@@ -876,7 +916,7 @@ fn the_context_camera_follows_the_rust_push_points() {
                 p.seen.push(push_point(at, n, before, unpushed()));
             }
             if let Some(position) = camera_move_after_touch(at, n) {
-                testing::set_camera_position(e, position);
+                stickshift_camera_set_position(e, position.into());
             }
             if let Some((view_projection, eye)) = frame_camera(at, n) {
                 let camera = StickShiftCamera {
@@ -952,9 +992,7 @@ fn the_context_camera_follows_the_rust_push_points() {
         1 + 8 + 2,
         "init, 8 updates, renders 3 and 6"
     );
-    let mut engine_camera = (Mat4::ZERO, Vec3::ZERO);
-    // SAFETY: a live engine, between calls.
-    unsafe { testing::camera(h.engine, &mut engine_camera) };
+    let engine_camera = camera_of(h.engine);
     assert_eq!(
         bits(engine_camera.0),
         bits(lp.camera.view_projection_matrix())
@@ -971,15 +1009,14 @@ fn render_sees_the_camera_the_updates_left() {
             At::Update => {
                 // Moved, but no context call: drive_frame's push before render
                 // carries it.
-                testing::set_camera_position(e, Vec3::new(0.0, 2.0, p.updates as f32));
+                stickshift_camera_set_position(e, Vec3::new(0.0, 2.0, p.updates as f32).into());
             }
             At::Render => {
                 let mut ctx = null_mut();
                 stickshift_engine_get_context(e, &mut ctx);
                 let mut camera = StickShiftCamera::default();
                 stickshift_context_get_camera(ctx, &mut camera);
-                let mut engine = (Mat4::ZERO, Vec3::ZERO);
-                testing::camera(e, &mut engine);
+                let engine = camera_of(e);
                 p.seen.push(format!(
                     "{}",
                     bits(camera.view_projection.into_mat4()) == bits(engine.0)
@@ -1121,10 +1158,7 @@ fn events_are_checked_first_and_applied_in_order() {
     };
     assert_eq!(r, STICKSHIFT_OK);
     assert_eq!(requests, STICKSHIFT_REQUEST_EXIT);
-    let mut state = [false; 3];
-    // SAFETY: between calls.
-    unsafe { testing::key_state(h.engine, STICKSHIFT_KEY_A, &mut state) };
-    assert_eq!(state, [true, true, false]);
+    assert_eq!(key_state(h.engine, STICKSHIFT_KEY_A), [true, true, false]);
     // A close asks; it does not stop the engine.
     assert_eq!(h.tick().requests & STICKSHIFT_REQUEST_EXIT, 0);
 }
@@ -1143,18 +1177,13 @@ fn escape_exits_only_with_quit_on_escape_and_still_presses() {
         let (r, requests) = h.push(&[key_down(STICKSHIFT_KEY_ESCAPE)]);
         assert_eq!(r, STICKSHIFT_OK);
         assert_eq!(requests == STICKSHIFT_REQUEST_EXIT, exits);
-        let mut state = [false; 3];
-        // SAFETY: between calls.
-        unsafe { testing::key_state(h.engine, STICKSHIFT_KEY_ESCAPE, &mut state) };
-        assert!(state[0]);
+        assert!(key_state(h.engine, STICKSHIFT_KEY_ESCAPE)[0]);
         // Focus loss lets go of it.
         assert_eq!(
             h.push(&[event(STICKSHIFT_HOST_FOCUS_LOST)]).0,
             STICKSHIFT_OK
         );
-        // SAFETY: between calls.
-        unsafe { testing::key_state(h.engine, STICKSHIFT_KEY_ESCAPE, &mut state) };
-        assert!(!state[0]);
+        assert!(!key_state(h.engine, STICKSHIFT_KEY_ESCAPE)[0]);
     }
 }
 
@@ -1214,9 +1243,7 @@ fn size_and_scale(ctx: *mut StickShiftContext) -> (u32, u32, f32, [f32; 4]) {
 fn resume_sizes_the_drawable_and_resizes_follow_the_view() {
     let h = Harness::new(|p, at, e, _| {
         if at == At::Init {
-            let mut aspect = 0.0;
-            // SAFETY: inside a hook.
-            unsafe { testing::camera_aspect(e, &mut aspect) };
+            let aspect = camera_state(e).aspect_ratio;
             p.seen.push(format!("init aspect {aspect}"));
         }
     });
@@ -1253,7 +1280,6 @@ fn resume_sizes_the_drawable_and_resizes_follow_the_view() {
     assert_eq!(size_and_scale(h.ctx).0, 500);
 
     // A scale change resizes and leaves the aspect alone; a resize moves both.
-    let mut aspect = 0.0;
     let resized = |w, hgt, s| StickShiftHostEvent {
         width: w,
         height: hgt,
@@ -1265,9 +1291,7 @@ fn resume_sizes_the_drawable_and_resizes_follow_the_view() {
         ..resized(2000, 1000, 2.0)
     }]);
     assert_eq!((r, requests), (STICKSHIFT_OK, 0));
-    // SAFETY: between calls.
-    unsafe { testing::camera_aspect(h.engine, &mut aspect) };
-    assert_eq!(aspect, 1600.0 / 1200.0);
+    assert_eq!(camera_state(h.engine).aspect_ratio, 1600.0 / 1200.0);
     assert_eq!(size_and_scale(h.ctx), (1000, 500, 1.0, [0.0; 4]));
     let (r, requests) = h.push(&[
         StickShiftHostEvent {
@@ -1280,9 +1304,7 @@ fn resume_sizes_the_drawable_and_resizes_follow_the_view() {
         },
     ]);
     assert_eq!((r, requests), (STICKSHIFT_OK, STICKSHIFT_REQUEST_MENU_SYNC));
-    // SAFETY: between calls.
-    unsafe { testing::camera_aspect(h.engine, &mut aspect) };
-    assert_eq!(aspect, 3.0);
+    assert_eq!(camera_state(h.engine).aspect_ratio, 3.0);
     assert_eq!(size_and_scale(h.ctx), (450, 150, 1.5, [6.0, 0.0, 0.0, 3.0]));
 
     let bad = view(10, 10, f64::NAN, [0.0; 4]);

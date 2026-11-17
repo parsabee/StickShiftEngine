@@ -273,8 +273,9 @@ impl GraphicsSettings {
     #[must_use]
     pub fn from_codes(codes: [i64; 4]) -> Self {
         fn pick<T: Copy + Default>(all: &[T; 3], code: i64) -> T {
-            usize::try_from(code - 1)
-                .ok()
+            // `checked_sub`: a stored code is any integer, `i64::MIN` too.
+            code.checked_sub(1)
+                .and_then(|i| usize::try_from(i).ok())
                 .and_then(|i| all.get(i).copied())
                 .unwrap_or_default()
         }
@@ -427,6 +428,10 @@ mod tests {
         );
         assert_eq!(
             GraphicsSettings::from_codes([-3, 99, 4, i64::MAX]),
+            GraphicsSettings::default()
+        );
+        assert_eq!(
+            GraphicsSettings::from_codes([i64::MIN; 4]),
             GraphicsSettings::default()
         );
         // A partially valid set keeps the valid parts.

@@ -25,6 +25,8 @@ precompiled-shaders = ["stickshift-render/precompiled-shaders"]
 [dependencies]
 stickshift-math.workspace = true
 stickshift-render-api.workspace = true
+# The engine camera's chase controller, which `stickshift_camera_follow` runs.
+stickshift-camera.workspace = true
 # stickshift-assets' default `ecs` feature (its hecs glue) stays off.
 # A path dependency rather than `workspace = true` so `default-features = false`
 # takes effect.
@@ -37,10 +39,6 @@ stickshift-core = { path = "../stickshift-core", default-features = false }
 # games, and the scene its streaming calls run.
 stickshift-ecs = { workspace = true, features = ["dynamic"] }
 stickshift-scene.workspace = true
-
-[dev-dependencies]
-# Only to check that the projection helper matches the camera's.
-stickshift-camera.workspace = true
 
 # The Metal pixel test renders the same scene through the Rust API to compare.
 [target.'cfg(target_os = "macos")'.dev-dependencies]

@@ -291,6 +291,7 @@ change.
 | `stickshift_poll_events` | Bounded housekeeping plus your callbacks. | Same. |
 | `stickshift_context_flush` | **Waits** for every load and every submitted frame to finish, then delivers their events. Gives up after 60 s with `STICKSHIFT_ERROR_TIMEOUT`. Tests and tools only. | Same. |
 | `stickshift_context_destroy` | **Waits** for submitted frames to finish and for a model parse in progress to end. | Same. |
+| `stickshift_audio_load` | Reads and decodes the sound on the caller's thread (an engine created with `STICKSHIFT_AUDIO_SILENT` decodes nothing). A path is decoded once; loading it again is free. | Same. |
 
 ## Versioning and ABI
 
@@ -309,7 +310,7 @@ change.
 | Frames in flight | 3 |
 | Texture size | 16384 × 16384 |
 | Live handles per kind, per context | 16 777 215 |
-| Live contexts per process | 4 095 (`stickshift_context_create` returns `STICKSHIFT_ERROR_LIMIT_EXCEEDED` beyond that) |
+| Live contexts per process | 4 095, counting each engine once more for its sound handles (`stickshift_context_create` and `stickshift_engine_create` return `STICKSHIFT_ERROR_LIMIT_EXCEEDED` beyond that) |
 | Mesh size | `MTLDevice.maxBufferLength` after de-indexing (`index_count × vertex stride` bytes) |
 | Game components per engine | 128, tags and values together (`STICKSHIFT_MAX_GAME_COMPONENTS`) |
 | Bytes of one component value | 4096 (`STICKSHIFT_MAX_COMPONENT_SIZE`) |

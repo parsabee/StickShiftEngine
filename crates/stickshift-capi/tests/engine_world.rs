@@ -1107,7 +1107,10 @@ unsafe fn calls(
         size: 0,
         align: 0,
     };
-    let mut camera = (Mat4::IDENTITY, Vec3::ZERO);
+    let mut camera = StickShiftCameraState {
+        size: std::mem::size_of::<StickShiftCameraState>() as u32,
+        ..Default::default()
+    };
     let mut state = StickShiftEngineState {
         size: std::mem::size_of::<StickShiftEngineState>() as u32,
         ..Default::default()
@@ -1152,8 +1155,11 @@ unsafe fn calls(
             stickshift_scene_maybe_rebase(e, Vec3::ZERO.into(), &mut v),
         ),
         ("track", stickshift_stream_track(e, entity)),
-        ("camera", testing::camera(e, &mut camera)),
-        ("set_camera", testing::set_camera_position(e, Vec3::ONE)),
+        ("camera", stickshift_camera_get(e, &mut camera)),
+        (
+            "set_camera",
+            stickshift_camera_set_position(e, Vec3::ONE.into()),
+        ),
         ("get_state", stickshift_engine_get_state(e, &mut state)),
         ("request_exit", stickshift_engine_request_exit(e)),
     ];
@@ -1346,7 +1352,7 @@ fn a_spawn_callback_never_pushes_the_camera() {
             let mut before = (Mat4::IDENTITY, Vec3::ZERO);
             testing::context_camera_unpushed(ctx, &mut before);
             // Moving the camera arms the push for the next context call...
-            testing::set_camera_position(e, Vec3::new(3.0, 4.0, 5.0));
+            stickshift_camera_set_position(e, Vec3::new(3.0, 4.0, 5.0).into());
             let mut inside = Vec::new();
             stream(e, Vec3::ZERO, &mut |e, _, _| {
                 if inside.is_empty() {
