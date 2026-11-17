@@ -2916,7 +2916,9 @@ StickShiftResult stickshift_scene_set_config(struct StickShiftEngine *engine,
  * One streaming pass for `focus`: first the streamed entities fallen behind
  * are despawned, in the order they were tracked, then `spawn` is called once
  * per new slot, in slot order, from inside the pass. `spawn` may be NULL (the
- * frontier still advances). Not in the render hook or a spawn callback.
+ * frontier still advances). A `focus` that is not finite is
+ * `STICKSHIFT_ERROR_INVALID_ARGUMENT`. Not in the render hook or a spawn
+ * callback.
  *
  * # Safety
  * `engine` must be NULL or a live engine; `spawn` NULL or a function that
@@ -2943,7 +2945,9 @@ StickShiftResult stickshift_stream_track(struct StickShiftEngine *engine,
  * every transform component is shifted by the same offset, written to
  * `*out_offset` (zero when no rebase was due). Anything the game keeps in
  * world coordinates outside the world (the camera, its own state) is the
- * game's to shift. Not in the render hook or a spawn callback.
+ * game's to shift. A `focus` that is not finite is
+ * `STICKSHIFT_ERROR_INVALID_ARGUMENT`. Not in the render hook or a spawn
+ * callback.
  *
  * # Safety
  * `engine` must be NULL or a live engine; `out_offset` NULL or valid.

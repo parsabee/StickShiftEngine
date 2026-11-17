@@ -109,7 +109,7 @@ The demo's focus is the player's position
 [`spawn_slot`](../games/playable-demo/src/game.rs#L370), called from `update` at
 [game.rs:724](../games/playable-demo/src/game.rs#L724). Per slot it spawns a road tile, an
 obstacle on a cadence, two roadside buildings and two guardrail segments — reporting each via
-[`SpawnCtx::spawned`](../crates/stickshift-scene/src/lib.rs#L492) so the scene despawns it once it
+[`SpawnCtx::spawned`](../crates/stickshift-scene/src/lib.rs#L497) so the scene despawns it once it
 falls behind ([`Scene::despawn`](../crates/stickshift-scene/src/lib.rs#L293)).
 
 The loop creates the scene with the **engine-default** `StreamingConfig`
@@ -133,7 +133,7 @@ the interval is.
 
 ### The rebase, and what the game must carry through it
 
-[`Scene::maybe_rebase`](../crates/stickshift-scene/src/lib.rs#L431) keeps world coordinates out of
+[`Scene::maybe_rebase`](../crates/stickshift-scene/src/lib.rs#L436) keeps world coordinates out of
 float-precision trouble: once the focus is more than `rebase_threshold` from the origin, **every**
 `TransformComponent` is shifted by one offset back toward the origin, and the offset actually
 applied is returned. Relative positions are preserved exactly, so gameplay is unaffected. A game
@@ -453,7 +453,7 @@ Five crates carry a self-scanning **guard test** that embeds the crate's own sou
 | Guard test | Crate |
 |---|---|
 | `boundary_tests::no_game_specific_symbols` ([lib.rs:140](../crates/stickshift-core/src/lib.rs#L140)) | `stickshift-core` |
-| `tests::no_game_specific_symbols` ([lib.rs:858](../crates/stickshift-scene/src/lib.rs#L858)) | `stickshift-scene` |
+| `tests::no_game_specific_symbols` ([lib.rs:863](../crates/stickshift-scene/src/lib.rs#L863)) | `stickshift-scene` |
 | `guard_tests::no_game_specific_symbols` ([lib.rs:74](../crates/stickshift-assets/src/lib.rs#L74)) | `stickshift-assets` |
 | `guard_tests::no_game_specific_symbols` ([lib.rs](../crates/stickshift-audio/src/lib.rs)) | `stickshift-audio` |
 | `tests::test_no_game_specific_symbols` ([lib.rs:654](../crates/stickshift-ecs/src/lib.rs#L654)) | `stickshift-ecs` |

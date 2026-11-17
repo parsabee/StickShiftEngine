@@ -1037,6 +1037,42 @@ fn maybe_rebase_shifts_every_transform_and_reports_the_offset() {
     }
 }
 
+#[test]
+fn a_far_focus_streams_its_last_slot_once_and_a_non_finite_one_is_refused() {
+    let h = Harness::idle();
+    let e = h.engine;
+    // SAFETY: a live engine, between engine calls.
+    unsafe {
+        let (_, kept) = spawn(e, &[val(T, &xf(0.0, 0.0, -5.0))]);
+        for bad in [f32::NEG_INFINITY, f32::INFINITY, f32::NAN] {
+            let focus = Vec3::new(0.0, 0.0, bad);
+            let mut called = 0;
+            assert_eq!(stream(e, focus, &mut |_, _, _| called += 1), IA);
+            assert!(last_error().contains("finite"), "{}", last_error());
+            let mut offset = StickShiftVec3::default();
+            assert_eq!(
+                stickshift_scene_maybe_rebase(e, focus.into(), &mut offset),
+                IA
+            );
+            assert_eq!(called, 0);
+        }
+        let t: StickShiftTransform = get(e, kept, T).expect("a transform");
+        assert_eq!(Vec3::from(t.position), Vec3::new(0.0, 0.0, -5.0));
+        // So far along that the slot saturates at i64::MAX: spawned once, and
+        // later passes neither overflow the frontier nor poison the engine.
+        let mut slots = Vec::new();
+        for _ in 0..3 {
+            let r = stream(e, Vec3::new(0.0, 0.0, -1.0e30), &mut |_, slot, _| {
+                slots.push(slot);
+            });
+            assert_eq!(r, OK, "{}", last_error());
+        }
+        assert_eq!(slots, [i64::MAX]);
+        let mut n = 0;
+        assert_eq!(stickshift_world_len(e, &mut n), OK, "{}", last_error());
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Scopes
 // ---------------------------------------------------------------------------

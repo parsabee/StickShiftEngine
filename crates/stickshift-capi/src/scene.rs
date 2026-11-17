@@ -12,6 +12,7 @@
 //! `stickshift_stream_track` is `SpawnCtx::spawned`, and every other game call
 //! is refused, since the pass holds the whole scene.
 
+use stickshift_math::glam::Vec3;
 use stickshift_scene::{Scene, StreamingConfig};
 
 use crate::core::{call_or, input, output, Error};
@@ -40,6 +41,19 @@ impl From<StickShiftStreamingConfig> for StreamingConfig {
             despawn_behind: c.despawn_behind,
             rebase_threshold: c.rebase_threshold,
         }
+    }
+}
+
+/// A streaming or rebase focus, which must be finite: a NaN or infinite one
+/// would make every later slot, cutoff and transform non-finite.
+fn focus_of(focus: StickShiftVec3) -> Result<Vec3, Error> {
+    let focus = Vec3::from(focus);
+    if focus.is_finite() {
+        Ok(focus)
+    } else {
+        Err(Error::invalid_argument(format!(
+            "focus {focus} must be finite"
+        )))
     }
 }
 
@@ -120,7 +134,9 @@ pub unsafe extern "C" fn stickshift_scene_set_config(
 /// One streaming pass for `focus`: first the streamed entities fallen behind
 /// are despawned, in the order they were tracked, then `spawn` is called once
 /// per new slot, in slot order, from inside the pass. `spawn` may be NULL (the
-/// frontier still advances). Not in the render hook or a spawn callback.
+/// frontier still advances). A `focus` that is not finite is
+/// `STICKSHIFT_ERROR_INVALID_ARGUMENT`. Not in the render hook or a spawn
+/// callback.
 ///
 /// # Safety
 /// `engine` must be NULL or a live engine; `spawn` NULL or a function that
@@ -133,9 +149,10 @@ pub unsafe extern "C" fn stickshift_scene_stream(
     user: *mut std::ffi::c_void,
 ) -> StickShiftResult {
     scene_call(engine, "stickshift_scene_stream", |e, access| {
+        let focus = focus_of(focus)?;
         let scene = scene_mut(access, "stickshift_scene_stream")?;
         let this = std::ptr::from_ref(e).cast_mut();
-        scene.stream(focus.into(), |cx| {
+        scene.stream(focus, |cx| {
             let Some(spawn) = spawn else { return };
             if e.is_poisoned() {
                 return;
@@ -181,7 +198,9 @@ pub unsafe extern "C" fn stickshift_stream_track(
 /// every transform component is shifted by the same offset, written to
 /// `*out_offset` (zero when no rebase was due). Anything the game keeps in
 /// world coordinates outside the world (the camera, its own state) is the
-/// game's to shift. Not in the render hook or a spawn callback.
+/// game's to shift. A `focus` that is not finite is
+/// `STICKSHIFT_ERROR_INVALID_ARGUMENT`. Not in the render hook or a spawn
+/// callback.
 ///
 /// # Safety
 /// `engine` must be NULL or a live engine; `out_offset` NULL or valid.
@@ -193,8 +212,9 @@ pub unsafe extern "C" fn stickshift_scene_maybe_rebase(
 ) -> StickShiftResult {
     scene_call(engine, "stickshift_scene_maybe_rebase", |_, access| {
         let out = output(out_offset, "out_offset")?;
+        let focus = focus_of(focus)?;
         *out = scene_mut(access, "stickshift_scene_maybe_rebase")?
-            .maybe_rebase(focus.into())
+            .maybe_rebase(focus)
             .into();
         Ok(STICKSHIFT_OK)
     })

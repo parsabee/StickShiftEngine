@@ -94,7 +94,9 @@ API**.
   `stickshift_stream_track`; `stickshift_scene_set_config` refuses an axis or spacing change once
   streaming has started (`STICKSHIFT_ERROR_WRONG_STATE`), and `stickshift_scene_maybe_rebase`
   rebases the floating origin. World changes are refused in the render hook, and a spawn
-  callback reaches only the world.
+  callback reaches only the world. Both refuse a focus that is not finite
+  (`STICKSHIFT_ERROR_INVALID_ARGUMENT`), and `Scene::stream` no longer overflows its frontier (a
+  debug panic, a release re-spawn every pass) once a far focus saturates the slot at `i64::MAX`.
 
 ### Changed
 
