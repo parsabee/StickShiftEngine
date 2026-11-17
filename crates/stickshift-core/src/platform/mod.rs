@@ -25,10 +25,10 @@
 mod defaults;
 
 #[cfg(target_vendor = "apple")]
-pub(crate) use defaults::{load_settings, save_settings};
+pub(crate) use defaults::{clear_settings, load_settings, save_settings};
 
 #[cfg(not(target_vendor = "apple"))]
-pub(crate) use no_defaults::{load_settings, save_settings};
+pub(crate) use no_defaults::{clear_settings, load_settings, save_settings};
 
 #[cfg(all(feature = "windowed", target_os = "macos"))]
 mod macos;
@@ -51,6 +51,9 @@ mod no_defaults {
 
     /// Nothing stored on this target.
     pub(crate) fn save_settings(_suite: Option<&str>, _settings: &GraphicsSettings) {}
+
+    /// Nothing stored on this target.
+    pub(crate) fn clear_settings(_suite: Option<&str>) {}
 }
 
 /// No native menu on targets other than macOS.

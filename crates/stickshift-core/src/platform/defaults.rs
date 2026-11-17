@@ -77,6 +77,18 @@ pub(crate) fn save_settings(suite: Option<&str>, settings: &GraphicsSettings) {
     }
 }
 
+/// Remove the saved settings' keys, so [`load_settings`] finds none. Does
+/// nothing if the suite cannot be opened.
+pub(crate) fn clear_settings(suite: Option<&str>) {
+    let Some(defaults) = open(suite) else {
+        return;
+    };
+    for key in DEFAULTS_KEYS {
+        // SAFETY: `NSUserDefaults` is thread-safe; removing a value by key.
+        unsafe { defaults.removeObjectForKey(&NSString::from_str(key)) };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +173,15 @@ mod tests {
         save_settings(Some(&a.name), &settings);
         assert_eq!(load_settings(Some(&a.name)), Some(settings));
         assert_eq!(load_settings(Some(&b.name)), None);
+    }
+
+    #[test]
+    fn clearing_forgets_the_saved_settings() {
+        let scratch = Scratch::new("clear");
+        save_settings(Some(&scratch.name), &GraphicsSettings::default());
+        assert!(load_settings(Some(&scratch.name)).is_some());
+        clear_settings(Some(&scratch.name));
+        assert_eq!(scratch.codes(), [0; 4]);
+        assert_eq!(load_settings(Some(&scratch.name)), None);
     }
 }

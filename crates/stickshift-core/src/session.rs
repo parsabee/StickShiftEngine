@@ -339,6 +339,17 @@ impl SettingsStore {
             Backing::Memory(saved) => saved.borrow_mut().save(settings),
         }
     }
+
+    /// Forget the saved settings, so the next launch starts from the defaults:
+    /// [`load`](Self::load) finds nothing until the next [`save`](Self::save).
+    /// For a game's own "reset" and for a test's throwaway suite.
+    pub fn clear(&self) {
+        match &self.backing {
+            Backing::Defaults { suite } => platform::clear_settings(suite.as_deref()),
+            #[cfg(test)]
+            Backing::Memory(saved) => saved.borrow_mut().clear(),
+        }
+    }
 }
 
 /// The clock reading of the last timestamp frame.
@@ -735,6 +746,10 @@ mod tests {
         pub(super) fn save(&mut self, settings: &GraphicsSettings) {
             self.codes = settings.to_codes();
             self.saves += 1;
+        }
+
+        pub(super) fn clear(&mut self) {
+            self.codes = [0; 4];
         }
     }
 
