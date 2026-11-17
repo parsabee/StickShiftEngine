@@ -247,10 +247,11 @@ Its options default to `Engine.Options.app`: the sound device, saved settings, E
 - **`FrameWatchdog`** keeps the game running while AppKit has stopped the display link (the
   window minimised, the app hidden): a 60 Hz timer in the run loop's common modes ticks the
   engine once the display link has been silent for 250 ms, as winit's loop never pauses.
-- **`GraphicsMenuBar`** is the Graphics menu, built from the engine's description of it: its
-  titles, tags, checkmarks and enabled states, the full-screen item titled for the window (with
-  ⌃⌘F), one target and action for every item, and no automatic enabling. A choice goes back to
-  the engine as `.menu(tag)`; `EngineView.makeMenuBar()` wires it up and keeps it in sync.
+- **`GraphicsMenuBar`** is the Graphics menu, built from the engine's description of it
+  (`Engine.menu(fullScreen:)`): its titles, tags, checkmarks and enabled states, the full-screen
+  item titled for the window (with ⌃⌘F), one target and action for every item, and no automatic
+  enabling. A choice goes back to the engine as `.menu(tag)`; `EngineView.makeMenuBar()` wires
+  it up and keeps it in sync.
 
 `examples/swift/Cubes` is a small game on all of this: it streams cubes along a road, rebases,
 and draws them from a world query.

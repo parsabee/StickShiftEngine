@@ -3,11 +3,11 @@
 // This software is released under the Apache-2.0 License.
 
 import AppKit
-import CStickShift
-@_spi(CInterop) import StickShift
+import StickShift
 
 /// The engine's Graphics menu in the menu bar: the `NSMenu` the Rust runner
-/// installs (`platform/macos.rs`), built from the engine's description of it.
+/// installs (`platform/macos.rs`), built from the engine's description of it
+/// (`Engine.menu(fullScreen:)`).
 ///
 /// ```text
 /// Graphics
@@ -45,10 +45,11 @@ public final class GraphicsMenuBar: NSObject {
     /// for `fullScreen`, handing each choice's tag to `choose`. Between engine
     /// calls only, as every engine call outside a hook is.
     public convenience init(engine: Engine, fullScreen: Bool = false, choose: @escaping (GraphicsMenu.Tag) -> Void) {
-        self.init(MenuData(engine: engine, fullScreen: fullScreen), choose: choose)
+        self.init(menu: engine.menu(fullScreen: fullScreen), choose: choose)
     }
 
-    init(_ data: MenuData, choose: @escaping (GraphicsMenu.Tag) -> Void) {
+    /// The Graphics menu for `data`, handing each choice's tag to `choose`.
+    public init(menu data: GraphicsMenu, choose: @escaping (GraphicsMenu.Tag) -> Void) {
         self.choose = choose
         menu = Self.titledMenu(data.title)
         menuBarItem = Self.parentItem(data.title, menu)
@@ -79,10 +80,11 @@ public final class GraphicsMenuBar: NSObject {
     /// Show `engine`'s settings: every item's checkmark and enabled state, and
     /// the full-screen item's title for `fullScreen`.
     public func sync(engine: Engine, fullScreen: Bool) {
-        sync(MenuData(engine: engine, fullScreen: fullScreen))
+        sync(engine.menu(fullScreen: fullScreen))
     }
 
-    func sync(_ data: MenuData) {
+    /// Show `data`'s checkmarks, enabled states and titles.
+    public func sync(_ data: GraphicsMenu) {
         for group in data.groups {
             for entry in group.items {
                 guard let item = items[entry.tag] else { continue }
@@ -108,7 +110,7 @@ public final class GraphicsMenuBar: NSObject {
     }
 
     /// The item for `entry`, with the shared target and action.
-    private func item(_ entry: MenuData.Item) -> NSMenuItem {
+    private func item(_ entry: GraphicsMenu.Item) -> NSMenuItem {
         let fullScreen = entry.tag == Self.fullScreenTag
         let item = NSMenuItem(
             title: entry.title, action: #selector(itemSelected(_:)), keyEquivalent: fullScreen ? "f" : ""
@@ -127,63 +129,5 @@ public final class GraphicsMenuBar: NSObject {
     @objc private func itemSelected(_ sender: NSMenuItem) {
         guard let raw = UInt32(exactly: sender.tag) else { return }
         choose(GraphicsMenu.Tag(rawValue: raw))
-    }
-}
-
-/// The engine's Graphics menu as data, read from `stickshift_engine_get_menu`.
-///
-/// A stand-in until the core target describes the menu itself
-/// (`Engine.menu(fullScreen:)`); the menu bar needs only these fields.
-struct MenuData: Equatable {
-    struct Item: Equatable {
-        var tag: GraphicsMenu.Tag
-        var title: String
-        var isChecked: Bool
-        var isEnabled: Bool
-    }
-
-    struct Group: Equatable {
-        /// The submenu's title, or `nil` for the actions after a separator.
-        var title: String?
-        var items: [Item]
-    }
-
-    var title: String
-    var groups: [Group]
-    /// The settings revision the checkmarks show.
-    var revision: UInt64
-
-    @MainActor
-    init(engine: Engine, fullScreen: Bool) {
-        var menu = StickShiftMenu()
-        menu.size = UInt32(MemoryLayout<StickShiftMenu>.size)
-        let result = stickshift_engine_get_menu(engine.cEngine, fullScreen ? 1 : 0, &menu)
-        guard result == STICKSHIFT_OK else {
-            fatalError(
-                "StickShift: reading the engine's Graphics menu failed (\(result)): "
-                    + String(cString: stickshift_last_error_message())
-            )
-        }
-        title = String(cString: menu.title)
-        revision = menu.revision
-        groups = Self.elements(menu.groups, count: menu.group_count, stride: menu.group_stride).map { group in
-            let items = Self.elements(group.items, count: group.item_count, stride: group.item_stride).map { item in
-                Item(
-                    tag: GraphicsMenu.Tag(rawValue: UInt32(bitPattern: item.tag)),
-                    title: String(cString: item.label),
-                    isChecked: item.checked != 0,
-                    isEnabled: item.enabled != 0
-                )
-            }
-            return Group(title: group.title.map { String(cString: $0) }, items: items)
-        }
-    }
-
-    /// `count` C values from `base`, `stride` bytes apart, as the engine lays
-    /// its arrays out.
-    private static func elements<T>(_ base: UnsafePointer<T>?, count: UInt32, stride: UInt32) -> [T] {
-        guard let base, count > 0 else { return [] }
-        let raw = UnsafeRawPointer(base)
-        return (0..<Int(count)).map { raw.load(fromByteOffset: $0 * Int(stride), as: T.self) }
     }
 }

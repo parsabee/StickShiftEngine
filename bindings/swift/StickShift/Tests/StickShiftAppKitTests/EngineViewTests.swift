@@ -6,7 +6,7 @@ import AppKit
 import CStickShift
 import Testing
 
-@_spi(CInterop) import StickShift
+import StickShift
 @testable import StickShiftAppKit
 
 // The engine's view in a real, offscreen window (Offramp's `GameViewTests`,
@@ -99,7 +99,7 @@ private struct Rig {
 
     /// Set the engine camera's aspect, to see whether an event changes it.
     func setAspect(_ aspect: Float) {
-        #expect(stickshift_camera_set_aspect_ratio(view.engine.cEngine, aspect) == STICKSHIFT_OK)
+        view.engine.camera.aspectRatio = aspect
     }
 
     /// A key event for the window.
@@ -134,7 +134,7 @@ struct EngineViewTests {
         #expect(rig.view.metrics == ViewMetrics(width: 1600, height: 1200, scaleFactor: 2))
         #expect(rig.view.context.size == (800, 600))
         rig.expectDrawable("resumed, 2x at 50%")
-        #expect(rig.view.engine.cameraAspect == rig.viewAspect)
+        #expect(rig.view.engine.camera.aspectRatio == rig.viewAspect)
         #expect(rig.events.all.isEmpty, "resume reports the view itself")
 
         // Again (the view back on screen): no second initialize.
@@ -152,7 +152,7 @@ struct EngineViewTests {
         #expect(rig.events.all == [.viewResized(ViewMetrics(width: 2000, height: 1400, scaleFactor: 2))])
         #expect(rig.view.context.size == (1000, 700))
         rig.expectDrawable("resized")
-        #expect(rig.view.engine.cameraAspect == rig.viewAspect, "the aspect follows a resize")
+        #expect(rig.view.engine.camera.aspectRatio == rig.viewAspect, "the aspect follows a resize")
 
         // Dragged to a 1x display: half a drawable pixel per point. winit
         // follows its ScaleFactorChanged with a Resized, so the aspect follows
@@ -167,7 +167,7 @@ struct EngineViewTests {
         #expect(rig.view.context.size == (500, 350))
         #expect(rig.view.context.scale == 0.5)
         rig.expectDrawable("moved to 1x")
-        #expect(rig.view.engine.cameraAspect == rig.viewAspect, "the aspect follows the view")
+        #expect(rig.view.engine.camera.aspectRatio == rig.viewAspect, "the aspect follows the view")
         #expect(checked.state == .on, "the menu synced")
 
         // Nothing changed: nothing reported.
@@ -211,9 +211,9 @@ struct EngineViewTests {
         rig.view.keyDown(with: rig.key(.keyDown, 0x31, repeating: true))
         rig.view.keyDown(with: rig.key(.keyDown, 0x24))  // Return: not an engine key
         #expect(rig.events.all == [.keyDown(.space), .keyDown(.space, isRepeat: true)])
-        #expect(engine.isKeyDown(.space))
+        #expect(engine.input.isKeyDown(.space))
         rig.view.keyUp(with: rig.key(.keyUp, 0x31))
-        #expect(!engine.isKeyDown(.space))
+        #expect(!engine.input.isKeyDown(.space))
         #expect(rig.events.all.last == .keyUp(.space))
     }
 
@@ -224,10 +224,10 @@ struct EngineViewTests {
         // ⌘→ goes down (the view's key-down), and comes up through
         // `NSApplication.sendEvent(_:)`, which alone would drop it.
         rig.view.keyDown(with: rig.key(.keyDown, 0x7C, .command))
-        #expect(rig.view.engine.isKeyDown(.right))
+        #expect(rig.view.engine.input.isKeyDown(.right))
         rig.view.driveFrame()
         NSApplication.shared.sendEvent(rig.key(.keyUp, 0x7C, .command))
-        #expect(!rig.view.engine.isKeyDown(.right), "the key-up reached the game")
+        #expect(!rig.view.engine.input.isKeyDown(.right), "the key-up reached the game")
     }
 
     @Test func theMouseAndTheCursorInPointsFromTheTopLeft() throws {
@@ -235,18 +235,16 @@ struct EngineViewTests {
         let engine = rig.view.engine
         rig.view.mouseDown(with: rig.mouse(.leftMouseDown))
         rig.view.rightMouseDown(with: rig.mouse(.rightMouseDown))
-        #expect(engine.isMouseDown(.left) && engine.isMouseDown(.right))
+        #expect(engine.input.isMouseDown(.left) && engine.input.isMouseDown(.right))
         rig.view.mouseUp(with: rig.mouse(.leftMouseUp))
         rig.view.rightMouseUp(with: rig.mouse(.rightMouseUp))
-        #expect(!engine.isMouseDown(.left) && !engine.isMouseDown(.right))
+        #expect(!engine.input.isMouseDown(.left) && !engine.input.isMouseDown(.right))
 
         // The view is the window's content: window coordinates are the view's,
         // from the bottom-left.
         rig.view.mouseMoved(with: rig.mouse(.mouseMoved, at: NSPoint(x: 100, y: 450)))
         #expect(rig.events.all.last == .cursor([100, 150]))
-        let input = engine.inputState
-        #expect(input.has_cursor == 1)
-        #expect(input.cursor_x == 100 && input.cursor_y == 150)
+        #expect(engine.input.cursorPosition == [100, 150])
         rig.view.mouseDragged(with: rig.mouse(.leftMouseDragged, at: NSPoint(x: 0, y: 600)))
         #expect(rig.events.all.last == .cursor([0, 0]))
     }
@@ -258,14 +256,12 @@ struct EngineViewTests {
         guard let rig = try Rig.make() else { return }
         #expect(rig.view.acceptsFirstMouse(for: nil))
         let engine = rig.view.engine
-        #expect(engine.inputState.has_cursor == 0)
+        #expect(engine.input.cursorPosition == nil)
 
         rig.view.mouseDown(with: rig.mouse(.leftMouseDown, at: NSPoint(x: 100, y: 450)))
         #expect(rig.events.all == [.cursor([100, 150]), .mouseDown(.left)])
-        let input = engine.inputState
-        #expect(input.has_cursor == 1)
-        #expect(input.cursor_x == 100 && input.cursor_y == 150)
-        #expect(engine.isMouseDown(.left))
+        #expect(engine.input.cursorPosition == [100, 150])
+        #expect(engine.input.isMouseDown(.left))
 
         rig.events.all.removeAll()
         rig.view.mouseUp(with: rig.mouse(.leftMouseUp, at: NSPoint(x: 120, y: 400)))
@@ -279,11 +275,11 @@ struct EngineViewTests {
         guard let rig = try Rig.make() else { return }
         rig.view.keyDown(with: rig.key(.keyDown, 0x0D))
         rig.view.mouseDown(with: rig.mouse(.leftMouseDown))
-        #expect(rig.view.engine.isKeyDown(.w))
+        #expect(rig.view.engine.input.isKeyDown(.w))
         NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: rig.window)
         #expect(rig.events.all.last == .focusLost)
-        #expect(!rig.view.engine.isKeyDown(.w))
-        #expect(!rig.view.engine.isMouseDown(.left))
+        #expect(!rig.view.engine.input.isKeyDown(.w))
+        #expect(!rig.view.engine.input.isMouseDown(.left))
 
         // Another window's notifications are not the view's.
         rig.events.all.removeAll()
@@ -336,7 +332,7 @@ struct EngineViewTests {
         #expect(exits == 1)
         #expect(rig.view.hasExited)
         #expect(!rig.view.isRunning && !rig.view.watchdog.isRunning, "ticking stopped")
-        #expect(rig.view.engine.isKeyDown(.escape), "the game still sees the key")
+        #expect(rig.view.engine.input.isKeyDown(.escape), "the game still sees the key")
         // Another exit request after the first: `onExit` is not called again.
         #expect(rig.view.push(.close).contains(.exit))
         #expect(exits == 1)

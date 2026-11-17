@@ -84,6 +84,16 @@ API**.
   `.exit` (a tick with `TickResult.isPoisoned`) so the host can drop the engine; a panic in a
   call the game makes from a hook still traps at that call. `HostInput` presses and releases
   mouse buttons with `pressMouse(_:)` and `releaseMouse(_:)`, so `press(.left)` is the key.
+- **`StickShiftAppKit`, the macOS host**, a new library product of the Swift package, so a Swift
+  game is game code only: `StickShiftApp.run(title:size:options:makeGame:)` makes the app, its
+  window and menus and runs the game, as `stickshift_core::run` does for a Rust game.
+  `EngineView` is a `StickShiftView` that runs an `Engine`: it ticks on the engine clock each
+  display refresh, reports resizes, density changes, keys (through the macOS keycode table,
+  `Key(macKeyCode:)`), mouse buttons, the cursor and focus loss as winit does, and carries out
+  the engine's requests (exit, full screen, menu sync). `GraphicsMenuBar` builds the native
+  Graphics menu from `Engine.menu(fullScreen:)`, and `FrameWatchdog` keeps the game ticking
+  while AppKit has stopped the display link. `examples/swift/Cubes` is a small game on it, which
+  `scripts/test-swift.sh` builds.
 - **`stickshift_core::Session`**, the platform-free half of the windowed runner: the frame clock
   (the first frame, and the first after a menu choice or `reset_clock`, banks exactly one step),
   the drawable sized for the view and the render scale, graphics settings restored at start-up
@@ -170,6 +180,9 @@ API**.
   `libstickshift.a` statically must add `-framework AudioToolbox -framework CoreAudio`, even if it
   never creates an engine. `pkg-config --static --libs stickshift` and rustc's
   `--print native-static-libs` already list them; the `StickShift` Swift package links them.
+- **`StickShiftView` moved to the `StickShiftAppKit` module**, so the `StickShift` module has no
+  AppKit in it. Code that makes one adds the `StickShiftAppKit` product and
+  `import StickShiftAppKit`; the view itself is unchanged.
 - **`stickshift_context_resize` works on null contexts**, which returned
   `STICKSHIFT_ERROR_UNSUPPORTED` before, so an engine on a null context sizes its drawable for the
   view and the render scale as on a layer context. A Metal offscreen context still keeps its size.
