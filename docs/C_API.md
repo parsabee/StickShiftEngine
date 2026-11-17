@@ -298,7 +298,7 @@ are non-error outcomes; negative values are errors:
 | `STICKSHIFT_ERROR_IO` | A file could not be read. |
 | `STICKSHIFT_ERROR_PARSE` | A glTF or image could not be decoded. |
 | `STICKSHIFT_ERROR_LIMIT_EXCEEDED` | An engine limit was hit (see [Limits](#limits)). |
-| `STICKSHIFT_ERROR_INTERNAL` | A bug in the engine (a Rust panic caught at the boundary). The context may be inconsistent; destroy it. A panic in an engine call poisons the engine: destroy it. |
+| `STICKSHIFT_ERROR_INTERNAL` | A bug in the engine (a Rust panic caught at the boundary). The context may be inconsistent; destroy it. A panic in an engine call poisons only the engine: destroy it; its context stays usable. |
 | `STICKSHIFT_ERROR_TIMEOUT` | A wait gave up before its work finished (a hung GPU, or a load that never completed). The work stays pending. |
 | `STICKSHIFT_ERROR_WRONG_THREAD` | An engine call, or a call on a context with an engine attached, from a thread other than the engine's. |
 | `STICKSHIFT_ERROR_ABORTED` | The game's init hook failed; the engine is failed. Destroy it. |
@@ -486,9 +486,11 @@ updates).
 **Failure.** If the init hook returns a negative result, `stickshift_engine_init` or `_resume`
 returns `STICKSHIFT_ERROR_ABORTED` and the engine is *failed*: every later `init`, `resume` and
 `tick` is `STICKSHIFT_ERROR_WRONG_STATE`. If a panic (a bug in the engine) is caught in any engine
-call, the engine is *poisoned*: every later call returns `STICKSHIFT_ERROR_INTERNAL`, except
-`stickshift_engine_get_state`, which still answers with `poisoned` set, and
-`stickshift_engine_destroy`. Destroy a failed or poisoned engine; its context stays usable.
+call, the engine is *poisoned*: every later call that takes the engine (`stickshift_engine_*`,
+`_component_*`, `_world_*`, `_scene_*`, `_stream_*`, `_camera_*`, `_input_*`, `_audio_*`,
+`_graphics_*`) returns `STICKSHIFT_ERROR_INTERNAL`, except `stickshift_engine_get_state`, which
+still answers with `poisoned` set, and `stickshift_engine_destroy`. Calls on its context and frames
+are not refused. Destroy a failed or poisoned engine; its context stays usable.
 
 **Destroy.** `stickshift_engine_destroy` calls the game's `release` hook exactly once, detaches the
 context and drops the loop, which stops the audio device. It works on a failed or poisoned engine.
@@ -568,7 +570,9 @@ allow returns **`STICKSHIFT_ERROR_WRONG_STATE`** and does nothing; the engine st
   created the engine. A call from any other thread returns **`STICKSHIFT_ERROR_WRONG_THREAD`**
   before it touches anything: every engine call, and every context or frame call on that context.
   The thread-safe functions ([Threading](#threading)) stay callable anywhere.
-- **Poisoned** engines answer `STICKSHIFT_ERROR_INTERNAL` ([Failure](#the-engine-and-the-host-driven-loop)).
+- **Poisoned** engines answer `STICKSHIFT_ERROR_INTERNAL` to every engine call except
+  `stickshift_engine_get_state` and `stickshift_engine_destroy`; calls on the context still work
+  ([Failure](#the-engine-and-the-host-driven-loop)).
 
 `crates/stickshift-capi/tests/engine.rs` checks this table for every function that takes an
 engine, in every scope.

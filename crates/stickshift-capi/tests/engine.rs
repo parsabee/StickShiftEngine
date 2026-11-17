@@ -2209,13 +2209,32 @@ fn a_panic_poisons_the_engine_and_release_still_runs_once() {
     );
     // Still poisoned: get_state did not clear it.
     assert_eq!(state_of(h.engine).map(|s| s.poisoned), Ok(1));
-    // The context still works, and destroy still releases the game.
+    // Every function that takes the engine (from the header) but get_state
+    // and destroy is refused.
+    let calls = engine_calls_in(h.engine, null_mut(), true);
+    let result = |name: &str| calls.iter().find(|(n, _)| *n == name).map(|&(_, r)| r);
+    for name in header_engine_functions() {
+        let expected = match name.as_str() {
+            "engine_get_state" => STICKSHIFT_OK,
+            // Made last, below.
+            "engine_destroy" => continue,
+            _ => STICKSHIFT_ERROR_INTERNAL,
+        };
+        assert_eq!(result(&name), Some(expected), "stickshift_{name}");
+    }
+    // The context still works, frames included, and destroy still releases
+    // the game.
     let (mut w, mut hgt) = (0, 0);
+    let mut frame = null_mut();
     // SAFETY: a live context, between calls.
-    assert_eq!(
-        unsafe { stickshift_context_get_size(h.ctx, &mut w, &mut hgt) },
-        STICKSHIFT_OK
-    );
+    unsafe {
+        assert_eq!(
+            stickshift_context_get_size(h.ctx, &mut w, &mut hgt),
+            STICKSHIFT_OK
+        );
+        assert_eq!(stickshift_frame_acquire(h.ctx, &mut frame), STICKSHIFT_OK);
+        assert_eq!(stickshift_frame_discard(frame), STICKSHIFT_OK);
+    }
     // SAFETY: a live engine.
     assert_eq!(
         unsafe { stickshift_engine_destroy(h.engine) },
