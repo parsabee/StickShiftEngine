@@ -247,13 +247,20 @@ impl Inner {
         }
     }
 
-    /// Whether nothing is in progress: no loads, no frames or read-backs on the GPU.
-    /// What housekeeping is still waiting for: `(model loads, frames,
-    /// read-backs)`. All zero when the context is idle.
+    /// What is still in progress: `(model loads, frames on the GPU,
+    /// read-backs)`. All zero when the context is idle. The frames count every
+    /// submitted frame the GPU has not finished, the engine's too (which have
+    /// no completion to deliver), not only those with a completion pending.
     pub(crate) fn pending(&self) -> (u32, usize, usize) {
+        let in_flight = self
+            .backend
+            .submitted_frames()
+            .saturating_sub(self.backend.completed_frames());
         (
             self.loader.as_ref().map_or(0, Loader::in_flight),
-            self.pending_frames.len(),
+            self.pending_frames
+                .len()
+                .max(usize::try_from(in_flight).unwrap_or(usize::MAX)),
             self.pending_reads.len(),
         )
     }
@@ -262,9 +269,9 @@ impl Inner {
         self.backend.surface_size()
     }
 
-    /// Resize the drawable (the caller checked the backend can), keeping the
-    /// scale and converting the safe area, which is kept in pixels, to the new
-    /// scale.
+    /// Resize the drawable (the caller checked the backend can) and record its
+    /// scale. The safe area (in pixels) is left as it is: an engine's
+    /// `CapiRenderer` recomputes it from the view's insets in points.
     pub(crate) fn resize(&mut self, width: u32, height: u32, scale: f32) {
         let scale = effective_scale(scale);
         self.backend.resize(width, height, scale);
@@ -555,7 +562,9 @@ pub unsafe extern "C" fn stickshift_context_create(
 
 /// Destroy a context and everything it owns. Waits for submitted frames and a
 /// model parse in progress; undelivered events are dropped and borrowed data is
-/// released. NULL is a no-op.
+/// released. NULL is a no-op. With an engine attached it is
+/// `STICKSHIFT_ERROR_WRONG_STATE` (destroy the engine first), or
+/// `STICKSHIFT_ERROR_WRONG_THREAD` from a thread other than the engine's.
 ///
 /// # Safety
 /// `ctx` must be NULL or a live context; it is invalid after this returns
@@ -568,12 +577,18 @@ pub unsafe extern "C" fn stickshift_context_destroy(
         let Some(context) = ctx.as_ref() else {
             return Ok(STICKSHIFT_OK);
         };
+        let engine = context.engine.load(Ordering::Acquire);
+        if !engine.is_null()
+            && context.engine_thread.load(Ordering::Acquire) != crate::engine::current_thread()
+        {
+            return Err(crate::engine::wrong_thread());
+        }
         if context.dispatching.load(Ordering::SeqCst) > 0 {
             return Err(Error::wrong_state(
                 "stickshift_context_destroy cannot be called from a callback",
             ));
         }
-        if !context.engine.load(Ordering::Acquire).is_null() {
+        if !engine.is_null() {
             return Err(Error::wrong_state(
                 "an engine is attached to this context: destroy the engine first \
                  (stickshift_engine_destroy)",

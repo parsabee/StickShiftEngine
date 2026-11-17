@@ -85,7 +85,7 @@ pub(crate) fn current_thread() -> u64 {
     THREAD.with(|id| *id)
 }
 
-fn wrong_thread() -> Error {
+pub(crate) fn wrong_thread() -> Error {
     Error::new(
         STICKSHIFT_ERROR_WRONG_THREAD,
         "an engine, and a context with an engine attached, may only be used on the thread \
@@ -1515,6 +1515,35 @@ pub mod testing {
                 null.held_slots = slots;
                 Ok(STICKSHIFT_OK)
             })
+        })
+    }
+
+    /// The context's sticky camera, read without the push rule (a context
+    /// call inside a hook would push the moved camera first): what the loop
+    /// pushed last.
+    ///
+    /// # Safety
+    /// `ctx` must be NULL or a live context, used on its engine's thread.
+    pub unsafe fn context_camera_unpushed(
+        ctx: *mut StickShiftContext,
+        out: &mut (Mat4, Vec3),
+    ) -> StickShiftResult {
+        call(|| {
+            let ctx = crate::core::input(ctx.cast_const(), "ctx")?;
+            let mut guard = ctx.enter()?;
+            *out = guard.inner().camera;
+            Ok(STICKSHIFT_OK)
+        })
+    }
+
+    /// A game call whose body panics, as a bug in an engine function the game
+    /// calls from a hook would.
+    ///
+    /// # Safety
+    /// `engine` must be NULL or a live engine.
+    pub unsafe fn panic_in_call(engine: *mut StickShiftEngine) -> StickShiftResult {
+        game_call(engine, "panic_in_call", |_, _| {
+            panic!("a panic a test asked for, inside a call the game made")
         })
     }
 

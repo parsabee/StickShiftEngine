@@ -1775,7 +1775,9 @@ StickShiftResult stickshift_context_create(const struct StickShiftContextDesc *d
 /**
  * Destroy a context and everything it owns. Waits for submitted frames and a
  * model parse in progress; undelivered events are dropped and borrowed data is
- * released. NULL is a no-op.
+ * released. NULL is a no-op. With an engine attached it is
+ * `STICKSHIFT_ERROR_WRONG_STATE` (destroy the engine first), or
+ * `STICKSHIFT_ERROR_WRONG_THREAD` from a thread other than the engine's.
  *
  * # Safety
  * `ctx` must be NULL or a live context; it is invalid after this returns

@@ -9,15 +9,22 @@
 //! Hooks never assert: a panic cannot unwind out of an `extern "C"` function.
 //! They record what they see, and the tests check it after the call.
 
+use std::cell::RefCell;
 use std::ffi::{c_void, CStr};
 use std::ptr::{null, null_mut};
+use std::rc::Rc;
 
 use stickshift::testing;
 use stickshift::*;
 use stickshift_core::driver::{drive_frame, Loop};
 use stickshift_core::{EngineCtx, Game, FIXED_DT, FIXED_DT_DURATION, MAX_STEPS_PER_FRAME};
 use stickshift_math::glam::{Mat4, Vec3};
-use stickshift_render_api::NullRenderer;
+use stickshift_math::Transform;
+use stickshift_render_api::{
+    FrameRecorder, GpuFrameTime, Light, MaterialParams, MeshData, MeshHandle, NullRenderer,
+    OverlayQuad, PipelineDescriptor, PipelineHandle, RenderDevice, RenderSettings, SunSky,
+    TextureData, TextureHandle,
+};
 
 fn last_error() -> String {
     // SAFETY: never NULL; valid until the next error on this thread.
@@ -49,6 +56,9 @@ struct Probe {
     /// What the hooks saw, for the test to check afterwards.
     seen: Vec<String>,
     script: Option<Script>,
+    /// When set, the release hook makes every engine call on this engine
+    /// ([`engine_calls`]) and records what each returned in `seen`.
+    calls_in_release: Option<*mut StickShiftEngine>,
 }
 
 impl Probe {
@@ -101,7 +111,13 @@ unsafe extern "C" fn settings_changed(
 }
 
 unsafe extern "C" fn release(user: *mut c_void) {
-    probe(user).releases += 1;
+    let p = probe(user);
+    p.releases += 1;
+    if let Some(e) = p.calls_in_release {
+        for (name, result) in engine_calls(e, null_mut()) {
+            p.seen.push(format!("Release {name} {result}"));
+        }
+    }
 }
 
 fn null_desc(width: u32, height: u32) -> StickShiftContextDesc {
@@ -662,73 +678,228 @@ fn camera_move(at: At, n: u32) -> Option<(Vec3, bool)> {
     }
 }
 
+/// A second move after the touch, with no context call, in every update that
+/// touched: the next hook's first read shows whether the hook's end pushed it.
+fn camera_move_after_touch(at: At, n: u32) -> Option<Vec3> {
+    (at == At::Update && n.is_multiple_of(2))
+        .then(|| Vec3::new(-0.5 * n as f32, 4.0, 2.0 * n as f32))
+}
+
+/// A camera the render hook sets on its frame after its move and touch, in
+/// every second render. It must win over the moved engine camera, as
+/// `ctx.renderer().set_view_projection` does in Rust.
+fn frame_camera(at: At, n: u32) -> Option<(Mat4, Vec3)> {
+    (at == At::Render && n.is_multiple_of(2)).then(|| {
+        let eye = Vec3::new(1.0 + n as f32, 2.0, 5.0);
+        (
+            Mat4::perspective_rh(0.8, 1.5, 0.1, 100.0) * Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y),
+            eye,
+        )
+    })
+}
+
+/// A hook's two reads of the renderer's camera, right after its move and right
+/// after its touch, as one line.
+fn push_point(at: At, n: u32, before: (Mat4, Vec3), after: (Mat4, Vec3)) -> String {
+    let bits = |(vp, eye): (Mat4, Vec3)| (bits(vp), eye.to_array().map(f32::to_bits));
+    format!("{at:?} {n} {:?} {:?}", bits(before), bits(after))
+}
+
+/// A [`NullRenderer`] the Rust probe can read inside its hooks, where
+/// `EngineCtx::renderer` would push the moved camera first.
+#[derive(Clone)]
+struct Spy(Rc<RefCell<NullRenderer>>);
+
+impl Spy {
+    fn camera(&self) -> (Mat4, Vec3) {
+        let r = self.0.borrow();
+        (
+            r.view_projection().unwrap_or(Mat4::IDENTITY),
+            r.camera_position().unwrap_or(Vec3::ZERO),
+        )
+    }
+}
+
+impl RenderDevice for Spy {
+    fn create_mesh(&mut self, data: &MeshData<'_>) -> MeshHandle {
+        self.0.borrow_mut().create_mesh(data)
+    }
+    fn destroy_mesh(&mut self, handle: MeshHandle) {
+        self.0.borrow_mut().destroy_mesh(handle);
+    }
+    fn create_texture(&mut self, data: &TextureData<'_>) -> TextureHandle {
+        self.0.borrow_mut().create_texture(data)
+    }
+    fn destroy_texture(&mut self, handle: TextureHandle) {
+        self.0.borrow_mut().destroy_texture(handle);
+    }
+    fn create_pipeline(&mut self, desc: &PipelineDescriptor) -> PipelineHandle {
+        self.0.borrow_mut().create_pipeline(desc)
+    }
+    fn destroy_pipeline(&mut self, handle: PipelineHandle) {
+        self.0.borrow_mut().destroy_pipeline(handle);
+    }
+    fn surface_size(&self) -> (u32, u32) {
+        self.0.borrow().surface_size()
+    }
+    fn safe_area_insets(&self) -> [f32; 4] {
+        self.0.borrow().safe_area_insets()
+    }
+    fn resize_surface(&mut self, width: u32, height: u32, pixels_per_point: f32) {
+        self.0
+            .borrow_mut()
+            .resize_surface(width, height, pixels_per_point);
+    }
+    fn surface_scale(&self) -> f32 {
+        self.0.borrow().surface_scale()
+    }
+    fn last_gpu_frame_time(&self) -> Option<GpuFrameTime> {
+        self.0.borrow().last_gpu_frame_time()
+    }
+    fn set_render_settings(&mut self, settings: &RenderSettings) {
+        self.0.borrow_mut().set_render_settings(settings);
+    }
+}
+
+impl FrameRecorder for Spy {
+    fn begin_frame(&mut self) {
+        self.0.borrow_mut().begin_frame();
+    }
+    fn set_view_projection(&mut self, view_proj: Mat4) {
+        self.0.borrow_mut().set_view_projection(view_proj);
+    }
+    fn set_camera_position(&mut self, position: Vec3) {
+        self.0.borrow_mut().set_camera_position(position);
+    }
+    fn set_sun_sky(&mut self, sun: &SunSky) {
+        self.0.borrow_mut().set_sun_sky(sun);
+    }
+    fn add_light(&mut self, light: &Light) {
+        self.0.borrow_mut().add_light(light);
+    }
+    fn set_pipeline(&mut self, handle: PipelineHandle) {
+        self.0.borrow_mut().set_pipeline(handle);
+    }
+    fn bind_texture(&mut self, handle: TextureHandle) {
+        self.0.borrow_mut().bind_texture(handle);
+    }
+    fn draw_mesh(&mut self, mesh: MeshHandle, transform: &Transform, material: &MaterialParams) {
+        self.0.borrow_mut().draw_mesh(mesh, transform, material);
+    }
+    fn draw_mesh_matrix(&mut self, mesh: MeshHandle, model: Mat4, material: &MaterialParams) {
+        self.0.borrow_mut().draw_mesh_matrix(mesh, model, material);
+    }
+    fn draw_overlay_quad(&mut self, quad: &OverlayQuad) {
+        self.0.borrow_mut().draw_overlay_quad(quad);
+    }
+    fn submit(&mut self) {
+        self.0.borrow_mut().submit();
+    }
+}
+
 struct RustProbe {
     updates: u32,
     renders: u32,
+    spy: Spy,
+    points: Vec<String>,
+}
+
+impl RustProbe {
+    /// What the C probe's hooks do, in Rust.
+    fn hook(&mut self, ctx: &mut EngineCtx, at: At, n: u32) {
+        if let Some((p, touch)) = camera_move(at, n) {
+            ctx.camera_mut().set_position(p);
+            let before = self.spy.camera();
+            if touch {
+                let _ = ctx.renderer();
+            }
+            let after = self.spy.camera();
+            self.points.push(push_point(at, n, before, after));
+        }
+        if let Some(p) = camera_move_after_touch(at, n) {
+            ctx.camera_mut().set_position(p);
+        }
+        if let Some((view_projection, eye)) = frame_camera(at, n) {
+            let renderer = ctx.renderer();
+            renderer.set_view_projection(view_projection);
+            renderer.set_camera_position(eye);
+        }
+    }
 }
 
 impl Game for RustProbe {
     fn init(&mut self, ctx: &mut EngineCtx) {
-        let (p, touch) = camera_move(At::Init, 0).unwrap();
-        ctx.camera_mut().set_position(p);
-        if touch {
-            let _ = ctx.renderer();
-        }
+        self.hook(ctx, At::Init, 0);
     }
 
     fn update(&mut self, ctx: &mut EngineCtx, _dt: f32) {
         self.updates += 1;
-        let (p, touch) = camera_move(At::Update, self.updates).unwrap();
-        ctx.camera_mut().set_position(p);
-        if touch {
-            let _ = ctx.renderer();
-        }
+        self.hook(ctx, At::Update, self.updates);
     }
 
     fn render(&mut self, ctx: &mut EngineCtx) {
         self.renders += 1;
-        if let Some((p, touch)) = camera_move(At::Render, self.renders) {
-            ctx.camera_mut().set_position(p);
-            if touch {
-                let _ = ctx.renderer();
-            }
-        }
+        self.hook(ctx, At::Render, self.renders);
     }
 }
 
+/// The context's camera, read inside each hook without the push rule right
+/// after the game moves the camera and right after its first context call, and
+/// after every call, equals what the Rust loop's renderer holds at the same
+/// points: the push happens at the first context call, not when the hook
+/// returns.
 #[test]
 fn the_context_camera_follows_the_rust_push_points() {
-    let h = Harness::new(|p, at, e, _| {
+    let h = Harness::new(|p, at, e, frame| {
         let n = match at {
             At::Update => p.updates,
             At::Render => p.renders,
             _ => 0,
         };
-        if let Some((position, touch)) = camera_move(at, n) {
-            // SAFETY: inside a hook, on the engine's thread.
-            unsafe {
+        // SAFETY: inside a hook, on the engine's thread.
+        unsafe {
+            let mut ctx = null_mut();
+            stickshift_engine_get_context(e, &mut ctx);
+            let unpushed = || {
+                let mut camera = (Mat4::ZERO, Vec3::ZERO);
+                testing::context_camera_unpushed(ctx, &mut camera);
+                camera
+            };
+            if let Some((position, touch)) = camera_move(at, n) {
                 testing::set_camera_position(e, position);
+                let before = unpushed();
                 if touch {
                     // Any context call: the push rule runs before it.
-                    let mut ctx = null_mut();
-                    stickshift_engine_get_context(e, &mut ctx);
                     let (mut w, mut h) = (0, 0);
                     stickshift_context_get_size(ctx, &mut w, &mut h);
                 }
+                p.seen.push(push_point(at, n, before, unpushed()));
+            }
+            if let Some(position) = camera_move_after_touch(at, n) {
+                testing::set_camera_position(e, position);
+            }
+            if let Some((view_projection, eye)) = frame_camera(at, n) {
+                let camera = StickShiftCamera {
+                    view_projection: view_projection.into(),
+                    position: eye.into(),
+                };
+                stickshift_frame_set_camera(frame, &camera);
             }
         }
     });
     let mut lp = Loop::new();
+    let spy = Spy(Rc::new(RefCell::new(NullRenderer::new())));
     let mut game = RustProbe {
         updates: 0,
         renders: 0,
+        spy: spy.clone(),
+        points: Vec::new(),
     };
-    let mut renderer = NullRenderer::new();
+    let mut renderer = spy.clone();
 
-    let same = |h: &Harness, renderer: &NullRenderer, when: &str| {
+    let same = |h: &Harness, when: &str| {
         let (vp, eye) = h.context_camera();
-        let want_vp = renderer.view_projection().unwrap_or(Mat4::IDENTITY);
-        let want_eye = renderer.camera_position().unwrap_or(Vec3::ZERO);
+        let (want_vp, want_eye) = spy.camera();
         assert_eq!(bits(vp), bits(want_vp), "view-projection {when}");
         assert_eq!(
             eye.to_array().map(f32::to_bits),
@@ -738,7 +909,8 @@ fn the_context_camera_follows_the_rust_push_points() {
     };
     assert_eq!(h.init(), STICKSHIFT_OK);
     lp.init_once(&mut game, &mut renderer);
-    same(&h, &renderer, "after init");
+    assert_eq!(h.probe.seen, game.points, "in init");
+    same(&h, "after init");
     assert_ne!(h.context_camera().0, Mat4::IDENTITY, "init pushed a camera");
     // The render settings the loop pushed at init reached the context too.
     let mut settings = StickShiftRenderSettings {
@@ -748,7 +920,7 @@ fn the_context_camera_follows_the_rust_push_points() {
     };
     // SAFETY: a live context.
     unsafe { stickshift_context_get_settings(h.ctx, &mut settings) };
-    let want = renderer.render_settings().expect("pushed at init");
+    let want = spy.0.borrow().render_settings().expect("pushed at init");
     assert_eq!(settings.draw_distance_scale, want.draw_distance_scale);
 
     let dt = STICKSHIFT_FIXED_DT_NS;
@@ -761,10 +933,25 @@ fn the_context_camera_follows_the_rust_push_points() {
             &mut renderer,
             std::time::Duration::from_nanos(elapsed),
         );
-        same(&h, &renderer, &format!("after tick {i}"));
+        assert_eq!(h.probe.seen, game.points, "in the hooks of tick {i}");
+        same(&h, &format!("after tick {i}"));
+        // A frame camera set after a push stayed the frame's.
+        if frame_camera(At::Render, game.renders).is_some() {
+            let record = h.last_frame();
+            assert_eq!(
+                bits(record.camera.view_projection.into_mat4()),
+                bits(frame_camera(At::Render, game.renders).unwrap().0),
+                "the render hook's frame camera, tick {i}"
+            );
+        }
     }
     assert_eq!(h.probe.updates, game.updates);
     assert_eq!(h.probe.renders, game.renders);
+    assert_eq!(
+        h.probe.seen.len(),
+        1 + 8 + 2,
+        "init, 8 updates, renders 3 and 6"
+    );
     let mut engine_camera = (Mat4::ZERO, Vec3::ZERO);
     // SAFETY: a live engine, between calls.
     unsafe { testing::camera(h.engine, &mut engine_camera) };
@@ -1233,6 +1420,165 @@ fn the_scope_matrix() {
     assert_eq!(h.tick().rendered, 1);
 }
 
+/// What every engine call returns from a callback the engine delivers outside
+/// any hook (a completion during a tick, or the release hook): the host-only
+/// calls and the game calls alike are refused, since the engine call that
+/// delivers it holds the state.
+fn refused_outside_hooks() -> Vec<(&'static str, StickShiftResult)> {
+    let ws = STICKSHIFT_ERROR_WRONG_STATE;
+    let ia = STICKSHIFT_ERROR_INVALID_ARGUMENT;
+    vec![
+        ("get_context", STICKSHIFT_OK),
+        ("tick", ws),
+        ("init", ws),
+        ("resume", ws),
+        ("push_events", ws),
+        ("reset_clock", ws),
+        ("destroy", ws),
+        ("get_state", ws),
+        ("get_perf", ws),
+        ("context_destroy", ws),
+        ("frame_acquire", ws),
+        // No frame outside the render hook.
+        ("frame_submit", ia),
+        ("frame_discard", ia),
+        ("context_get_last_frame", STICKSHIFT_OK),
+        ("request_exit", ws),
+    ]
+}
+
+/// A load completion's view of the engine calls, behind its user pointer.
+struct CompletionProbe {
+    engine: *mut StickShiftEngine,
+    calls: Vec<(&'static str, StickShiftResult)>,
+}
+
+unsafe extern "C" fn calls_from_completion(user: *mut c_void, _: *const StickShiftEvent) {
+    let probe = &mut *user.cast::<CompletionProbe>();
+    probe.calls = engine_calls(probe.engine, null_mut());
+}
+
+#[test]
+fn the_scope_matrix_outside_hooks() {
+    // Init starts a load whose completion a later tick's housekeeping delivers,
+    // inside the tick but outside every hook.
+    let completion = Box::into_raw(Box::new(CompletionProbe {
+        engine: null_mut(),
+        calls: Vec::new(),
+    }));
+    let mut h = Harness::new(move |p, at, e, _| {
+        if at != At::Init {
+            return;
+        }
+        // SAFETY: inside init, on the engine's thread; the completion probe
+        // outlives the engine.
+        unsafe {
+            (*completion).engine = e;
+            let mut ctx = null_mut();
+            stickshift_engine_get_context(e, &mut ctx);
+            let callback = StickShiftCompletion {
+                callback: Some(calls_from_completion),
+                user: completion.cast(),
+            };
+            let cube = StickShiftData {
+                ptr: CUBE.as_ptr().cast(),
+                len: CUBE.len(),
+                release: None,
+                user: null_mut(),
+            };
+            let mut model = StickShiftModel::default();
+            let r = stickshift_model_load_memory(ctx, cube, &callback, &mut model);
+            p.seen.push(format!("load {r}"));
+        }
+    });
+    assert_eq!(h.init(), STICKSHIFT_OK);
+    assert_eq!(h.probe.seen, ["load 0"]);
+    // SAFETY: the callback has not run, or ran inside an earlier tick.
+    let delivered = || unsafe { !(*completion).calls.is_empty() };
+    for _ in 0..10_000 {
+        assert_eq!(h.tick().rendered, 1);
+        if delivered() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(delivered(), "the load's completion never arrived");
+    // SAFETY: as above; the callback has returned.
+    assert_eq!(unsafe { &(*completion).calls }, &refused_outside_hooks());
+    let state = h.state();
+    assert_eq!(
+        (state.poisoned, state.failed, state.exit_requested),
+        (0, 0, 0)
+    );
+    assert_eq!(h.tick().rendered, 1);
+
+    // The release hook, which destroy runs.
+    h.probe.calls_in_release = Some(h.engine);
+    // SAFETY: a live engine, between calls.
+    assert_eq!(
+        unsafe { stickshift_engine_destroy(h.engine) },
+        STICKSHIFT_OK
+    );
+    h.engine = null_mut();
+    assert_eq!(h.probe.releases, 1);
+    let want: Vec<String> = refused_outside_hooks()
+        .into_iter()
+        .map(|(name, code)| format!("Release {name} {code}"))
+        .collect();
+    assert_eq!(h.probe.seen[1..], want);
+    // SAFETY: allocated above; the engine that could call back is gone.
+    drop(unsafe { Box::from_raw(completion) });
+}
+
+#[test]
+fn a_panic_in_a_call_from_a_hook_poisons_the_rest_of_the_tick() {
+    let dt = STICKSHIFT_FIXED_DT_NS;
+    // Without the panic, the tick runs two updates and a render.
+    let control = Harness::new(|_, _, _, _| {});
+    assert_eq!(control.init(), STICKSHIFT_OK);
+    let (r, out) = control.tick_with(STICKSHIFT_CLOCK_ELAPSED, 2 * dt);
+    assert_eq!((r, out.steps, out.rendered), (STICKSHIFT_OK, 2, 1));
+
+    let mut h = Harness::new(|p, at, e, _| {
+        if at == At::Update && p.updates == 1 {
+            // SAFETY: inside an update hook, on the engine's thread.
+            let r = unsafe { testing::panic_in_call(e) };
+            p.seen.push(format!("panic_in_call {r}"));
+            p.seen
+                .push(format!("get_state {:?}", state_of(e).map(|_| ())));
+        }
+    });
+    assert_eq!(h.init(), STICKSHIFT_OK);
+    let (r, _) = h.tick_with(STICKSHIFT_CLOCK_ELAPSED, 2 * dt);
+    assert_eq!(r, STICKSHIFT_ERROR_INTERNAL);
+    assert!(
+        last_error().contains("during this tick"),
+        "{}",
+        last_error()
+    );
+    assert_eq!(
+        h.probe.seen,
+        [
+            format!("panic_in_call {STICKSHIFT_ERROR_INTERNAL}"),
+            format!("get_state Err({STICKSHIFT_ERROR_INTERNAL})"),
+        ]
+    );
+    // The second update and the render hook never ran.
+    assert_eq!((h.probe.updates, h.probe.renders), (1, 0));
+    assert_eq!(state_of(h.engine), Err(STICKSHIFT_ERROR_INTERNAL));
+    assert_eq!(
+        h.tick_with(STICKSHIFT_CLOCK_FIXED_STEP, 0).0,
+        STICKSHIFT_ERROR_INTERNAL
+    );
+    // SAFETY: a live engine.
+    assert_eq!(
+        unsafe { stickshift_engine_destroy(h.engine) },
+        STICKSHIFT_OK
+    );
+    h.engine = null_mut();
+    assert_eq!(h.probe.releases, 1);
+}
+
 #[test]
 fn another_thread_gets_wrong_thread() {
     let h = Harness::new(|_, _, _, _| {});
@@ -1257,12 +1603,13 @@ fn another_thread_gets_wrong_thread() {
                 stickshift_engine_destroy(p.0),
                 stickshift_context_get_size(p.1, &mut w, &mut w),
                 stickshift_mesh_destroy(p.1, StickShiftMesh { id: 1 }),
+                stickshift_context_destroy(p.1),
             ]
         }
     })
     .join()
     .unwrap();
-    assert_eq!(codes, [STICKSHIFT_ERROR_WRONG_THREAD; 6]);
+    assert_eq!(codes, [STICKSHIFT_ERROR_WRONG_THREAD; 7]);
     assert_eq!(h.tick().rendered, 1);
 }
 
@@ -1715,8 +2062,9 @@ impl Drop for Fifo {
 
 #[test]
 fn hold_until_loaded_holds_then_banks_one_step() {
-    let fifo = Fifo::new("hold");
-    let path = fifo.c_path();
+    let first = Fifo::new("hold");
+    let second = Fifo::new("hold-again");
+    let path = first.c_path();
     let h = Harness::with(
         StickShiftEngineDesc {
             flags: STICKSHIFT_ENGINE_HOLD_UNTIL_LOADED,
@@ -1740,21 +2088,43 @@ fn hold_until_loaded_holds_then_banks_one_step() {
     assert_eq!(h.probe.seen, ["load 0"]);
     let dt = STICKSHIFT_FIXED_DT_NS;
     let t0 = 1_000_000_000;
-    for i in 0..3 {
-        let (r, out) = h.tick_with(STICKSHIFT_CLOCK_TIMESTAMP, t0 + i * 100 * dt);
+    let held = |at: u64| {
+        let (r, out) = h.tick_with(STICKSHIFT_CLOCK_TIMESTAMP, at);
         assert_eq!(r, STICKSHIFT_NOT_READY);
         assert_eq!((out.held, out.steps, out.rendered), (1, 0, 0));
         assert_eq!(h.state().holding, 1);
+    };
+    // The load init started holds the first ticks.
+    for i in 0..3 {
+        held(t0 + i * 100 * dt);
     }
     assert_eq!((h.probe.updates, h.probe.renders), (0, 0));
-    fifo.feed(CUBE).join().unwrap();
+    first.feed(CUBE).join().unwrap();
     // SAFETY: a live context, between engine calls.
     assert_eq!(unsafe { stickshift_context_flush(h.ctx) }, STICKSHIFT_OK);
-    // Long after the hold began, the first tick still banks one step.
     let (r, out) = h.tick_with(STICKSHIFT_CLOCK_TIMESTAMP, t0 + 1000 * dt);
     assert_eq!(r, STICKSHIFT_OK);
     assert_eq!((out.held, out.steps, out.rendered), (0, 1, 1));
     assert_eq!(h.state().holding, 0);
+
+    // A load the host starts between ticks holds too, and the hold resets the
+    // clock: long after the last timestamp, the first tick after the hold
+    // banks one step, not the capped five the gap would give.
+    let mut model = StickShiftModel::default();
+    let path = second.c_path();
+    // SAFETY: a live context, between engine calls.
+    assert_eq!(
+        unsafe { stickshift_model_load_file(h.ctx, path.as_ptr(), null(), &mut model) },
+        STICKSHIFT_OK
+    );
+    held(t0 + 1100 * dt);
+    second.feed(CUBE).join().unwrap();
+    // SAFETY: as above.
+    assert_eq!(unsafe { stickshift_context_flush(h.ctx) }, STICKSHIFT_OK);
+    let (r, out) = h.tick_with(STICKSHIFT_CLOCK_TIMESTAMP, t0 + 2000 * dt);
+    assert_eq!(r, STICKSHIFT_OK);
+    assert_eq!((out.held, out.steps, out.rendered), (0, 1, 1));
+    assert_eq!((h.probe.updates, h.probe.renders), (2, 2));
 }
 
 #[test]
@@ -1994,6 +2364,126 @@ fn fixed_camera() -> StickShiftCamera {
             z: 3.0,
         },
     }
+}
+
+/// What a run of [`gpu_bound_ticks`] saw.
+#[cfg(target_os = "macos")]
+struct GpuBound {
+    /// Each tick's `submitted`.
+    submitted: Vec<u8>,
+    discarded: u64,
+    /// The context's counters right after a flush that followed the ticks.
+    flushed: StickShiftStats,
+}
+
+/// Forty `FIXED_STEP` ticks of an engine on a large Metal offscreen context
+/// whose render hook draws a hundred full-target quads, so the GPU, not the
+/// tick, is the bottleneck; then a flush. `None` without a Metal device.
+#[cfg(target_os = "macos")]
+fn gpu_bound_ticks(pacing: StickShiftFramePacing, test: &str) -> Option<GpuBound> {
+    const SIZE: u32 = 2048;
+    let ctx = metal_context(SIZE, SIZE, test)?;
+    let mut probe = Box::new(Probe {
+        script: Some(Box::new(|_, at, _, frame| {
+            if at == At::Render {
+                let cover = StickShiftQuad {
+                    width: SIZE as f32,
+                    height: SIZE as f32,
+                    ..quad()
+                };
+                for _ in 0..100 {
+                    // SAFETY: the open frame of the render hook.
+                    unsafe { stickshift_frame_draw_quad(frame, &cover) };
+                }
+            }
+        })),
+        ..Probe::default()
+    });
+    let game = game_of(&mut probe);
+    let desc = StickShiftEngineDesc {
+        pacing,
+        ..engine_desc()
+    };
+    let mut engine = null_mut();
+    let mut run = GpuBound {
+        submitted: Vec::new(),
+        discarded: 0,
+        flushed: StickShiftStats::default(),
+    };
+    // SAFETY: valid locals; the engine is destroyed before its context.
+    unsafe {
+        assert_eq!(
+            stickshift_engine_create(ctx, &desc, &game, &mut engine),
+            STICKSHIFT_OK
+        );
+        assert_eq!(stickshift_engine_init(engine), STICKSHIFT_OK);
+        let tick = StickShiftTickDesc {
+            size: std::mem::size_of::<StickShiftTickDesc>() as u32,
+            clock: STICKSHIFT_CLOCK_FIXED_STEP,
+            nanoseconds: 0,
+            readback: null_mut(),
+            readback_len: 0,
+        };
+        for _ in 0..40 {
+            let mut out = StickShiftTickResult {
+                size: std::mem::size_of::<StickShiftTickResult>() as u32,
+                ..Default::default()
+            };
+            assert_eq!(
+                stickshift_engine_tick(engine, &tick, &mut out),
+                STICKSHIFT_OK,
+                "{}",
+                last_error()
+            );
+            run.submitted.push(out.submitted);
+        }
+        run.discarded = state_of(engine).expect("a live engine").frames_discarded;
+        assert_eq!(stickshift_context_flush(ctx), STICKSHIFT_OK);
+        assert_eq!(
+            stickshift_context_get_stats(ctx, &mut run.flushed),
+            STICKSHIFT_OK
+        );
+        assert_eq!(stickshift_engine_destroy(engine), STICKSHIFT_OK);
+        assert_eq!(stickshift_context_destroy(ctx), STICKSHIFT_OK);
+    }
+    Some(run)
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn wait_pacing_waits_for_a_free_metal_slot() {
+    let test = "wait_pacing_waits_for_a_free_metal_slot";
+    let Some(skip) = gpu_bound_ticks(STICKSHIFT_FRAME_PACING_SKIP, test) else {
+        return;
+    };
+    // The load fills the GPU's queue: never waiting discards frames.
+    assert!(
+        skip.discarded > 0,
+        "SKIP discarded no frame, so this load does not fill the GPU queue"
+    );
+    let wait = gpu_bound_ticks(STICKSHIFT_FRAME_PACING_WAIT, test).expect("a Metal device");
+    assert_eq!(wait.discarded, 0);
+    assert!(
+        wait.submitted.iter().all(|&s| s == 1),
+        "{:?}",
+        wait.submitted
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_flush_waits_for_the_engines_frames_too() {
+    let test = "a_flush_waits_for_the_engines_frames_too";
+    let Some(run) = gpu_bound_ticks(STICKSHIFT_FRAME_PACING_SKIP, test) else {
+        return;
+    };
+    // The engine's frames have no completion to deliver; the flush still
+    // waited for every one of them.
+    assert!(run.flushed.frames_submitted > 0);
+    assert_eq!(
+        run.flushed.frames_completed, run.flushed.frames_submitted,
+        "frames still on the GPU after a flush"
+    );
 }
 
 #[cfg(target_os = "macos")]
