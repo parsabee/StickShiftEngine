@@ -141,3 +141,20 @@ extension Context {
         return Model(context: self, id: handle.id)
     }
 }
+
+extension Context {
+    /// Start loading a glTF model (`.gltf` or `.glb`) and return it at once,
+    /// still ``ResourceState/pending``: ``Model/wait(timeout:)`` blocks until it
+    /// is ready, which is how a game's synchronous ``Game/initialize(_:)``
+    /// loads, as a Rust game's init does. Draws of a pending model draw nothing.
+    ///
+    /// The file is read on an engine worker thread, so a file that cannot be
+    /// read or parsed fails the model later: its ``Model/wait(timeout:)``
+    /// throws ``StickShiftError/Code-swift.struct/io`` or
+    /// ``StickShiftError/Code-swift.struct/parse``.
+    public func startLoadingModel(contentsOf url: URL) throws -> Model {
+        var handle = StickShiftModel()
+        try check(stickshift_model_load_file(raw, url.path, nil, &handle))
+        return Model(context: self, id: handle.id)
+    }
+}

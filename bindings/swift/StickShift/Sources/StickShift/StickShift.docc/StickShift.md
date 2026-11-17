@@ -34,7 +34,33 @@ part at `world × (local × node)` and can record only its textured or only its 
 parts. For results that match the Rust engine bit for bit, multiply matrices with
 ``StickShiftMath`` rather than simd's `*`, which fuses multiplies and adds.
 
+To run a game, implement ``Game`` and hand it to an ``Engine``, which runs the engine's own
+loop on a context: ``Engine/advance(readback:)`` for one fixed step in a tool, or
+``Engine/tick(_:readback:)`` from a view's display link. Each hook gets an ``EngineContext``,
+valid until it returns.
+
 ## Topics
+
+### Running a game
+
+- ``Engine``
+- ``Game``
+- ``EngineContext``
+- ``LoadContext``
+- ``TickResult``
+- ``HostRequests``
+- ``EngineState``
+- ``PerfSnapshot``
+- ``PixelBuffer``
+
+### Host events
+
+- ``HostEvent``
+- ``ViewMetrics``
+- ``Key``
+- ``MouseButton``
+- ``GraphicsMenu``
+- ``GraphicsSettings``
 
 ### Rendering
 
@@ -57,11 +83,18 @@ parts. For results that match the Rust engine bit for bit, multiply matrices wit
 - ``Material``
 - ``ModelParts``
 - ``Quad``
+- ``Surface``
 - ``PixelReadback``
 
 ### Math
 
 - ``StickShiftMath``
+- ``RustF32``
+- ``glamDot(_:_:)``
+- ``glamCross(_:_:)``
+- ``glamLength(_:)``
+- ``glamNormalizeOrZero(_:)``
+- ``glamLerp(_:_:_:)``
 
 ### Errors and diagnostics
 

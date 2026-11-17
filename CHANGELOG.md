@@ -57,6 +57,19 @@ API**.
   on, so AppKit does not beep. Without a handler it takes no focus and passes keys on. A key
   released while Command is held arrives too: `NSApplication` never hands a window that key-up,
   so the view's local event monitor sends it to the window, as winit does.
+- **The Swift package runs the engine** (first half): `Engine` attaches to a `Context` and runs
+  a `Game` (`initialize`, `update`, `render`, `graphicsSettingsChanged`, and an optional
+  `load(_:) async` phase) through the C API's engine object, so the game is game code only and
+  the host drives the loop: `initialize()`, `resume(_:)`, `tick(_:readback:)` with the fixed-step,
+  elapsed, timestamp and engine clocks, `advance()`, `runHeadless(frames:)`, `push(_:)` of
+  `HostEvent`s returning `HostRequests`, `resetClock()`, `requestExit()`, `state` and `perf`.
+  Each hook gets an `EngineContext` that traps when used after its hook. A thrown `initialize`
+  is rethrown; a thrown `render` still submits its frame (`lastRenderError`). `Engine.init`
+  refuses a library older than its API minor, and an engine dropped off the main thread is
+  destroyed on it. Also: `Context.startLoadingModel(contentsOf:)` for a synchronous load with
+  `Model.wait`, `Frame.surface`, glam's operations (`glamDot`, `simd_quatf(glamRotationY:)`,
+  `glamRotate`, `glamTransformPoint`, ...) and `RustF32`. `scripts/test-swift.sh` now fails on
+  any Swift warning.
 - **`stickshift_core::Session`**, the platform-free half of the windowed runner: the frame clock
   (the first frame, and the first after a menu choice or `reset_clock`, banks exactly one step),
   the drawable sized for the view and the render scale, graphics settings restored at start-up
