@@ -13,6 +13,14 @@
 //! settings requests (the settings hook's view of the renderer and the reach)
 //! and menu choices (composing on a pending request, full screen).
 //!
+//! This is the host's half of the probe differential: a short, dense script
+//! of host events, run both unhosted and hosted, with no world. The world's
+//! half, `tests/engine_parity.rs`, runs 3,000 frames of streaming, rebasing
+//! and querying, with the camera carried and chased and settings requests
+//! rescaling the reach; between them every engine service is compared with
+//! the Rust it runs. Which scopes allow which calls is `tests/engine.rs`'s
+//! scope matrix.
+//!
 //! C hooks never assert: a panic cannot unwind out of an `extern "C"`
 //! function. They record what they see, and the tests compare afterwards.
 
@@ -1474,8 +1482,6 @@ struct Mini {
     settings: Vec<[u32; 4]>,
     seen: Vec<String>,
     script: Option<Script>,
-    /// Engine calls the release hook makes, and what each returned.
-    calls_in_release: Option<*mut StickShiftEngine>,
 }
 
 unsafe fn mini_run(user: *mut c_void, at: At, e: *mut StickShiftEngine) {
@@ -1514,15 +1520,6 @@ unsafe extern "C" fn mini_settings(
     mini_run(user, At::Settings, e);
 }
 
-unsafe extern "C" fn mini_release(user: *mut c_void) {
-    let m = &mut *user.cast::<Mini>();
-    if let Some(e) = m.calls_in_release {
-        for (name, r) in service_calls(e) {
-            m.seen.push(format!("Release {name} {r}"));
-        }
-    }
-}
-
 /// A null context with an engine running a [`Mini`] game, destroyed when
 /// dropped.
 struct Rig {
@@ -1549,7 +1546,7 @@ impl Rig {
             update: Some(mini_update),
             render: Some(mini_render),
             graphics_settings_changed: Some(mini_settings),
-            release: Some(mini_release),
+            release: None,
         };
         let mut e = null_mut();
         // SAFETY: valid locals; the game outlives the engine.
@@ -1822,167 +1819,6 @@ fn persisted_settings_round_trip_through_a_throwaway_suite() {
         rig.tick(STICKSHIFT_CLOCK_FIXED_STEP, 0);
         assert_eq!(rig.graphics().revision, 2);
         assert_eq!(suite.0.load(), saved);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Scopes
-// ---------------------------------------------------------------------------
-
-/// Every service call, by name, with what it returned.
-fn service_calls(e: *mut StickShiftEngine) -> Vec<(&'static str, StickShiftResult)> {
-    let path = c"scope/sound.ogg";
-    let chase = CHASE;
-    let zero = StickShiftVec3::default();
-    let mut camera = StickShiftCameraState {
-        size: std::mem::size_of::<StickShiftCameraState>() as u32,
-        ..Default::default()
-    };
-    let mut input = StickShiftInputState {
-        size: std::mem::size_of::<StickShiftInputState>() as u32,
-        ..Default::default()
-    };
-    let mut stats = StickShiftAudioStats {
-        size: std::mem::size_of::<StickShiftAudioStats>() as u32,
-        ..Default::default()
-    };
-    let mut state = StickShiftGraphicsState {
-        size: std::mem::size_of::<StickShiftGraphicsState>() as u32,
-        ..Default::default()
-    };
-    let mut menu = StickShiftMenu {
-        size: std::mem::size_of::<StickShiftMenu>() as u32,
-        group_count: 0,
-        title: null(),
-        groups: null(),
-        group_stride: 0,
-        reserved: 0,
-        revision: 0,
-    };
-    let mut current = StickShiftGraphicsSettings::default();
-    let mut sound = StickShiftSound::default();
-    let (mut n, mut p) = (0, null());
-    // SAFETY: an engine of this thread and valid locals.
-    unsafe {
-        let load = stickshift_audio_load(e, path.as_ptr(), &mut sound);
-        let get_current = stickshift_graphics_get_current(e, &mut current);
-        vec![
-            ("camera_get", stickshift_camera_get(e, &mut camera)),
-            (
-                "camera_set_position",
-                stickshift_camera_set_position(e, camera.position),
-            ),
-            (
-                "camera_set_target",
-                stickshift_camera_set_target(e, camera.target),
-            ),
-            ("camera_set_up", stickshift_camera_set_up(e, camera.up)),
-            (
-                "camera_set_aspect_ratio",
-                stickshift_camera_set_aspect_ratio(e, 1.5),
-            ),
-            ("camera_set_fov_y", stickshift_camera_set_fov_y(e, 0.9)),
-            (
-                "camera_set_clip_planes",
-                stickshift_camera_set_clip_planes(e, 0.2, 300.0),
-            ),
-            (
-                "camera_follow",
-                stickshift_camera_follow(e, &chase, zero, zero, FIXED_DT),
-            ),
-            ("input_get", stickshift_input_get(e, &mut input)),
-            ("audio_load", load),
-            ("audio_play_once", stickshift_audio_play_once(e, sound, 0.0)),
-            (
-                "audio_play_looping",
-                stickshift_audio_play_looping(e, sound, 0.0),
-            ),
-            ("audio_stop_looping", stickshift_audio_stop_looping(e)),
-            (
-                "audio_set_master_volume",
-                stickshift_audio_set_master_volume(e, 0.0),
-            ),
-            ("audio_get_stats", stickshift_audio_get_stats(e, &mut stats)),
-            (
-                "audio_one_shots_of",
-                stickshift_audio_one_shots_of(e, sound, &mut n),
-            ),
-            (
-                "audio_get_path",
-                stickshift_audio_get_path(e, sound, &mut p),
-            ),
-            ("graphics_get_current", get_current),
-            // The settings in effect again: queues nothing that changes.
-            ("graphics_request", stickshift_graphics_request(e, &current)),
-            (
-                "graphics_get_state",
-                stickshift_graphics_get_state(e, &mut state),
-            ),
-            (
-                "engine_get_menu",
-                stickshift_engine_get_menu(e, 0, &mut menu),
-            ),
-        ]
-    }
-}
-
-/// The host-only calls.
-const HOST_ONLY: [&str; 2] = ["graphics_get_state", "engine_get_menu"];
-
-#[test]
-fn the_services_in_every_scope() {
-    let rig = Rig::new(engine_desc(0, null()), |at, e, seen| {
-        if seen.iter().any(|s| s.starts_with(&format!("{at:?} "))) {
-            return;
-        }
-        for (name, r) in service_calls(e) {
-            seen.push(format!("{at:?} {name} {r}"));
-        }
-    });
-    rig.init();
-    rig.tick(STICKSHIFT_CLOCK_FIXED_STEP, 0);
-    push(rig.e, &[menu_event(102)]);
-    let calls = service_calls(rig.e);
-    assert_eq!(calls.len(), 21);
-    for at in [At::Init, At::Update, At::Render, At::Settings] {
-        for (name, _) in &calls {
-            let want = if HOST_ONLY.contains(name) {
-                STICKSHIFT_ERROR_WRONG_STATE
-            } else {
-                STICKSHIFT_OK
-            };
-            let line = format!("{at:?} {name} {want}");
-            assert!(
-                rig.mini().seen.contains(&line),
-                "{line}: {:?}",
-                rig.mini().seen
-            );
-        }
-    }
-    // Between engine calls every one works.
-    for (name, r) in calls {
-        assert_eq!(r, STICKSHIFT_OK, "{name}: {}", last_error());
-    }
-    // The release hook runs inside destroy, outside every hook: all refused.
-    let mut rig = rig;
-    // SAFETY: between calls; the game outlives the engine.
-    unsafe {
-        (*rig.mini).calls_in_release = Some(rig.e);
-        assert_eq!(stickshift_engine_destroy(rig.e), STICKSHIFT_OK);
-    }
-    rig.e = null_mut();
-    let released: Vec<_> = rig
-        .mini()
-        .seen
-        .iter()
-        .filter(|s| s.starts_with("Release "))
-        .collect();
-    assert_eq!(released.len(), 21);
-    for line in released {
-        assert!(
-            line.ends_with(&format!(" {}", STICKSHIFT_ERROR_WRONG_STATE)),
-            "{line}"
-        );
     }
 }
 
