@@ -1597,6 +1597,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "playable-demo-goldens"
+version = "0.1.0"
+dependencies = [
+ "stickshift-assets",
+ "stickshift-camera",
+ "stickshift-core",
+ "stickshift-ecs",
+ "stickshift-math",
+ "stickshift-render-api",
+ "stickshift-scene",
+]
+
+[[package]]
 name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
