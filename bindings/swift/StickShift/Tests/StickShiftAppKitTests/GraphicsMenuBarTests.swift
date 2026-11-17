@@ -13,8 +13,10 @@ import Testing
 @MainActor
 @Suite("Graphics menu bar")
 struct GraphicsMenuBarTests {
-    /// An initialized engine with no GPU.
+    /// An initialized engine with no GPU. Makes the application too: a menu
+    /// sends its items' actions through it, and does nothing without one.
     private func engine() throws -> Engine {
+        _ = NSApplication.shared
         let engine = try Engine.headless(Idle())
         try engine.initialize()
         return engine
@@ -141,7 +143,6 @@ struct GraphicsMenuBarTests {
     }
 
     @Test func itIsInstalledAfterWhatTheMenuBarHas() throws {
-        _ = NSApplication.shared
         let engine = try engine()
         let menuBar = StickShiftApp.applicationMenu(named: "Cubes")
         let bar = GraphicsMenuBar(engine: engine) { _ in }
