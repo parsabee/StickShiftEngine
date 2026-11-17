@@ -1028,6 +1028,55 @@ fn rows_are_laid_out_by_alignment() {
 }
 
 #[test]
+fn absent_values_read_as_zeros_in_a_reused_buffer() {
+    let mut reg = Registry::new();
+    let byte = reg.register("byte", 1, 1).unwrap();
+    let wide = reg.register("wide", 16, 16).unwrap();
+    let word = reg.register("word", 8, 8).unwrap();
+    let flag = reg.register("flag", 0, 1).unwrap();
+    let mut w = World::new();
+    for i in 1..=3u8 {
+        reg.spawn(
+            &mut w,
+            &[
+                Value::new(byte, &[i]),
+                Value::new(wide, &[i; 16]),
+                Value::new(word, &u64::from(i).to_ne_bytes()),
+            ],
+        )
+        .unwrap();
+    }
+    reg.spawn(&mut w, &[Value::new(byte, &[9]), Value::tag(flag)])
+        .unwrap();
+
+    // First fill the buffer with rows whose bytes 16..48 are not zero.
+    let mut rows = Rows::new();
+    let full = [
+        Term::new(byte, Access::Read),
+        Term::new(wide, Access::Read),
+        Term::new(word, Access::Read),
+    ];
+    reg.query(&w, &full, &mut rows).unwrap();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.stride(), 48);
+    assert_ne!(&rows.data()[16..48], &[0; 32]);
+
+    // The same layout again, into the same buffer: the absent optional values
+    // must not show the earlier query's bytes.
+    let terms = [
+        Term::new(byte, Access::Read),
+        Term::new(flag, Access::Read),
+        Term::new(wide, Access::Optional),
+        Term::new(word, Access::Optional),
+    ];
+    reg.query(&w, &terms, &mut rows).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows.offsets(), &[0, u32::MAX, 16, 32]);
+    assert_eq!(rows.present(), &[1, 1, 0, 0]);
+    assert_eq!(&rows.data()[16..48], &[0; 32], "absent values are zeros");
+}
+
+#[test]
 fn rows_outlive_changes_to_the_world() {
     let (reg, keys) = registry();
     let mut w = World::new();
