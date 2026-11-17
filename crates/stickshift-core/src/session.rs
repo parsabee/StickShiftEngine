@@ -551,6 +551,17 @@ impl Session {
         self.mark = None;
     }
 
+    /// Read `clock` as [`frame`](Self::frame) does, without running a frame: the
+    /// time to bank, with the same first-frame rule and the same mark kept for
+    /// the next reading.
+    ///
+    /// For a host that drives [`drive_frame`] on [`lp`](Self::lp) itself, with
+    /// none of the frame's settings side effects (no resize, no save): a tool,
+    /// a test, or the C API's engine before a view is reported.
+    pub fn read_clock(&mut self, clock: Clock) -> Duration {
+        self.elapsed(clock)
+    }
+
     /// The view, once [`resume`](Self::resume) or a resize event reported one.
     #[must_use]
     pub fn view(&self) -> Option<View> {

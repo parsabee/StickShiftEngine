@@ -85,6 +85,26 @@ impl FrameSemaphore {
         true
     }
 
+    /// Wait, at most `timeout`, until a permit is available, **without taking
+    /// it**. Returns whether one is.
+    ///
+    /// For a caller that wants a free frame slot before it records a frame,
+    /// but opens the frame later through the non-blocking path.
+    pub fn wait_available(&self, timeout: std::time::Duration) -> bool {
+        let permits = self.permits.lock().expect("frame semaphore poisoned");
+        let (permits, _) = self
+            .available
+            .wait_timeout_while(permits, timeout, |p| *p == 0)
+            .expect("frame semaphore poisoned");
+        let available = *permits > 0;
+        // A permit stays for whoever takes it; pass the wake-up on to any other
+        // waiter, as a `release` would have woken only one.
+        if available {
+            self.available.notify_one();
+        }
+        available
+    }
+
     /// The number of permits available right now.
     #[must_use]
     pub fn available(&self) -> u32 {
@@ -142,5 +162,26 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         sem.release();
         handle.join().expect("acquirer thread should unblock");
+    }
+
+    #[test]
+    fn wait_available_waits_for_a_permit_without_taking_it() {
+        use std::time::{Duration, Instant};
+        let sem = Arc::new(FrameSemaphore::new(1));
+        assert!(sem.wait_available(Duration::ZERO));
+        assert_eq!(sem.available(), 1, "waiting takes nothing");
+        sem.acquire();
+        let start = Instant::now();
+        assert!(!sem.wait_available(Duration::from_millis(20)));
+        assert!(start.elapsed() >= Duration::from_millis(20));
+
+        let s = Arc::clone(&sem);
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            s.release();
+        });
+        assert!(sem.wait_available(Duration::from_secs(10)));
+        releaser.join().unwrap();
+        assert!(sem.try_acquire(), "the permit is still there to take");
     }
 }
