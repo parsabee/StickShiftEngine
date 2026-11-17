@@ -15,13 +15,13 @@ import StickShiftAppKit
 // every display refresh and keeps it ticking while the window is hidden, keys
 // and the mouse forwarded to the engine's input, Escape quitting, sound through
 // the default output device, and the player's graphics settings restored at
-// launch and saved on every change, under the engine's keys.
-
-/// The window's title (`app.rs`'s `WINDOW_TITLE`).
-let WINDOW_TITLE = "Stick Shift Engine"
+// launch and saved on every change, under the engine's keys. The window's
+// title, size and engine options are `OfframpWindow`'s, which the tests check.
 
 /// Play the demo in a window until the player quits. Never returns.
 @MainActor
 func runWindowed() -> Never {
-    StickShiftApp.run(title: WINDOW_TITLE, size: CGSize(width: 800, height: 600), options: .app) { CarRunner() }
+    StickShiftApp.run(title: OfframpWindow.title, size: OfframpWindow.size, options: OfframpWindow.options) {
+        CarRunner()
+    }
 }

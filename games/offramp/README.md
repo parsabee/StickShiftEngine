@@ -83,9 +83,10 @@ If `$OFFRAMP_ASSETS` is set, it is the only candidate.
   - The tools: `Smoke.swift` is `--smoke` on a headless engine, `Autopilot.swift` is
     `record_demo.rs` (its steering, and its recording loop on an offscreen engine),
     `Trace.swift` is the parity trace, and `Arguments.swift` is the command line.
+  - `Window.swift` is the window's title, size and engine options (the Rust runner's).
 - `Sources/offramp` is the executable:
   - `main.swift` is the command line.
-  - `App.swift` runs the game in a window with `StickShiftApp` (the package's
+  - `App.swift` runs the game in that window with `StickShiftApp` (the package's
     `StickShiftAppKit`): the application and its menus, the window, and an `EngineView` that
     ticks the engine on the display link (and from a watchdog while the window is hidden, as
     Rust's loop never pauses) and forwards keys, the mouse and focus to it.
@@ -224,7 +225,10 @@ changes, the rebases and the hash of every line). To diff a whole long run line 
 compare `offramp --trace long` with `cargo run --release -p playable-demo --example trace --
 long`, as `scripts/offramp-parity.sh` does.
 
-Some of the app's behaviour needs a display and a person, so it is checked by hand:
+`WindowTests` checks the window's title, size and engine options, and runs the game in the
+engine's view in a window that is never shown: its initialize, ticks that render and submit,
+the drawable at the half render scale, Space starting the run and Escape quitting. Some of
+the app's behaviour needs a display and a person, so it is checked by hand:
 
 - Launch it from a terminal (`swift run --package-path games/offramp offramp`) and press Space
   without clicking the window: the run starts, because the app took the keyboard.

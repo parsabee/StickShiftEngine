@@ -34,10 +34,10 @@ let package = Package(
             dependencies: ["OfframpGame", .product(name: "StickShiftAppKit", package: "StickShift")]
         ),
         // The tests run the executable too (`ExecutableTests`), so it is built
-        // with them.
+        // with them, and the game in the engine's view (`WindowTests`).
         .testTarget(
             name: "OfframpTests",
-            dependencies: ["OfframpGame", "offramp"],
+            dependencies: ["OfframpGame", "offramp", .product(name: "StickShiftAppKit", package: "StickShift")],
             // Golden values captured from the Rust demo, read by path.
             exclude: ["Fixtures"]
         ),
