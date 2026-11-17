@@ -31,23 +31,86 @@ struct GameMathTests {
         return out.sorted { $0.0 < $1.0 }
     }
 
-    @Test func theGameUsesNoMathWhoseBitsDifferFromRusts() throws {
-        // `simd`'s reductions sum in other orders than glam and fuse multiplies
-        // with adds; `Float.pi` is one bit below Rust's `PI`; `fma` and
-        // `addingProduct` fuse. Any of them in game code would break parity on
-        // some input, so none may appear: use the engine's `glam*` operations
-        // and `RustF32` instead.
-        let banned = [
-            "simd_dot(", "simd_act(", "simd_length(", "simd_normalize(", "simd_precise_normalize(", "simd_distance(",
-            "simd_mix(", "simd_cross(", "simd_mul(", "Float.pi", "fma(", "fmaf(", "addingProduct(",
-            "simd_quatf(angle:",
+    /// The float math the lint bans, by what it is, with the pattern that finds
+    /// it in a line. `simd`'s functions and its overlay's reduce in other orders
+    /// than glam and fuse multiplies with adds; a quaternion's `act` is not glam's
+    /// `Quat * Vec3`; `Float.pi` (and `.pi`, and `M_PI` as a `Float`) is one bit
+    /// below Rust's `PI`; `fma`, `addingProduct` and `addProduct` fuse. Any of
+    /// them in game code would break parity on some input.
+    static let bannedMath: [(term: String, pattern: NSRegularExpression)] = [
+        // Any `simd_` function: `simd_dot`, `simd_act`, `simd_length_squared`,
+        // `simd_reduce_add`, `simd_mul`, `simd_quaternion`... The types
+        // (`simd_quatf`, `simd_float4x4`) are not functions.
+        ("simd_*(", #"(?<![A-Za-z0-9_])simd_(?!quatf\b|float[0-9](x[0-9])?\b)[A-Za-z0-9_]+\s*\("#),
+        ("matrix_*(", #"(?<![A-Za-z0-9_])matrix_[A-Za-z0-9_]+\s*\("#),
+        // The `simd` overlay's free functions, which are those.
+        (
+            "simd overlay function",
+            #"(?<![A-Za-z0-9_])(dot|length|length_squared|normalize|cross|distance|distance_squared|mix|reduce_add)\s*\("#
+        ),
+        ("simd_quatf(angle:)", #"simd_quatf\(\s*(angle|from):"#),
+        ("quaternion .act(", #"\.act\s*\("#),
+        ("SIMD .sum()", #"\.sum\s*\(\s*\)"#),
+        ("Swift's pi", #"(?<!RustF32)\.pi\b"#),
+        ("M_PI", #"(?<![A-Za-z0-9_])M_PI"#),
+        ("fma(", #"(?<![A-Za-z0-9_])fmaf?\s*\("#),
+        ("addingProduct(", #"\b(addingProduct|addProduct)\s*\("#),
+    ].map { term, pattern in (term, try! NSRegularExpression(pattern: pattern)) }
+
+    /// The banned math in `line` (with its comment already removed), by term.
+    static func bannedMath(in line: String) -> [String] {
+        let range = NSRange(line.startIndex..., in: line)
+        return bannedMath.filter { $0.pattern.firstMatch(in: line, range: range) != nil }.map(\.term)
+    }
+
+    @Test func theLintFindsTheMathWhoseBitsDifferFromRusts() {
+        // The lint can fail: each spelling of banned math is found...
+        let banned: [(line: String, term: String)] = [
+            ("let d = simd_dot(a, b)", "simd_*("),
+            ("let v = simd_act(q, v)", "simd_*("),
+            ("let l = simd_length_squared(v)", "simd_*("),
+            ("let s = simd_reduce_add(v)", "simd_*("),
+            ("let q = simd_quaternion(m)", "simd_*("),
+            ("let m = matrix_multiply(a, b)", "matrix_*("),
+            ("let d = dot(a, b)", "simd overlay function"),
+            ("let n = normalize (v)", "simd overlay function"),
+            ("let l = length(v) + distance(a, b)", "simd overlay function"),
+            ("let m = mix(a, b, t: 0.5)", "simd overlay function"),
+            ("let c = simd.cross(a, b)", "simd overlay function"),
+            ("let q = simd_quatf(angle: a, axis: y)", "simd_quatf(angle:)"),
+            ("let v = rotation.act(SIMD3<Float>(1, 0, 0))", "quaternion .act("),
+            ("let s = v.sum()", "SIMD .sum()"),
+            ("let a: Float = .pi", "Swift's pi"),
+            ("let a = Float.pi / 2", "Swift's pi"),
+            ("let a = Float(M_PI_2)", "M_PI"),
+            ("let y = fmaf(a, b, c) + fma(a, b, c)", "fma("),
+            ("let y = c.addingProduct(a, b)", "addingProduct("),
+            ("y.addProduct(a, b)", "addingProduct("),
         ]
+        for (line, term) in banned {
+            #expect(Self.bannedMath(in: line).contains(term), "\(line) uses \(term)")
+        }
+        // ...and what the game uses instead is not.
+        let allowed = [
+            "let d = glamDot(a, b)", "let l = glamLength(v)", "let v = rotation.glamRotate(v)",
+            "let q = simd_quatf(glamRotationY: -sign * RustF32.fracPi2)", "let yaw: Float = RustF32.pi",
+            "let m: simd_float4x4 = matrix_identity_float4x4", "let q = simd_quatf(ix: 0, iy: 1, iz: 0, r: 0)",
+            "ChaseController(distance: CHASE_DISTANCE, height: CHASE_HEIGHT)", "let p = fit.pivot",
+            "let n = list.models.count", "RustF32.max(farthest, x)",
+        ]
+        for line in allowed {
+            #expect(Self.bannedMath(in: line).isEmpty, "\(line) is allowed")
+        }
+    }
+
+    @Test func theGameUsesNoMathWhoseBitsDifferFromRusts() throws {
+        // Use the engine's `glam*` operations and `RustF32` instead.
         let sources = try Self.gameSources()
         #expect(sources.count >= 15, "the lint reads the game's sources (\(sources.count) files)")
         var found: [String] = []
         for (file, lines) in sources {
             for (i, line) in lines.enumerated() {
-                for term in banned where line.contains(term) {
+                for term in Self.bannedMath(in: line) {
                     found.append("\(file):\(i + 1): \(term)")
                 }
             }
