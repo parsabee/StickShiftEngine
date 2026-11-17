@@ -4,7 +4,10 @@
 
 //! The engine object through its exported functions: a C-style test game (its
 //! hooks are `extern "C"` functions over a user pointer) on null contexts,
-//! checked against the Rust loop it runs and against the scope rules.
+//! checked against the Rust loop it runs and against the scope rules. The
+//! scope matrix here covers every function that takes an engine (checked
+//! against the header), in every scope: between engine calls, each hook, a
+//! stream spawn callback, a load completion and the release hook.
 //!
 //! Hooks never assert: a panic cannot unwind out of an `extern "C"` function.
 //! They record what they see, and the tests check it after the call.
@@ -1319,10 +1322,193 @@ fn resume_sizes_the_drawable_and_resizes_follow_the_view() {
 // Scopes, threads, panics and failures
 // ---------------------------------------------------------------------------
 
-/// Every engine-call function, by name, with what it returns from each hook.
+/// Where a call is made from, for the scope matrix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    /// Between engine calls.
+    Idle,
+    /// Inside a game hook.
+    Hook(At),
+    /// Inside a stream pass's spawn callback (in an update hook).
+    Spawn,
+    /// Inside a load completion that a tick's housekeeping delivers, outside
+    /// every hook.
+    Completion,
+    /// Inside the release hook, which destroy runs, outside every hook.
+    Release,
+}
+
+/// What a call is allowed to do, which fixes its result in each scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Rule {
+    /// Touches no engine state: any scope (`get_context`, the registry).
+    Any,
+    /// The host's (`[H]`): between engine calls only.
+    Host,
+    /// The game's (`[G]`): between engine calls or in any hook.
+    Game,
+    /// Reads the scene: as `Game`.
+    SceneRead,
+    /// Changes the scene: as `Game`, but not in the render hook.
+    SceneWrite,
+    /// Reads the world: as `Game`, and in a spawn callback.
+    WorldRead,
+    /// Changes the world: as `WorldRead`, but not in the render hook.
+    WorldWrite,
+    /// Only in a spawn callback.
+    Track,
+    /// The engine owns the render hook's frame; elsewhere the frame is NULL.
+    EngineFrame,
+    /// Releases the snapshot this scope's query took: fine wherever the query
+    /// was allowed, else there is no live token.
+    QueryRelease,
+    /// Never, with an engine attached (`context_destroy`).
+    Never,
+}
+
+/// Every call that takes an engine, and the context calls an engine
+/// constrains, in the order [`engine_calls`] makes them.
+const CALLS: &[(&str, Rule)] = &[
+    ("engine_get_context", Rule::Any),
+    // The world and its components.
+    ("component_register", Rule::Any),
+    ("component_get_desc", Rule::Any),
+    ("world_spawn", Rule::WorldWrite),
+    ("world_set", Rule::WorldWrite),
+    ("world_insert", Rule::WorldWrite),
+    ("world_remove", Rule::WorldWrite),
+    ("world_get", Rule::WorldRead),
+    ("world_has", Rule::WorldRead),
+    ("world_contains", Rule::WorldRead),
+    ("world_len", Rule::WorldRead),
+    ("world_query", Rule::WorldRead),
+    ("world_query_release", Rule::QueryRelease),
+    ("world_query_count", Rule::WorldRead),
+    // The scene.
+    ("scene_get_config", Rule::SceneRead),
+    ("scene_set_config", Rule::SceneWrite),
+    ("scene_streamed_count", Rule::SceneRead),
+    ("scene_stream", Rule::SceneWrite),
+    ("scene_maybe_rebase", Rule::SceneWrite),
+    ("stream_track", Rule::Track),
+    // The camera, input and audio.
+    ("camera_get", Rule::Game),
+    ("camera_set_position", Rule::Game),
+    ("camera_set_target", Rule::Game),
+    ("camera_set_up", Rule::Game),
+    ("camera_set_aspect_ratio", Rule::Game),
+    ("camera_set_fov_y", Rule::Game),
+    ("camera_set_clip_planes", Rule::Game),
+    ("camera_follow", Rule::Game),
+    ("input_get", Rule::Game),
+    ("audio_load", Rule::Game),
+    ("audio_play_once", Rule::Game),
+    ("audio_play_looping", Rule::Game),
+    ("audio_stop_looping", Rule::Game),
+    ("audio_set_master_volume", Rule::Game),
+    ("audio_get_stats", Rule::Game),
+    ("audio_one_shots_of", Rule::Game),
+    ("audio_get_path", Rule::Game),
+    // Graphics settings and the menu.
+    ("graphics_get_current", Rule::Game),
+    ("graphics_request", Rule::Game),
+    ("graphics_get_state", Rule::Host),
+    ("engine_get_menu", Rule::Host),
+    // The engine.
+    ("engine_get_state", Rule::Game),
+    ("engine_get_perf", Rule::Game),
+    ("engine_request_exit", Rule::Game),
+    ("engine_reset_clock", Rule::Host),
+    ("engine_init", Rule::Host),
+    ("engine_resume", Rule::Host),
+    ("engine_push_events", Rule::Host),
+    ("engine_tick", Rule::Host),
+    // The context, with an engine on it.
+    ("context_destroy", Rule::Never),
+    ("frame_acquire", Rule::Host),
+    ("frame_submit", Rule::EngineFrame),
+    ("frame_discard", Rule::EngineFrame),
+    ("context_get_last_frame", Rule::Any),
+    // Last: refused in every scope it is made from (never between calls).
+    ("engine_destroy", Rule::Host),
+    ("world_despawn", Rule::WorldWrite),
+];
+
+/// What `rule` returns in `scope`.
+fn expected(rule: Rule, scope: Scope) -> StickShiftResult {
+    let ws = STICKSHIFT_ERROR_WRONG_STATE;
+    let ia = STICKSHIFT_ERROR_INVALID_ARGUMENT;
+    let ok = STICKSHIFT_OK;
+    let hook = matches!(scope, Scope::Hook(_));
+    let render = scope == Scope::Hook(At::Render);
+    let game = scope == Scope::Idle || hook;
+    let pick = |allowed: bool| if allowed { ok } else { ws };
+    match rule {
+        Rule::Any => ok,
+        Rule::Host => pick(scope == Scope::Idle),
+        Rule::Game | Rule::SceneRead => pick(game),
+        Rule::SceneWrite => pick(game && !render),
+        Rule::WorldRead => pick(game || scope == Scope::Spawn),
+        Rule::WorldWrite => pick((game && !render) || scope == Scope::Spawn),
+        Rule::Track => pick(scope == Scope::Spawn),
+        Rule::EngineFrame if render => ws,
+        Rule::EngineFrame => ia,
+        Rule::QueryRelease if expected(Rule::WorldRead, scope) == ok => ok,
+        Rule::QueryRelease => ia,
+        Rule::Never => ws,
+    }
+}
+
+fn transform_value(t: &StickShiftTransform) -> StickShiftComponentValue {
+    StickShiftComponentValue {
+        component: StickShiftComponent {
+            id: STICKSHIFT_COMPONENT_TRANSFORM,
+        },
+        data: std::ptr::from_ref(t).cast(),
+        size: std::mem::size_of::<StickShiftTransform>() as u32,
+    }
+}
+
+/// An entity the calls can name: a new one where spawning is allowed, else
+/// the first with a transform, else (where the world is refused) any.
+///
+/// # Safety
+/// `e` is a live engine of this thread.
+unsafe fn scope_entity(e: *mut StickShiftEngine, t: &StickShiftTransform) -> StickShiftEntity {
+    let mut entity = StickShiftEntity::default();
+    if stickshift_world_spawn(e, &transform_value(t), 1, &mut entity) == STICKSHIFT_OK {
+        return entity;
+    }
+    let term = StickShiftQueryTerm {
+        component: StickShiftComponent {
+            id: STICKSHIFT_COMPONENT_TRANSFORM,
+        },
+        access: STICKSHIFT_QUERY_READ,
+    };
+    let mut rows: StickShiftQueryRows = std::mem::zeroed();
+    rows.size = std::mem::size_of::<StickShiftQueryRows>() as u32;
+    if stickshift_world_query(e, &term, 1, &mut rows) == STICKSHIFT_OK && rows.count > 0 {
+        let first = *rows.entities;
+        stickshift_world_query_release(e, rows.token);
+        return first;
+    }
+    StickShiftEntity { bits: 1 << 32 }
+}
+
+/// Every call in [`CALLS`], in order, with what it returned. The render hook
+/// passes its open frame; elsewhere `frame` is NULL. Between engine calls
+/// (`idle`) destroy is not made, and a frame the acquire opens is discarded.
 fn engine_calls(
     e: *mut StickShiftEngine,
     frame: *mut StickShiftFrame,
+) -> Vec<(&'static str, StickShiftResult)> {
+    engine_calls_in(e, frame, false)
+}
+
+fn engine_calls_in(
+    e: *mut StickShiftEngine,
+    frame: *mut StickShiftFrame,
+    idle: bool,
 ) -> Vec<(&'static str, StickShiftResult)> {
     let tick = StickShiftTickDesc {
         size: std::mem::size_of::<StickShiftTickDesc>() as u32,
@@ -1333,6 +1519,53 @@ fn engine_calls(
     };
     let v = view(64, 64, 1.0, [0.0; 4]);
     let close = event(STICKSHIFT_HOST_CLOSE);
+    let t = StickShiftTransform {
+        position: StickShiftVec3::default(),
+        rotation: StickShiftQuat {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 1.0,
+        },
+        scale: StickShiftVec3 {
+            x: 1.0,
+            y: 1.0,
+            z: 1.0,
+        },
+    };
+    let static_tag = StickShiftComponentValue {
+        component: StickShiftComponent {
+            id: STICKSHIFT_COMPONENT_STATIC_TAG,
+        },
+        data: null(),
+        size: 0,
+    };
+    let transform = StickShiftComponent {
+        id: STICKSHIFT_COMPONENT_TRANSFORM,
+    };
+    let term = StickShiftQueryTerm {
+        component: transform,
+        access: STICKSHIFT_QUERY_READ,
+    };
+    let chase = StickShiftChase {
+        distance: 7.5,
+        height: 3.0,
+        look_at_height: 1.25,
+        up: StickShiftVec3 {
+            x: 0.0,
+            y: 1.0,
+            z: 0.0,
+        },
+        half_life: 0.15,
+    };
+    let late = c"scope.Late";
+    let late = StickShiftComponentDesc {
+        name: late.as_ptr(),
+        size: 0,
+        align: 1,
+    };
+    let sound_path = c"scope/sound.ogg";
+    let zero = StickShiftVec3::default();
     let mut state = StickShiftEngineState {
         size: std::mem::size_of::<StickShiftEngineState>() as u32,
         ..Default::default()
@@ -1341,30 +1574,219 @@ fn engine_calls(
         size: std::mem::size_of::<StickShiftPerf>() as u32,
         ..Default::default()
     };
-    let mut ctx = null_mut();
-    let mut requests = 0;
-    // SAFETY: inside a hook of a live engine, on its thread, with valid locals.
+    let mut camera = StickShiftCameraState {
+        size: std::mem::size_of::<StickShiftCameraState>() as u32,
+        ..Default::default()
+    };
+    let mut input = StickShiftInputState {
+        size: std::mem::size_of::<StickShiftInputState>() as u32,
+        ..Default::default()
+    };
+    let mut stats = StickShiftAudioStats {
+        size: std::mem::size_of::<StickShiftAudioStats>() as u32,
+        ..Default::default()
+    };
+    let mut graphics = StickShiftGraphicsState {
+        size: std::mem::size_of::<StickShiftGraphicsState>() as u32,
+        ..Default::default()
+    };
+    let mut menu = StickShiftMenu {
+        size: std::mem::size_of::<StickShiftMenu>() as u32,
+        group_count: 0,
+        title: null(),
+        groups: null(),
+        group_stride: 0,
+        reserved: 0,
+        revision: 0,
+    };
+    let mut current = StickShiftGraphicsSettings::default();
+    let mut config = StickShiftStreamingConfig::default();
+    let mut component = StickShiftComponent::default();
+    let mut desc = StickShiftComponentDesc {
+        name: null(),
+        size: 0,
+        align: 0,
+    };
+    let mut sound = StickShiftSound::default();
+    let mut spawned = StickShiftEntity::default();
+    let mut got = t;
+    let mut rows: StickShiftQueryRows;
+    let (mut byte, mut n, mut path, mut offset) = (0u8, 0u32, null(), zero);
+    let (mut ctx, mut new_frame, mut requests) = (null_mut(), null_mut(), 0);
+    // SAFETY: inside a scope of a live engine, on its thread, with valid
+    // locals; every call that a scope refuses checks before it touches them.
     unsafe {
-        let got_ctx = stickshift_engine_get_context(e, &mut ctx);
-        let mut new_frame = null_mut();
-        vec![
-            ("get_context", got_ctx),
-            ("tick", stickshift_engine_tick(e, &tick, null_mut())),
-            ("init", stickshift_engine_init(e)),
-            ("resume", stickshift_engine_resume(e, &v, &mut requests)),
+        rows = std::mem::zeroed();
+        rows.size = std::mem::size_of::<StickShiftQueryRows>() as u32;
+        let entity = scope_entity(e, &t);
+        let mut out = vec![
             (
-                "push_events",
+                "engine_get_context",
+                stickshift_engine_get_context(e, &mut ctx),
+            ),
+            (
+                "component_register",
+                stickshift_component_register(e, &late, &mut component),
+            ),
+            (
+                "component_get_desc",
+                stickshift_component_get_desc(e, transform, &mut desc),
+            ),
+            (
+                "world_spawn",
+                stickshift_world_spawn(e, &transform_value(&t), 1, &mut spawned),
+            ),
+            (
+                "world_set",
+                stickshift_world_set(e, entity, transform, std::ptr::from_ref(&t).cast(), 40),
+            ),
+            (
+                "world_insert",
+                stickshift_world_insert(e, entity, &static_tag, 1),
+            ),
+            (
+                "world_remove",
+                stickshift_world_remove(e, entity, static_tag.component),
+            ),
+            (
+                "world_get",
+                stickshift_world_get(
+                    e,
+                    entity,
+                    transform,
+                    std::ptr::from_mut(&mut got).cast(),
+                    40,
+                ),
+            ),
+            (
+                "world_has",
+                stickshift_world_has(e, entity, transform, &mut byte),
+            ),
+            (
+                "world_contains",
+                stickshift_world_contains(e, entity, &mut byte),
+            ),
+            ("world_len", stickshift_world_len(e, &mut n)),
+            (
+                "world_query",
+                stickshift_world_query(e, &term, 1, &mut rows),
+            ),
+            (
+                "world_query_release",
+                stickshift_world_query_release(e, rows.token),
+            ),
+            (
+                "world_query_count",
+                stickshift_world_query_count(e, &term, 1, &mut n),
+            ),
+            (
+                "scene_get_config",
+                stickshift_scene_get_config(e, &mut config),
+            ),
+            // The configuration in effect again (zero where it was refused).
+            ("scene_set_config", stickshift_scene_set_config(e, &config)),
+            (
+                "scene_streamed_count",
+                stickshift_scene_streamed_count(e, &mut n),
+            ),
+            (
+                "scene_stream",
+                stickshift_scene_stream(e, zero, None, null_mut()),
+            ),
+            (
+                "scene_maybe_rebase",
+                stickshift_scene_maybe_rebase(e, zero, &mut offset),
+            ),
+            ("stream_track", stickshift_stream_track(e, entity)),
+            ("camera_get", stickshift_camera_get(e, &mut camera)),
+            (
+                "camera_set_position",
+                stickshift_camera_set_position(e, camera.position),
+            ),
+            (
+                "camera_set_target",
+                stickshift_camera_set_target(e, camera.target),
+            ),
+            ("camera_set_up", stickshift_camera_set_up(e, camera.up)),
+            (
+                "camera_set_aspect_ratio",
+                stickshift_camera_set_aspect_ratio(e, 1.5),
+            ),
+            ("camera_set_fov_y", stickshift_camera_set_fov_y(e, 0.9)),
+            (
+                "camera_set_clip_planes",
+                stickshift_camera_set_clip_planes(e, 0.2, 300.0),
+            ),
+            (
+                "camera_follow",
+                stickshift_camera_follow(e, &chase, zero, zero, FIXED_DT),
+            ),
+            ("input_get", stickshift_input_get(e, &mut input)),
+            (
+                "audio_load",
+                stickshift_audio_load(e, sound_path.as_ptr(), &mut sound),
+            ),
+            ("audio_play_once", stickshift_audio_play_once(e, sound, 0.0)),
+            (
+                "audio_play_looping",
+                stickshift_audio_play_looping(e, sound, 0.0),
+            ),
+            ("audio_stop_looping", stickshift_audio_stop_looping(e)),
+            (
+                "audio_set_master_volume",
+                stickshift_audio_set_master_volume(e, 0.0),
+            ),
+            ("audio_get_stats", stickshift_audio_get_stats(e, &mut stats)),
+            (
+                "audio_one_shots_of",
+                stickshift_audio_one_shots_of(e, sound, &mut n),
+            ),
+            (
+                "audio_get_path",
+                stickshift_audio_get_path(e, sound, &mut path),
+            ),
+            (
+                "graphics_get_current",
+                stickshift_graphics_get_current(e, &mut current),
+            ),
+            // The settings in effect again: queues nothing that changes.
+            ("graphics_request", stickshift_graphics_request(e, &current)),
+            (
+                "graphics_get_state",
+                stickshift_graphics_get_state(e, &mut graphics),
+            ),
+            (
+                "engine_get_menu",
+                stickshift_engine_get_menu(e, 0, &mut menu),
+            ),
+            (
+                "engine_get_state",
+                stickshift_engine_get_state(e, &mut state),
+            ),
+            ("engine_get_perf", stickshift_engine_get_perf(e, &mut perf)),
+            ("engine_request_exit", stickshift_engine_request_exit(e)),
+            ("engine_reset_clock", stickshift_engine_reset_clock(e)),
+            ("engine_init", stickshift_engine_init(e)),
+            (
+                "engine_resume",
+                stickshift_engine_resume(e, &v, &mut requests),
+            ),
+            (
+                "engine_push_events",
                 stickshift_engine_push_events(e, &close, 1, 64, &mut requests),
             ),
-            ("reset_clock", stickshift_engine_reset_clock(e)),
-            ("destroy", stickshift_engine_destroy(e)),
-            ("get_state", stickshift_engine_get_state(e, &mut state)),
-            ("get_perf", stickshift_engine_get_perf(e, &mut perf)),
+            ("engine_tick", stickshift_engine_tick(e, &tick, null_mut())),
             ("context_destroy", stickshift_context_destroy(ctx)),
             (
                 "frame_acquire",
                 stickshift_frame_acquire(ctx, &mut new_frame),
             ),
+        ];
+        if !new_frame.is_null() {
+            // Between calls the acquire opened a frame: close it again.
+            stickshift_frame_discard(new_frame);
+        }
+        out.extend([
             (
                 "frame_submit",
                 stickshift_frame_submit(frame, null(), null_mut()),
@@ -1375,98 +1797,38 @@ fn engine_calls(
                 record.size = std::mem::size_of::<StickShiftFrameRecord>() as u32;
                 stickshift_context_get_last_frame(ctx, &mut record)
             }),
-            ("request_exit", stickshift_engine_request_exit(e)),
-        ]
+        ]);
+        if !idle {
+            out.push(("engine_destroy", stickshift_engine_destroy(e)));
+        }
+        out.push((
+            "world_despawn",
+            stickshift_world_despawn(e, spawned, null_mut()),
+        ));
+        out
     }
 }
 
-#[test]
-fn the_scope_matrix() {
-    // The render hook gets the open frame; the other hooks pass NULL for it.
-    let h = Harness::new(|p, at, e, frame| {
-        if p.seen.iter().any(|s| s.starts_with(&format!("{at:?} "))) {
-            return;
-        }
-        for (name, result) in engine_calls(e, frame) {
-            p.seen.push(format!("{at:?} {name} {result}"));
-        }
-    });
-    assert_eq!(h.init(), STICKSHIFT_OK);
-    h.tick();
-    assert_eq!(h.push(&[menu(102)]).0, STICKSHIFT_OK);
-    let ws = STICKSHIFT_ERROR_WRONG_STATE;
-    let host_only = [
-        ("tick", ws),
-        ("init", ws),
-        ("resume", ws),
-        ("push_events", ws),
-        ("reset_clock", ws),
-        ("destroy", ws),
-        ("context_destroy", ws),
-        ("frame_acquire", ws),
-    ];
-    for at in [At::Init, At::Update, At::Render, At::Settings] {
-        let line = |name: &str| {
-            h.probe
-                .seen
-                .iter()
-                .find(|s| s.starts_with(&format!("{at:?} {name} ")))
-                .cloned()
-                .unwrap_or_else(|| panic!("{at:?} never called {name}: {:?}", h.probe.seen))
-        };
-        for (name, code) in host_only {
-            assert_eq!(line(name), format!("{at:?} {name} {code}"));
-        }
-        for name in [
-            "get_context",
-            "get_state",
-            "get_perf",
-            "request_exit",
-            "context_get_last_frame",
-        ] {
-            assert_eq!(line(name), format!("{at:?} {name} 0"));
-        }
-        // The engine owns the render hook's frame; no other hook has one.
-        let frame_code = if at == At::Render {
-            ws
-        } else {
-            STICKSHIFT_ERROR_INVALID_ARGUMENT
-        };
-        for name in ["frame_submit", "frame_discard"] {
-            assert_eq!(line(name), format!("{at:?} {name} {frame_code}"));
-        }
-    }
-    // Every refusal left the engine working.
-    let state = h.state();
-    assert_eq!((state.poisoned, state.failed), (0, 0));
-    assert_eq!(h.tick().rendered, 1);
+/// What every call in [`CALLS`] should return in `scope`.
+fn expected_calls(scope: Scope) -> Vec<(&'static str, StickShiftResult)> {
+    CALLS
+        .iter()
+        .filter(|(name, _)| !(scope == Scope::Idle && *name == "engine_destroy"))
+        .map(|&(name, rule)| (name, expected(rule, scope)))
+        .collect()
 }
 
-/// What every engine call returns from a callback the engine delivers outside
-/// any hook (a completion during a tick, or the release hook): the host-only
-/// calls and the game calls alike are refused, since the engine call that
-/// delivers it holds the state.
-fn refused_outside_hooks() -> Vec<(&'static str, StickShiftResult)> {
-    let ws = STICKSHIFT_ERROR_WRONG_STATE;
-    let ia = STICKSHIFT_ERROR_INVALID_ARGUMENT;
-    vec![
-        ("get_context", STICKSHIFT_OK),
-        ("tick", ws),
-        ("init", ws),
-        ("resume", ws),
-        ("push_events", ws),
-        ("reset_clock", ws),
-        ("destroy", ws),
-        ("get_state", ws),
-        ("get_perf", ws),
-        ("context_destroy", ws),
-        ("frame_acquire", ws),
-        // No frame outside the render hook.
-        ("frame_submit", ia),
-        ("frame_discard", ia),
-        ("context_get_last_frame", STICKSHIFT_OK),
-        ("request_exit", ws),
-    ]
+/// The spawn callback's view of every call, behind its user pointer.
+unsafe extern "C" fn calls_from_spawn(
+    user: *mut c_void,
+    engine: *mut StickShiftEngine,
+    _slot: i64,
+    _position: StickShiftVec3,
+) {
+    let calls = &mut *user.cast::<Vec<(&'static str, StickShiftResult)>>();
+    if calls.is_empty() {
+        *calls = engine_calls(engine, null_mut());
+    }
 }
 
 /// A load completion's view of the engine calls, behind its user pointer.
@@ -1480,58 +1842,175 @@ unsafe extern "C" fn calls_from_completion(user: *mut c_void, _: *const StickShi
     probe.calls = engine_calls(probe.engine, null_mut());
 }
 
+/// The header with its comments removed, so a parenthesis in a doc comment
+/// cannot hide the declaration after it.
+fn without_comments(header: &str) -> String {
+    let mut code = String::with_capacity(header.len());
+    let mut rest = header;
+    while let Some(start) = rest.find("/*") {
+        code.push_str(&rest[..start]);
+        let end = rest[start..].find("*/").expect("every comment is closed");
+        rest = &rest[start + end + 2..];
+    }
+    code.push_str(rest);
+    code.lines()
+        .map(|line| line.split("//").next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Every function in `header` whose first parameter is an engine, without
+/// the `stickshift_` prefix (so not `engine_create`, which makes one).
+fn engine_functions(header: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for declaration in without_comments(header).split(';') {
+        let Some(open) = declaration.find('(') else {
+            continue;
+        };
+        let (head, params) = declaration.split_at(open);
+        let Some(name) = head
+            .split_whitespace()
+            .last()
+            .and_then(|n| n.trim_start_matches('*').strip_prefix("stickshift_"))
+        else {
+            continue;
+        };
+        let first = params[1..].split(',').next().unwrap_or("");
+        if first.contains("StickShiftEngine *") {
+            names.push(name.to_owned());
+        }
+    }
+    names
+}
+
+/// The generated header's engine functions ([`engine_functions`]).
+fn header_engine_functions() -> Vec<String> {
+    let header =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/include/stickshift.h"))
+            .expect("the generated header");
+    let names = engine_functions(&header);
+    // Counted another way, so a parser that drops a declaration fails here:
+    // every `(` that opens a parameter list on an engine, comments removed.
+    let code = without_comments(&header);
+    let opens = code.matches("(struct StickShiftEngine *").count()
+        + code.matches("(const struct StickShiftEngine *").count();
+    assert_eq!(names.len(), opens, "{names:?}");
+    names
+}
+
 #[test]
-fn the_scope_matrix_outside_hooks() {
-    // Init starts a load whose completion a later tick's housekeeping delivers,
-    // inside the tick but outside every hook.
+fn the_header_parser_reads_past_a_parenthesis_in_a_comment() {
+    let header = "/**\n * Run it (once); see stickshift_a(engine).\n */\n\
+                  StickShiftResult stickshift_engine_init(struct StickShiftEngine *engine);\n\
+                  // stickshift_b(struct StickShiftEngine *engine);\n\
+                  StickShiftResult stickshift_engine_create(struct StickShiftContext *ctx,\n\
+                  \x20   struct StickShiftEngine **out);\n\
+                  /* (x) */ StickShiftResult stickshift_engine_get_state(const struct \
+                  StickShiftEngine *engine, struct StickShiftEngineState *out);\n";
+    assert_eq!(
+        engine_functions(header),
+        ["engine_init", "engine_get_state"]
+    );
+}
+
+#[test]
+fn the_scope_matrix_names_every_engine_function() {
+    let header = header_engine_functions();
+    // Each of these has a parenthesis in its doc comment.
+    for name in [
+        "engine_init",
+        "world_remove",
+        "world_query_release",
+        "audio_play_once",
+        "audio_play_looping",
+    ] {
+        assert!(header.iter().any(|h| h == name), "{name} in {header:?}");
+    }
+    let named: Vec<&str> = CALLS.iter().map(|(n, _)| *n).collect();
+    for name in &header {
+        assert!(
+            named.contains(&name.as_str()),
+            "the scope matrix does not cover stickshift_{name}"
+        );
+    }
+    let mut unique = named.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(unique.len(), named.len(), "a call is named twice");
+}
+
+#[test]
+fn the_scope_matrix() {
+    // Init starts a load whose completion a later tick's housekeeping
+    // delivers, inside the tick but outside every hook.
     let completion = Box::into_raw(Box::new(CompletionProbe {
         engine: null_mut(),
         calls: Vec::new(),
     }));
-    let mut h = Harness::new(move |p, at, e, _| {
-        if at != At::Init {
+    let in_spawn = Rc::new(RefCell::new(Vec::new()));
+    let spawn_calls = Rc::clone(&in_spawn);
+    let mut h = Harness::new(move |p, at, e, frame| {
+        if p.seen.iter().any(|s| s.starts_with(&format!("{at:?} "))) {
             return;
         }
-        // SAFETY: inside init, on the engine's thread; the completion probe
-        // outlives the engine.
+        for (name, result) in engine_calls(e, frame) {
+            p.seen.push(format!("{at:?} {name} {result}"));
+        }
+        // SAFETY: inside a hook of a live engine, on its thread; the
+        // completion probe outlives the engine, and the spawn callback's
+        // vector outlives the pass.
         unsafe {
-            (*completion).engine = e;
-            let mut ctx = null_mut();
-            stickshift_engine_get_context(e, &mut ctx);
-            let callback = StickShiftCompletion {
-                callback: Some(calls_from_completion),
-                user: completion.cast(),
-            };
-            let cube = StickShiftData {
-                ptr: CUBE.as_ptr().cast(),
-                len: CUBE.len(),
-                release: None,
-                user: null_mut(),
-            };
-            let mut model = StickShiftModel::default();
-            let r = stickshift_model_load_memory(ctx, cube, &callback, &mut model);
-            p.seen.push(format!("load {r}"));
+            if at == At::Update {
+                let mut calls: Vec<(&'static str, StickShiftResult)> = Vec::new();
+                let focus = StickShiftVec3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: -600.0,
+                };
+                let user = std::ptr::from_mut(&mut calls).cast();
+                let r = stickshift_scene_stream(e, focus, Some(calls_from_spawn), user);
+                p.seen.push(format!("Pass {r}"));
+                *spawn_calls.borrow_mut() = calls;
+            }
+            if at == At::Init {
+                (*completion).engine = e;
+                let mut ctx = null_mut();
+                stickshift_engine_get_context(e, &mut ctx);
+                let callback = StickShiftCompletion {
+                    callback: Some(calls_from_completion),
+                    user: completion.cast(),
+                };
+                let cube = StickShiftData {
+                    ptr: CUBE.as_ptr().cast(),
+                    len: CUBE.len(),
+                    release: None,
+                    user: null_mut(),
+                };
+                let mut model = StickShiftModel::default();
+                let r = stickshift_model_load_memory(ctx, cube, &callback, &mut model);
+                p.seen.push(format!("load {r}"));
+            }
         }
     });
     assert_eq!(h.init(), STICKSHIFT_OK);
-    assert_eq!(h.probe.seen, ["load 0"]);
+    h.tick();
+    // A menu choice after init runs the settings hook inside the push.
+    assert_eq!(h.push(&[menu(102)]).0, STICKSHIFT_OK);
     // SAFETY: the callback has not run, or ran inside an earlier tick.
     let delivered = || unsafe { !(*completion).calls.is_empty() };
     for _ in 0..10_000 {
-        assert_eq!(h.tick().rendered, 1);
         if delivered() {
             break;
         }
+        assert_eq!(h.tick().rendered, 1);
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
     assert!(delivered(), "the load's completion never arrived");
-    // SAFETY: as above; the callback has returned.
-    assert_eq!(unsafe { &(*completion).calls }, &refused_outside_hooks());
+    let idle = engine_calls_in(h.engine, null_mut(), true);
+    // Every refusal, and every call between engine calls, left the engine
+    // working.
     let state = h.state();
-    assert_eq!(
-        (state.poisoned, state.failed, state.exit_requested),
-        (0, 0, 0)
-    );
+    assert_eq!((state.poisoned, state.failed), (0, 0));
     assert_eq!(h.tick().rendered, 1);
 
     // The release hook, which destroy runs.
@@ -1543,11 +2022,44 @@ fn the_scope_matrix_outside_hooks() {
     );
     h.engine = null_mut();
     assert_eq!(h.probe.releases, 1);
-    let want: Vec<String> = refused_outside_hooks()
-        .into_iter()
-        .map(|(name, code)| format!("Release {name} {code}"))
-        .collect();
-    assert_eq!(h.probe.seen[1..], want);
+
+    let in_scope = |scope: &str| -> Vec<(String, StickShiftResult)> {
+        h.probe
+            .seen
+            .iter()
+            .filter_map(|s| s.strip_prefix(&format!("{scope} ")))
+            .filter_map(|s| s.rsplit_once(' '))
+            .map(|(name, code)| (name.to_owned(), code.parse().expect("a result code")))
+            .collect()
+    };
+    let owned = |calls: &[(&'static str, StickShiftResult)]| -> Vec<(String, StickShiftResult)> {
+        calls.iter().map(|&(n, r)| (n.to_owned(), r)).collect()
+    };
+    for at in [At::Init, At::Update, At::Render, At::Settings] {
+        assert_eq!(
+            in_scope(&format!("{at:?}")),
+            owned(&expected_calls(Scope::Hook(at))),
+            "{at:?}"
+        );
+    }
+    assert!(
+        h.probe.seen.contains(&"Pass 0".to_owned()),
+        "{:?}",
+        h.probe.seen
+    );
+    assert_eq!(*in_spawn.borrow(), expected_calls(Scope::Spawn), "Spawn");
+    // SAFETY: the callback has returned, and the engine is gone.
+    assert_eq!(
+        unsafe { &(*completion).calls },
+        &expected_calls(Scope::Completion),
+        "Completion"
+    );
+    assert_eq!(
+        in_scope("Release"),
+        owned(&expected_calls(Scope::Release)),
+        "Release"
+    );
+    assert_eq!(idle, expected_calls(Scope::Idle), "Idle");
     // SAFETY: allocated above; the engine that could call back is gone.
     drop(unsafe { Box::from_raw(completion) });
 }
@@ -1566,8 +2078,18 @@ fn a_panic_in_a_call_from_a_hook_poisons_the_rest_of_the_tick() {
             // SAFETY: inside an update hook, on the engine's thread.
             let r = unsafe { testing::panic_in_call(e) };
             p.seen.push(format!("panic_in_call {r}"));
-            p.seen
-                .push(format!("get_state {:?}", state_of(e).map(|_| ())));
+            p.seen.push(format!(
+                "get_state {:?}",
+                state_of(e).map(|s| (s.poisoned, s.updates))
+            ));
+            // Every other call is refused now.
+            let mut perf = StickShiftPerf {
+                size: std::mem::size_of::<StickShiftPerf>() as u32,
+                ..Default::default()
+            };
+            // SAFETY: inside an update hook, on the engine's thread.
+            let r = unsafe { stickshift_engine_get_perf(e, &mut perf) };
+            p.seen.push(format!("get_perf {r}"));
         }
     });
     assert_eq!(h.init(), STICKSHIFT_OK);
@@ -1582,12 +2104,23 @@ fn a_panic_in_a_call_from_a_hook_poisons_the_rest_of_the_tick() {
         h.probe.seen,
         [
             format!("panic_in_call {STICKSHIFT_ERROR_INTERNAL}"),
-            format!("get_state Err({STICKSHIFT_ERROR_INTERNAL})"),
+            "get_state Ok((1, 1))".to_owned(),
+            format!("get_perf {STICKSHIFT_ERROR_INTERNAL}"),
         ]
     );
     // The second update and the render hook never ran.
     assert_eq!((h.probe.updates, h.probe.renders), (1, 0));
-    assert_eq!(state_of(h.engine), Err(STICKSHIFT_ERROR_INTERNAL));
+    // The host learns why its calls fail.
+    let state = state_of(h.engine).expect("a poisoned engine still answers get_state");
+    assert_eq!(
+        (
+            state.poisoned,
+            state.failed,
+            state.initialized,
+            state.updates
+        ),
+        (1, 0, 1, 1)
+    );
     assert_eq!(
         h.tick_with(STICKSHIFT_CLOCK_FIXED_STEP, 0).0,
         STICKSHIFT_ERROR_INTERNAL
@@ -1649,19 +2182,59 @@ fn a_panic_poisons_the_engine_and_release_still_runs_once() {
         "{}",
         last_error()
     );
-    assert_eq!(state_of(h.engine), Err(STICKSHIFT_ERROR_INTERNAL));
+    let state = state_of(h.engine).expect("a poisoned engine still answers get_state");
+    assert_eq!(
+        (state.poisoned, state.failed, state.exit_requested),
+        (1, 0, 0)
+    );
+    // A size below the first layout is still refused.
+    let mut small = StickShiftEngineState {
+        size: 4,
+        ..Default::default()
+    };
+    // SAFETY: a live engine; `small` is valid for its declared size.
+    assert_eq!(
+        unsafe { stickshift_engine_get_state(h.engine, &mut small) },
+        STICKSHIFT_ERROR_INVALID_ARGUMENT
+    );
     assert_eq!(
         h.tick_with(STICKSHIFT_CLOCK_FIXED_STEP, 0).0,
         STICKSHIFT_ERROR_INTERNAL
     );
     assert_eq!(h.init(), STICKSHIFT_ERROR_INTERNAL);
-    // The context still works, and destroy still releases the game.
-    let (mut w, mut hgt) = (0, 0);
-    // SAFETY: a live context, between calls.
+    // SAFETY: a live engine, between calls.
     assert_eq!(
-        unsafe { stickshift_context_get_size(h.ctx, &mut w, &mut hgt) },
-        STICKSHIFT_OK
+        unsafe { stickshift_engine_request_exit(h.engine) },
+        STICKSHIFT_ERROR_INTERNAL
     );
+    // Still poisoned: get_state did not clear it.
+    assert_eq!(state_of(h.engine).map(|s| s.poisoned), Ok(1));
+    // Every function that takes the engine (from the header) but get_state
+    // and destroy is refused.
+    let calls = engine_calls_in(h.engine, null_mut(), true);
+    let result = |name: &str| calls.iter().find(|(n, _)| *n == name).map(|&(_, r)| r);
+    for name in header_engine_functions() {
+        let expected = match name.as_str() {
+            "engine_get_state" => STICKSHIFT_OK,
+            // Made last, below.
+            "engine_destroy" => continue,
+            _ => STICKSHIFT_ERROR_INTERNAL,
+        };
+        assert_eq!(result(&name), Some(expected), "stickshift_{name}");
+    }
+    // The context still works, frames included, and destroy still releases
+    // the game.
+    let (mut w, mut hgt) = (0, 0);
+    let mut frame = null_mut();
+    // SAFETY: a live context, between calls.
+    unsafe {
+        assert_eq!(
+            stickshift_context_get_size(h.ctx, &mut w, &mut hgt),
+            STICKSHIFT_OK
+        );
+        assert_eq!(stickshift_frame_acquire(h.ctx, &mut frame), STICKSHIFT_OK);
+        assert_eq!(stickshift_frame_discard(frame), STICKSHIFT_OK);
+    }
     // SAFETY: a live engine.
     assert_eq!(
         unsafe { stickshift_engine_destroy(h.engine) },

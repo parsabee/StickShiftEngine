@@ -108,6 +108,33 @@ API**.
   own calls, so archetypes, query order and id reuse match Rust types. Queries copy their rows
   into an aligned `Rows` buffer that borrows nothing from the world. Engine components keep
   their Rust types and get a byte form through a `Codec`.
+- **The engine through the C API.** A `StickShiftEngine` attached to a context runs the engine's
+  own game loop for a game written as C callbacks (`StickShiftGame`: `init`, `update`, `render`,
+  `graphics_settings_changed`, `release`), so a C or Swift game is game code only and the host
+  drives the loop: `stickshift_engine_create`, then `stickshift_engine_init` (no view) or
+  `stickshift_engine_resume` (a view), then one `stickshift_engine_tick` per display refresh, on a
+  fixed-step, elapsed, timestamp or engine-read clock, with `stickshift_engine_push_events` for
+  keys, mouse buttons, the cursor, focus loss, resizes, the safe area, menu choices and close. A
+  tick runs the same `Session` and `drive_frame` as the Rust runner: a queued settings change,
+  0 to 5 fixed updates of `stickshift_fixed_dt()`, the camera push, and one render hook into a
+  frame the engine opens and submits (`WAIT` or `SKIP` pacing, and an optional pixel read-back on
+  offscreen contexts). What only the host can do comes back as request bits: exit, full screen,
+  menu sync. Calls are checked against Rust's borrows at run time: a call a hook or a stream spawn
+  callback may not make is `STICKSHIFT_ERROR_WRONG_STATE`, a call from another thread
+  `STICKSHIFT_ERROR_WRONG_THREAD`, and a failed init hook `STICKSHIFT_ERROR_ABORTED`; a caught
+  panic poisons the engine, which `stickshift_engine_get_state` still reports. Also new: the
+  context's sticky camera and sun set and read without a frame open
+  (`stickshift_context_set_camera`, `_set_sun_sky` and their getters), `_get_scale`,
+  `_set_safe_area`, `stickshift_context_get_last_frame` (what the last frame recorded, for tools
+  and tests), `stickshift_model_wait` (a synchronous load in init), glam's own operations
+  (`stickshift_vec3_dot`, `_cross`, `_length`, `_normalize_or_zero`, `_lerp`,
+  `stickshift_quat_from_rotation_x`/`_y`/`_z`, `_mul`, `_mul_vec3`,
+  `stickshift_mat4_transform_point3`, `_transform_vector3`, `stickshift_transform_to_mat4`),
+  `stickshift_api_minor()` (now 1), and the result `STICKSHIFT_ABSENT`. It is all additive, so
+  `STICKSHIFT_API_VERSION` stays 4. `docs/C_API.md` documents the engine, its scope rules and the
+  rules the API grows by (size-prefixed structs, strides, append-only values), and
+  [`examples/c/engine.c`](examples/c/engine.c) is a small game on it, built and run by
+  `scripts/test-c-api.sh`.
 - **The engine's world and scene in the C API.** `stickshift_component_register` gives a C game
   its own components (up to 128, tags or values of up to 4096 bytes); the engine's
   `TransformComponent`, `RenderComponent`, `StaticTag` and `DynamicTag` have fixed ids, with
@@ -143,6 +170,9 @@ API**.
   `libstickshift.a` statically must add `-framework AudioToolbox -framework CoreAudio`, even if it
   never creates an engine. `pkg-config --static --libs stickshift` and rustc's
   `--print native-static-libs` already list them; the `StickShift` Swift package links them.
+- **`stickshift_context_resize` works on null contexts**, which returned
+  `STICKSHIFT_ERROR_UNSUPPORTED` before, so an engine on a null context sizes its drawable for the
+  view and the render scale as on a layer context. A Metal offscreen context still keeps its size.
 - **The C API is at `STICKSHIFT_API_VERSION` 4.** `StickShiftMaterial` gained an `emissive` field,
   which changes its size, so code built against version 3 must be rebuilt (contexts created with
   `api_version = 3` are refused). Zero-initialising the field keeps the old look.

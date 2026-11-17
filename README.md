@@ -67,7 +67,10 @@ reference title is the [playable demo](#the-playable-demo), an endless car runne
 - **A C API** (`libstickshift` + a generated `stickshift.h`, with a Swift module map) for hosts in C,
   Objective-C, Swift or C++. It is asynchronous in shape: calls return at once with a handle or a
   result code, resources become ready later, and completions arrive as events. glTF models load
-  on worker threads, and acquiring a frame never waits. See [docs/C_API.md](docs/C_API.md).
+  on worker threads, and acquiring a frame never waits. It also runs the whole engine: an engine
+  object runs the game loop for a game written as C callbacks, with the engine's world, scene
+  streaming, camera, input, audio and graphics settings, while the host drives it one tick per
+  display refresh ([`examples/c/engine.c`](examples/c/engine.c)). See [docs/C_API.md](docs/C_API.md).
 - **Raw Metal behind a render seam.** `stickshift-render-api` defines the render contract
   (`RenderDevice` / `FrameRecorder` traits and opaque handles). `stickshift-render` is the only crate
   that depends on `metal`, and CI fails if the seam crate ever gains a `metal` dependency.
@@ -309,7 +312,7 @@ Guides and design docs:
 | Document | What it covers |
 |---|---|
 | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | Build your own game on the engine |
-| [docs/C_API.md](docs/C_API.md) | The C API: concepts, threading, what may wait in v0.1, reference |
+| [docs/C_API.md](docs/C_API.md) | The C API: concepts, threading, the engine and its scopes, what may wait in v0.1, how the API grows, reference |
 | [docs/PLAYABLE_DEMO.md](docs/PLAYABLE_DEMO.md) | The demo walked through as a reference example |
 | [docs/DESIGN.md](docs/DESIGN.md) | Diagrams: component, UML class and sequence diagrams (Mermaid) of the layers, the render seam, the frame loop, streaming, and asset load |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Intentional constraints, the render seam, and workspace layout |
@@ -325,7 +328,7 @@ smoke oracle). The layout follows [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) Â
 
 | Crate | Purpose |
 |---|---|
-| [`stickshift-capi`](crates/stickshift-capi) | The C API: `libstickshift` (static and dynamic), the generated `stickshift.h` and the Swift module map, over a Metal or a null backend. Graphics only: no windowing, audio or ECS |
+| [`stickshift-capi`](crates/stickshift-capi) | The C API: `libstickshift` (static and dynamic), the generated `stickshift.h` and the Swift module map, over a Metal or a null backend, and the engine object that runs a C game's loop. No windowing: the host owns the view |
 | [`stickshift-core`](crates/stickshift-core) | Application lifecycle and the engine/game boundary: the `Game` trait, `EngineCtx`, the fixed-timestep loop, input, and the windowed (winit) and headless drivers |
 | [`stickshift-render-api`](crates/stickshift-render-api) | Backend-agnostic render seam: `RenderDevice` / `FrameRecorder` traits, opaque handles, descriptors, sun/sky and 2D overlay types, and a `NullRenderer` test double. Never depends on `metal` |
 | [`stickshift-render`](crates/stickshift-render) | Raw-Metal implementation of the seam: rasterization pipeline, look stack, shadow maps, clustered point and spot lights, offscreen rendering and pixel read-back |

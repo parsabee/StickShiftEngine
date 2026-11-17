@@ -5,41 +5,60 @@
 //! The Stick Shift Engine **C API**: `libstickshift.a` / `libstickshift.dylib` and the generated
 //! `include/stickshift.h`.
 //!
-//! The contract is `docs/C_API.md`; this crate implements it. In short:
+//! The contract is `docs/C_API.md`; this crate implements it. The API covers the whole engine,
+//! in two layers a host can use separately:
 //!
-//! - One opaque [`StickShiftContext`] owns everything; meshes, textures, models and
-//!   fonts are typed 64-bit handles with 32-bit generations, never reissued.
-//! - The API is **asynchronous in shape**: calls return at once with a handle or
-//!   a result code, resources go `PENDING` → `READY` / `FAILED`, and completions
-//!   arrive as events, through `stickshift_poll_events` or per-call callbacks that
-//!   always run on a host thread.
-//! - In v0.1, mesh and texture uploads still happen inside their create
-//!   calls; glTF models are parsed on worker threads and uploaded during
-//!   housekeeping; frames are recorded CPU-side and submitted through the Metal
-//!   backend's non-blocking path, so `stickshift_frame_acquire` never waits.
+//! - **A context** ([`StickShiftContext`]) renders. It owns everything it draws with: meshes,
+//!   textures, models and fonts are typed 64-bit handles with 32-bit generations, never
+//!   reissued. The API is **asynchronous in shape**: calls return at once with a handle or a
+//!   result code, resources go `PENDING` → `READY` / `FAILED`, and completions arrive as events,
+//!   through `stickshift_poll_events` or per-call callbacks that always run on a host thread. In
+//!   v0.1, mesh and texture uploads still happen inside their create calls; glTF models are
+//!   parsed on worker threads and uploaded during housekeeping; frames are recorded CPU-side and
+//!   submitted through the Metal backend's non-blocking path, so `stickshift_frame_acquire`
+//!   never waits.
+//! - **An engine** ([`StickShiftEngine`]), attached to a context, runs the game loop for a game
+//!   written as C callbacks: `stickshift-core`'s own `drive_frame`, through its platform-free
+//!   `Session`, which the windowed Rust runner drives too. The host keeps the window and drives
+//!   the loop, calling `stickshift_engine_tick` once per display refresh and pushing its
+//!   platform's events; what only it can do (exit, full screen, its native menu) comes back as
+//!   request bits. The game reaches the engine's hecs world (`stickshift_world_*`, with
+//!   components registered at run time), the scene's streaming and floating origin
+//!   (`stickshift_scene_*`), the camera and its chase controller (`stickshift_camera_*`), input,
+//!   audio, and the graphics settings, their menu and their persistence, all as the Rust a Rust
+//!   game calls.
+//! - **Math** (`stickshift_vec3_*`, `stickshift_quat_*`, `stickshift_mat4_*`) is glam's own
+//!   operations, so a host's game math gets the bits a Rust game gets.
+//!
+//! Every call is checked at the boundary:
+//!
 //! - A context is used by one thread at a time; an overlapping call returns
-//!   `STICKSHIFT_ERROR_BUSY` instead of waiting. No panic crosses the boundary:
-//!   every function catches one and returns `STICKSHIFT_ERROR_INTERNAL`.
-//! - A [`StickShiftEngine`] attached to a context runs the engine's own loop
-//!   (`stickshift-core`'s `drive_frame`, through its platform-free `Session`)
-//!   for a host that calls `stickshift_engine_tick` once per display refresh.
-//!   The game is C callbacks. An engine and its context are used on the
+//!   `STICKSHIFT_ERROR_BUSY` instead of waiting. An engine and its context are used on the
 //!   engine's thread only (`STICKSHIFT_ERROR_WRONG_THREAD`).
+//! - Rust's borrows become run-time **scopes**: a call a hook or a stream spawn callback may not
+//!   make returns `STICKSHIFT_ERROR_WRONG_STATE` and does nothing (`docs/C_API.md`, "Scopes
+//!   and threads", has the table).
+//! - No panic crosses the boundary: every function catches one and returns
+//!   `STICKSHIFT_ERROR_INTERNAL`, and a panic in an engine call poisons that engine.
+//! - Within an API version the surface only grows: growable structs start with `uint32_t size`,
+//!   arrays cross with a stride, and `stickshift_api_minor` reports the additive level.
 //!
-//! The crate links `stickshift-render`, `stickshift-render-api`, `stickshift-assets`
-//! (without its ECS feature), `stickshift-math`, and `stickshift-core` without its
-//! `windowed` feature, so no windowing crate and no AppKit menu reach it. On
-//! platforms without Metal only the null backend exists, so the crate and its
-//! tests build everywhere.
+//! The crate links `stickshift-render` (macOS), `stickshift-render-api`, `stickshift-assets`
+//! (without its ECS feature), `stickshift-math`, `stickshift-camera`, `stickshift-ecs` (with its
+//! `dynamic` feature), `stickshift-scene`, and `stickshift-core` without its `windowed` feature,
+//! so the engine's loop, ECS and audio (kira over cpal) are in the library while no windowing
+//! crate and no AppKit menu reach it. On platforms without Metal only the null backend exists,
+//! so the crate and its tests build everywhere.
 //!
 //! # Safety
 //!
 //! Every exported function is `unsafe extern "C"`: pointer arguments must be
 //! NULL or valid as `stickshift.h` documents (a context from `stickshift_context_create`
-//! that has not been destroyed, a frame from `stickshift_frame_acquire`, readable
-//! inputs, writable outputs, NUL-terminated strings). Everything else (NULL,
-//! wrong handles, bad enum values, mismatched sizes, overlapping calls) is
-//! checked and reported as a result code.
+//! that has not been destroyed, an engine from `stickshift_engine_create` that has not
+//! been destroyed, a frame from `stickshift_frame_acquire` or the render hook, readable
+//! inputs, writable outputs, NUL-terminated strings). Everything else (NULL, wrong
+//! handles, bad enum values, mismatched sizes, overlapping calls, calls from the wrong
+//! scope or thread) is checked and reported as a result code.
 
 #![deny(missing_docs)]
 // Each function documents its pointer requirements; the crate-level `# Safety`

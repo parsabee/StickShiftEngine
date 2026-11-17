@@ -946,7 +946,12 @@ typedef struct StickShiftEngineState {
    */
   uint8_t failed;
   /**
-   * 1 if a panic was caught in an engine call.
+   * 1 if a panic was caught in an engine call: every later call that
+   * takes the engine (`stickshift_engine_*`, `_component_*`, `_world_*`,
+   * `_scene_*`, `_stream_*`, `_camera_*`, `_input_*`, `_audio_*`,
+   * `_graphics_*`) but `stickshift_engine_get_state` and
+   * `stickshift_engine_destroy` is now `STICKSHIFT_ERROR_INTERNAL`; calls
+   * on its context still work. Destroy the engine.
    */
   uint8_t poisoned;
   /**
@@ -2759,9 +2764,10 @@ StickShiftResult stickshift_engine_resume(struct StickShiftEngine *engine,
 
 /**
  * One display frame. See `docs/C_API.md`: housekeeping, the load hold, then
- * the session's frame (hosted) or the loop's (unhosted), whose render step
- * opens the context's frame, runs the render hook and submits it. `out` is
- * optional.
+ * the session's frame (a settings change applied, resized for and saved, then
+ * the fixed updates and the render), whose render step opens the context's
+ * frame, runs the render hook and submits it. An engine with no view yet runs
+ * the same frame with nothing to resize. `out` is optional.
  *
  * # Safety
  * `engine` must be NULL or a live engine; `tick` NULL or valid for its
@@ -2809,7 +2815,9 @@ StickShiftResult stickshift_engine_request_exit(struct StickShiftEngine *engine)
 
 /**
  * The engine's flags and counters. In a hook, or between engine calls. Set
- * `out->size = sizeof(StickShiftEngineState)`.
+ * `out->size = sizeof(StickShiftEngineState)`. This is the one call besides
+ * destroy that a poisoned engine still answers, with `poisoned` set, so a
+ * host can tell a poisoned engine (destroy it) from a failed one.
  *
  * # Safety
  * `engine` must be NULL or a live engine; `out` NULL or valid for its

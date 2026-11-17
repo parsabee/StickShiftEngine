@@ -122,47 +122,82 @@ impl Codec for RenderCodec {
 /// Which built-in shape a render component's mesh is: the one
 /// `RenderComponent::cube` or `::sphere` builds for its colour, bit for bit,
 /// or a custom mesh.
+///
+/// Both builders lay down geometry that does not depend on the colour and
+/// write the colour, unchanged, into every vertex's last three floats. So a
+/// mesh is the one built for `value.color` exactly when its indices and the
+/// first six floats of each vertex equal the reference geometry's, and the
+/// last three equal `value.color`, all compared as bits (so NaN colours still
+/// match themselves). The reference geometry is built once per process, not
+/// per read: the render pass of a game reads every entity's render component
+/// each frame.
 fn shape_of(value: &RenderComponent) -> StickShiftRenderShape {
-    let RenderShape::Mesh { vertices, .. } = &value.shape else {
+    let RenderShape::Mesh { vertices, indices } = &value.shape else {
         return STICKSHIFT_RENDER_SHAPE_MESH;
     };
-    let built = match vertices.len() {
-        24 => (RenderShape::cube(value.color), STICKSHIFT_RENDER_SHAPE_CUBE),
-        441 => (
-            RenderComponent::sphere(value.color).shape,
-            STICKSHIFT_RENDER_SHAPE_SPHERE,
-        ),
+    let references = references();
+    let (reference, shape) = match vertices.len() {
+        n if n == references.cube.vertices.len() => {
+            (&references.cube, STICKSHIFT_RENDER_SHAPE_CUBE)
+        }
+        n if n == references.sphere.vertices.len() => {
+            (&references.sphere, STICKSHIFT_RENDER_SHAPE_SPHERE)
+        }
         _ => return STICKSHIFT_RENDER_SHAPE_MESH,
     };
-    if same_mesh(&value.shape, &built.0) {
-        built.1
+    // The expected bits of a vertex are the reference's, with the colour in
+    // its last three (zero in the reference). Accumulate every difference
+    // rather than stop at the first: most reads match, and this vectorises.
+    let [r, g, b] = value.color.map(f32::to_bits);
+    let color = [0, 0, 0, 0, 0, 0, r, g, b];
+    let mut diff = 0;
+    for (vertex, expected) in vertices.iter().zip(&reference.vertices) {
+        for i in 0..9 {
+            diff |= vertex[i].to_bits() ^ expected[i] ^ color[i];
+        }
+    }
+    let same = diff == 0 && *indices == reference.indices;
+    if same {
+        shape
     } else {
         STICKSHIFT_RENDER_SHAPE_MESH
     }
 }
 
-/// Bitwise equality of two meshes (so NaN colours still match themselves).
-fn same_mesh(a: &RenderShape, b: &RenderShape) -> bool {
-    match (a, b) {
-        (
-            RenderShape::Mesh {
-                vertices: va,
-                indices: ia,
-            },
-            RenderShape::Mesh {
-                vertices: vb,
-                indices: ib,
-            },
-        ) => {
-            ia == ib
-                && va.len() == vb.len()
-                && va
-                    .iter()
-                    .zip(vb)
-                    .all(|(x, y)| x.iter().zip(y).all(|(p, q)| p.to_bits() == q.to_bits()))
+/// A built-in shape's geometry as bits, built with a zero colour: each
+/// vertex's position, normal and (zero) colour, and the indices.
+struct Reference {
+    vertices: Vec<[u32; 9]>,
+    indices: Vec<u32>,
+}
+
+impl Reference {
+    fn of(shape: RenderShape) -> Self {
+        let RenderShape::Mesh { vertices, indices } = shape else {
+            unreachable!("the built-in shapes are meshes");
+        };
+        Self {
+            vertices: vertices
+                .iter()
+                .map(|v| std::array::from_fn(|i| v[i].to_bits()))
+                .collect(),
+            indices,
         }
-        _ => false,
     }
+}
+
+struct References {
+    cube: Reference,
+    sphere: Reference,
+}
+
+/// The cube's and the sphere's reference geometry, built on first use.
+fn references() -> &'static References {
+    static REFERENCES: std::sync::OnceLock<References> = std::sync::OnceLock::new();
+    REFERENCES.get_or_init(|| References {
+        cube: Reference::of(RenderComponent::cube([0.0; 3]).shape),
+        sphere: Reference::of(RenderComponent::sphere([0.0; 3]).shape),
+    })
 }
 
 struct StaticCodec;
@@ -928,4 +963,175 @@ pub unsafe extern "C" fn stickshift_world_query_release(
         snapshot.live = None;
         Ok(STICKSHIFT_OK)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The classification as it was first written: rebuild the built-in mesh
+    /// for the component's colour and compare every float as bits. The cached
+    /// classifier must answer exactly as this does.
+    fn shape_by_rebuild(value: &RenderComponent) -> StickShiftRenderShape {
+        let RenderShape::Mesh { vertices, indices } = &value.shape else {
+            return STICKSHIFT_RENDER_SHAPE_MESH;
+        };
+        let (built, shape) = match vertices.len() {
+            24 => (RenderShape::cube(value.color), STICKSHIFT_RENDER_SHAPE_CUBE),
+            441 => (
+                RenderComponent::sphere(value.color).shape,
+                STICKSHIFT_RENDER_SHAPE_SPHERE,
+            ),
+            _ => return STICKSHIFT_RENDER_SHAPE_MESH,
+        };
+        let RenderShape::Mesh {
+            vertices: bv,
+            indices: bi,
+        } = &built
+        else {
+            unreachable!()
+        };
+        let same = indices == bi
+            && vertices
+                .iter()
+                .zip(bv)
+                .all(|(x, y)| x.iter().zip(y).all(|(p, q)| p.to_bits() == q.to_bits()));
+        if same {
+            shape
+        } else {
+            STICKSHIFT_RENDER_SHAPE_MESH
+        }
+    }
+
+    fn colors() -> Vec<[f32; 3]> {
+        vec![
+            [0.0, 0.0, 0.0],
+            [-0.0, 0.0, -0.0],
+            [1.0, 0.5, 0.25],
+            [0.2, 0.55, 0.9],
+            [f32::NAN, 1.0, f32::INFINITY],
+            [
+                f32::from_bits(0x7fc0_0001),
+                f32::NEG_INFINITY,
+                f32::MIN_POSITIVE,
+            ],
+            [f32::from_bits(1), -1e30, 3.0],
+        ]
+    }
+
+    /// Every way a mesh can differ from a built-in one, applied to `base`.
+    fn variants(base: &RenderComponent) -> Vec<RenderComponent> {
+        let RenderShape::Mesh { vertices, indices } = &base.shape else {
+            unreachable!()
+        };
+        let mut out = vec![base.clone()];
+        let last = vertices.len() - 1;
+        for (row, col) in [
+            (0, 0),
+            (0, 5),
+            (last, 3),
+            (0, 6),
+            (last, 8),
+            (7 % vertices.len(), 7),
+        ] {
+            let mut v = vertices.clone();
+            v[row][col] = f32::from_bits(v[row][col].to_bits() ^ 1);
+            out.push(RenderComponent::new(
+                base.color,
+                RenderShape::Mesh {
+                    vertices: v,
+                    indices: indices.clone(),
+                },
+            ));
+        }
+        let mut i = indices.clone();
+        i.swap(0, 1);
+        out.push(RenderComponent::new(
+            base.color,
+            RenderShape::Mesh {
+                vertices: vertices.clone(),
+                indices: i,
+            },
+        ));
+        let mut i = indices.clone();
+        i.pop();
+        out.push(RenderComponent::new(
+            base.color,
+            RenderShape::Mesh {
+                vertices: vertices.clone(),
+                indices: i,
+            },
+        ));
+        // The component's colour differs from the mesh's.
+        let mut other = base.color;
+        other[1] = f32::from_bits(other[1].to_bits() ^ 0x8000_0000);
+        out.push(RenderComponent::new(other, base.shape.clone()));
+        out
+    }
+
+    #[test]
+    fn the_cached_classifier_answers_as_rebuilding_does() {
+        let mut seen = [0usize; 3];
+        for color in colors() {
+            let shapes = [
+                RenderComponent::cube(color),
+                RenderComponent::sphere(color),
+                // A sphere with as many vertices as a cube, and one that is
+                // not the default resolution.
+                RenderComponent::new(color, RenderShape::sphere(color, 3, 5)),
+                RenderComponent::new(color, RenderShape::sphere(color, 12, 8)),
+                RenderComponent::mesh(color, vec![[0.0; 9]; 3], vec![0, 1, 2]),
+                RenderComponent::mesh(color, Vec::new(), Vec::new()),
+            ];
+            for base in &shapes {
+                for value in variants_or_self(base) {
+                    let expected = shape_by_rebuild(&value);
+                    assert_eq!(shape_of(&value), expected, "colour {color:?}");
+                    seen[expected as usize] += 1;
+                }
+            }
+        }
+        // Each answer occurs, so the comparison means something.
+        assert!(seen.iter().all(|&n| n > 0), "{seen:?}");
+    }
+
+    fn variants_or_self(base: &RenderComponent) -> Vec<RenderComponent> {
+        match &base.shape {
+            RenderShape::Mesh { vertices, .. } if !vertices.is_empty() => variants(base),
+            _ => vec![base.clone()],
+        }
+    }
+
+    /// The per-read cost of classifying a cube and a sphere, rebuilt against
+    /// cached (`cargo test --release -p stickshift-capi --lib -- --ignored
+    /// --nocapture classify_cost`).
+    #[test]
+    #[ignore = "a timing, not a check"]
+    fn classify_cost() {
+        type Classify = fn(&RenderComponent) -> StickShiftRenderShape;
+        let reads = 20_000;
+        let time = |values: &[RenderComponent], f: Classify| {
+            let start = std::time::Instant::now();
+            let mut sum = 0u64;
+            for i in 0..reads {
+                sum += u64::from(f(std::hint::black_box(&values[i % values.len()])));
+            }
+            std::hint::black_box(sum);
+            start.elapsed().as_nanos() as f64 / reads as f64
+        };
+        shape_of(&RenderComponent::cube([0.0; 3]));
+        type Build = fn([f32; 3]) -> RenderComponent;
+        let builders: [(&str, Build); 2] = [
+            ("cube", RenderComponent::cube),
+            ("sphere", RenderComponent::sphere),
+        ];
+        for (name, build) in builders {
+            let values: Vec<_> = colors().into_iter().map(build).collect();
+            let before = time(&values, shape_by_rebuild);
+            let after = time(&values, shape_of);
+            println!(
+                "classify_cost {name}: rebuild {before:.0} ns/read, cached {after:.0} ns/read"
+            );
+        }
+    }
 }

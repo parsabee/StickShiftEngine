@@ -6,8 +6,8 @@
 //!
 //! An engine owns a core [`Session`] (which owns the [`Loop`]) and renders
 //! through the context it is attached to. The host drives it: one
-//! `stickshift_engine_tick` per display refresh runs the real [`drive_frame`],
-//! through two adapters:
+//! `stickshift_engine_tick` per display refresh runs the session's frame, and so
+//! the real [`drive_frame`], through two adapters:
 //!
 //! - [`CGame`] is a [`Game`] whose hooks call the C game's callbacks, so
 //!   [`Loop::init_once`] and [`drive_frame`] call the C game exactly where they
@@ -36,6 +36,8 @@
 //! Inside a hook, the first context call after the game moved the camera
 //! pushes the camera to the context first, as Rust's `EngineCtx::renderer` does
 //! ([`before_context_call`]).
+//!
+//! [`drive_frame`]: stickshift_core::driver::drive_frame
 
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::ffi::c_void;
@@ -43,7 +45,7 @@ use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use stickshift_core::driver::{drive_frame, Loop};
+use stickshift_core::driver::Loop;
 use stickshift_core::graphics::{DrawDistance, RenderScale, ShadowDistance};
 use stickshift_core::{
     Audio, Clock, EngineCtx, Game, GraphicsSettings, HostEvent, Key, MenuCommand, MouseButton,
@@ -120,8 +122,8 @@ pub struct StickShiftEngine {
     sounds: RefCell<audio::Sounds>,
     /// The Graphics menu the host last asked for ([`graphics`]).
     menu: RefCell<graphics::MenuCache>,
-    /// A panic was caught in an engine call: every later call but destroy is
-    /// `STICKSHIFT_ERROR_INTERNAL`.
+    /// A panic was caught in an engine call: every later call but destroy and
+    /// get_state is `STICKSHIFT_ERROR_INTERNAL`.
     poisoned: Cell<bool>,
     /// The init hook failed.
     failed: Cell<bool>,
@@ -329,12 +331,34 @@ pub(crate) unsafe fn engine_call(
     engine: *mut StickShiftEngine,
     body: impl FnOnce(&StickShiftEngine) -> Outcome,
 ) -> StickShiftResult {
+    checked_call(engine, Poison::Refuse, body)
+}
+
+/// Whether an engine call refuses a poisoned engine.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Poison {
+    /// `STICKSHIFT_ERROR_INTERNAL`: every engine call but destroy and get_state.
+    Refuse,
+    /// Answer anyway: `stickshift_engine_get_state`, which is how a host
+    /// learns the engine is poisoned. Its body only reads.
+    Answer,
+}
+
+/// [`engine_call`], with a choice about a poisoned engine.
+///
+/// # Safety
+/// `engine` must be NULL or a live engine.
+unsafe fn checked_call(
+    engine: *mut StickShiftEngine,
+    poison: Poison,
+    body: impl FnOnce(&StickShiftEngine) -> Outcome,
+) -> StickShiftResult {
     call(|| {
         let engine = input(engine.cast_const(), "engine")?;
         if engine.thread != current_thread() {
             return Err(wrong_thread());
         }
-        if engine.poisoned.get() {
+        if poison == Poison::Refuse && engine.poisoned.get() {
             return Err(poisoned());
         }
         match catch_unwind(AssertUnwindSafe(|| body(engine))) {
@@ -380,7 +404,20 @@ unsafe fn game_call(
     what: &str,
     body: impl FnOnce(&StickShiftEngine, Access<'_>) -> Outcome,
 ) -> StickShiftResult {
-    engine_call(engine, |engine| {
+    game_call_as(engine, what, Poison::Refuse, body)
+}
+
+/// [`game_call`], with a choice about a poisoned engine.
+///
+/// # Safety
+/// `engine` must be NULL or a live engine.
+unsafe fn game_call_as(
+    engine: *mut StickShiftEngine,
+    what: &str,
+    poison: Poison,
+    body: impl FnOnce(&StickShiftEngine, Access<'_>) -> Outcome,
+) -> StickShiftResult {
+    checked_call(engine, poison, |engine| {
         let top = engine.scopes.borrow().last().copied();
         match top {
             // SAFETY: the hook's `EngineCtx` is live until it returns, and its
@@ -531,10 +568,13 @@ impl Game for CGame {
             !engine.panic_in_update.take(),
             "a panic a test asked for, inside the engine's update step"
         );
-        engine.bump(|c| c.updates += 1);
         let update = engine.game.update.expect("checked at create");
+        // Counted only when the hook runs (not on a poisoned engine).
         // SAFETY: as in `init`.
-        engine.run_hook(ctx, Hook::Update, |user, e| unsafe { update(user, e, dt) });
+        engine.run_hook(ctx, Hook::Update, |user, e| {
+            engine.bump(|c| c.updates += 1);
+            unsafe { update(user, e, dt) }
+        });
     }
 
     fn render(&mut self, ctx: &mut EngineCtx<'_>) {
@@ -1217,9 +1257,10 @@ pub unsafe extern "C" fn stickshift_engine_resume(
 }
 
 /// One display frame. See `docs/C_API.md`: housekeeping, the load hold, then
-/// the session's frame (hosted) or the loop's (unhosted), whose render step
-/// opens the context's frame, runs the render hook and submits it. `out` is
-/// optional.
+/// the session's frame (a settings change applied, resized for and saved, then
+/// the fixed updates and the render), whose render step opens the context's
+/// frame, runs the render hook and submits it. An engine with no view yet runs
+/// the same frame with nothing to resize. `out` is optional.
 ///
 /// # Safety
 /// `engine` must be NULL or a live engine; `tick` NULL or valid for its
@@ -1313,15 +1354,10 @@ pub unsafe extern "C" fn stickshift_engine_tick(
         } else {
             e.holding.set(false);
             game.readback = readback;
-            let (steps, requests) = if e.hosted.get() {
-                session.frame(clock, game, renderer)
-            } else {
-                let elapsed = session.read_clock(clock);
-                (
-                    drive_frame(&mut session.lp, game, renderer, elapsed),
-                    Requests::NONE,
-                )
-            };
+            // Hosted or not, the session's frame: with no view it has nothing
+            // to resize, but it still saves an applied settings change and
+            // asks for a menu sync, as a menu choice does.
+            let (steps, requests) = session.frame(clock, game, renderer);
             game.readback = None;
             e.bump(|c| c.frames += 1);
             let frame = e.frame_out.take();
@@ -1453,7 +1489,9 @@ pub unsafe extern "C" fn stickshift_engine_request_exit(
 }
 
 /// The engine's flags and counters. In a hook, or between engine calls. Set
-/// `out->size = sizeof(StickShiftEngineState)`.
+/// `out->size = sizeof(StickShiftEngineState)`. This is the one call besides
+/// destroy that a poisoned engine still answers, with `poisoned` set, so a
+/// host can tell a poisoned engine (destroy it) from a failed one.
 ///
 /// # Safety
 /// `engine` must be NULL or a live engine; `out` NULL or valid for its
@@ -1463,29 +1501,34 @@ pub unsafe extern "C" fn stickshift_engine_get_state(
     engine: *mut StickShiftEngine,
     out: *mut StickShiftEngineState,
 ) -> StickShiftResult {
-    game_call(engine, "stickshift_engine_get_state", |e, access| {
-        let exit_requested = match access {
-            Access::Idle(state) => state.session.lp.exit_requested,
-            Access::Hook(ctx) => ctx.exit_requested(),
-        };
-        let counters = e.counters.get();
-        let state = StickShiftEngineState {
-            size: 0,
-            initialized: u8::from(e.initialized.get()),
-            hosted: u8::from(e.hosted.get()),
-            failed: u8::from(e.failed.get()),
-            poisoned: u8::from(e.poisoned.get()),
-            exit_requested: u8::from(exit_requested),
-            holding: u8::from(e.holding.get()),
-            reserved: [0; 2],
-            frames: counters.frames,
-            updates: counters.updates,
-            frames_rendered: counters.rendered,
-            frames_discarded: counters.discarded,
-        };
-        write_sized(out, state, "out")?;
-        Ok(STICKSHIFT_OK)
-    })
+    game_call_as(
+        engine,
+        "stickshift_engine_get_state",
+        Poison::Answer,
+        |e, access| {
+            let exit_requested = match access {
+                Access::Idle(state) => state.session.lp.exit_requested,
+                Access::Hook(ctx) => ctx.exit_requested(),
+            };
+            let counters = e.counters.get();
+            let state = StickShiftEngineState {
+                size: 0,
+                initialized: u8::from(e.initialized.get()),
+                hosted: u8::from(e.hosted.get()),
+                failed: u8::from(e.failed.get()),
+                poisoned: u8::from(e.poisoned.get()),
+                exit_requested: u8::from(exit_requested),
+                holding: u8::from(e.holding.get()),
+                reserved: [0; 2],
+                frames: counters.frames,
+                updates: counters.updates,
+                frames_rendered: counters.rendered,
+                frames_discarded: counters.discarded,
+            };
+            write_sized(out, state, "out")?;
+            Ok(STICKSHIFT_OK)
+        },
+    )
 }
 
 /// Frame timing: in a hook, the snapshot the hook's frame started with and,
@@ -1600,5 +1643,163 @@ pub mod testing {
     /// `engine` must be a live engine, between engine calls on its own thread.
     pub unsafe fn renderer_violations(engine: *mut StickShiftEngine) -> u32 {
         (*(*engine).state.get()).renderer.violations
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::{stickshift_context_create, stickshift_context_destroy};
+    use crate::engine::graphics::{stickshift_graphics_get_state, stickshift_graphics_request};
+
+    unsafe extern "C" fn init(_: *mut c_void, _: *mut StickShiftEngine) -> StickShiftResult {
+        STICKSHIFT_OK
+    }
+    unsafe extern "C" fn update(_: *mut c_void, _: *mut StickShiftEngine, _: f32) {}
+    unsafe extern "C" fn render(
+        _: *mut c_void,
+        _: *mut StickShiftEngine,
+        _: *mut crate::context::StickShiftFrame,
+    ) {
+    }
+
+    /// An engine with no settings hook on a new null context.
+    fn engine(flags: u32, suite: *const std::ffi::c_char) -> *mut StickShiftEngine {
+        let ctx_desc = StickShiftContextDesc {
+            api_version: STICKSHIFT_API_VERSION,
+            backend: STICKSHIFT_BACKEND_NULL,
+            metal_layer: std::ptr::null_mut(),
+            width: 4,
+            height: 4,
+            scale: 1.0,
+        };
+        let desc = StickShiftEngineDesc {
+            api_version: STICKSHIFT_API_VERSION,
+            size: std::mem::size_of::<StickShiftEngineDesc>() as u32,
+            audio: STICKSHIFT_AUDIO_SILENT,
+            pacing: STICKSHIFT_FRAME_PACING_WAIT,
+            flags,
+            reserved: 0,
+            settings_suite: suite,
+        };
+        let game = StickShiftGame {
+            size: std::mem::size_of::<StickShiftGame>() as u32,
+            reserved: 0,
+            user: std::ptr::null_mut(),
+            init: Some(init),
+            update: Some(update),
+            render: Some(render),
+            graphics_settings_changed: None,
+            release: None,
+        };
+        let mut ctx = std::ptr::null_mut();
+        let mut e = std::ptr::null_mut();
+        // SAFETY: valid locals; the game has no user data to outlive.
+        unsafe {
+            assert_eq!(
+                stickshift_context_create(&ctx_desc, &mut ctx),
+                STICKSHIFT_OK
+            );
+            assert_eq!(
+                stickshift_engine_create(ctx, &desc, &game, &mut e),
+                STICKSHIFT_OK
+            );
+        }
+        e
+    }
+
+    /// Where the engine's session saves settings, if anywhere.
+    ///
+    /// # Safety
+    /// `e` must be a live engine, between engine calls on its own thread.
+    unsafe fn suite_of(e: *mut StickShiftEngine) -> Option<Option<String>> {
+        (*(*e).state.get())
+            .session
+            .settings_store()
+            .map(|s| s.suite_name().map(str::to_owned))
+    }
+
+    /// Destroy `e`, then its context.
+    ///
+    /// # Safety
+    /// `e` must be a live engine, between engine calls on its own thread.
+    unsafe fn destroy(e: *mut StickShiftEngine) {
+        let ctx = (*e).ctx;
+        assert_eq!(stickshift_engine_destroy(e), STICKSHIFT_OK);
+        assert_eq!(stickshift_context_destroy(ctx), STICKSHIFT_OK);
+    }
+
+    /// An engine created without `STICKSHIFT_ENGINE_PERSIST_SETTINGS` has no
+    /// settings store, so neither a menu choice nor an applied request can
+    /// save anywhere, the standard user defaults included.
+    #[test]
+    fn an_engine_without_the_persist_flag_has_no_settings_store() {
+        let e = engine(0, std::ptr::null());
+        // SAFETY: a live engine, between engine calls on this thread.
+        unsafe {
+            assert_eq!(suite_of(e), None);
+            assert_eq!(stickshift_engine_init(e), STICKSHIFT_OK);
+            let menu = StickShiftHostEvent {
+                kind: STICKSHIFT_HOST_MENU,
+                code: 102,
+                ..Default::default()
+            };
+            assert_eq!(
+                stickshift_engine_push_events(
+                    e,
+                    &menu,
+                    1,
+                    std::mem::size_of::<StickShiftHostEvent>() as u32,
+                    std::ptr::null_mut(),
+                ),
+                STICKSHIFT_OK
+            );
+            assert_eq!(suite_of(e), None);
+            let near = StickShiftGraphicsSettings {
+                draw_distance: STICKSHIFT_DRAW_DISTANCE_NEAR,
+                ..graphics_settings_to_c(&GraphicsSettings::default())
+            };
+            assert_eq!(stickshift_graphics_request(e, &near), STICKSHIFT_OK);
+            let tick = StickShiftTickDesc {
+                size: std::mem::size_of::<StickShiftTickDesc>() as u32,
+                clock: STICKSHIFT_CLOCK_FIXED_STEP,
+                nanoseconds: 0,
+                readback: std::ptr::null_mut(),
+                readback_len: 0,
+            };
+            let mut out = StickShiftTickResult {
+                size: std::mem::size_of::<StickShiftTickResult>() as u32,
+                ..Default::default()
+            };
+            assert_eq!(stickshift_engine_tick(e, &tick, &mut out), STICKSHIFT_OK);
+            // Both changes were applied, and still there is nowhere to save.
+            let mut g = StickShiftGraphicsState {
+                size: std::mem::size_of::<StickShiftGraphicsState>() as u32,
+                ..Default::default()
+            };
+            assert_eq!(stickshift_graphics_get_state(e, &mut g), STICKSHIFT_OK);
+            assert_eq!(g.revision, 2);
+            assert_eq!(g.current.draw_distance, STICKSHIFT_DRAW_DISTANCE_NEAR);
+            assert_eq!(suite_of(e), None);
+            destroy(e);
+        }
+        // With the flag the store exists: the standard defaults without a
+        // suite, else the suite. (Nothing is chosen or applied, so neither is
+        // written.)
+        let suite = std::ffi::CString::new("dev.stickshift.capi-unit.never-written").unwrap();
+        for (name, expected) in [
+            (std::ptr::null(), None),
+            (
+                suite.as_ptr(),
+                Some("dev.stickshift.capi-unit.never-written"),
+            ),
+        ] {
+            let e = engine(STICKSHIFT_ENGINE_PERSIST_SETTINGS, name);
+            // SAFETY: a live engine, between engine calls on this thread.
+            unsafe {
+                assert_eq!(suite_of(e), Some(expected.map(str::to_owned)));
+                destroy(e);
+            }
+        }
     }
 }

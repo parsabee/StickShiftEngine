@@ -6,8 +6,9 @@
 //!
 //! A request is queued and applied at the start of the next frame, as
 //! `EngineCtx::set_graphics_settings` does: the renderer gets the new settings,
-//! the streaming reach is rescaled, the game's settings hook runs, and a hosted
-//! engine then resizes the drawable and saves the settings. The menu is data:
+//! the streaming reach is rescaled, the game's settings hook runs, and the
+//! engine then resizes the drawable (once a view is reported) and saves the
+//! settings, hosted or not. The menu is data:
 //! the host builds its native menu from `stickshift_engine_get_menu` and sends
 //! a choice back as a `STICKSHIFT_HOST_MENU` event, which the engine applies on
 //! the pending-or-current settings. Persistence (`STICKSHIFT_ENGINE_PERSIST_SETTINGS`)

@@ -8,18 +8,30 @@
 //! same engine only through the C API. Both print, after init and after each of
 //! 3,000 frames, a world dump (every entity in query order with its
 //! components' bits), a query-order digest taken in the render hook, the
-//! world's length, the streamed count and the rebases so far. The lines must be
-//! byte-equal.
+//! world's length, the streamed count, the rebases so far, the streaming reach
+//! and settings revision, the camera's bits and the camera the renderer was
+//! last given. The lines must be byte-equal.
+//!
+//! This probe and the services probe in `tests/engine_services.rs` are the two
+//! halves of the probe differential. This one is the world over a long run:
+//! everything that decides what exists where, including the services that
+//! feed into it (the camera carried through a rebase and chased, and settings
+//! requests that rescale the streaming reach while it streams). The services
+//! probe is the host's side over a short, dense script: host events and input
+//! edges, hosted and unhosted sessions, audio counters, the settings hook's
+//! view of the renderer, menu choices and persistence, with no world.
 //!
 //! The probe is demo-shaped: a player `{Transform, Render, Dynamic}`, and per
 //! streamed slot a road, buildings and guardrails with game data and tags, an
 //! obstacle every third slot, a sphere lamp every fifth and a marker entity
 //! with no transform every fourth, all spawned with their whole bundle in the
 //! spawn callback. Its updates move the player, rebase the origin (the
-//! threshold is low enough for several rebases), stream, despawn queried
+//! threshold is low enough for several rebases) and carry the camera through
+//! each, chase the player, stream, despawn queried
 //! obstacles and markers, insert and remove a tag (which moves entities between
 //! archetypes), overwrite values in place, spawn and despawn entities that are
-//! not streamed, and change the reach mid-run.
+//! not streamed, change the reach mid-run, and request two graphics settings
+//! changes (one before the reach change and one after) that rescale it.
 //!
 //! C hooks never assert (a panic cannot unwind out of `extern "C"`): they
 //! record unexpected results, and the test checks them at the end.
@@ -29,11 +41,13 @@ use std::ffi::{c_void, CStr, CString};
 use std::ptr::{null, null_mut};
 
 use stickshift::*;
+use stickshift_camera::{Camera, ChaseController};
 use stickshift_core::driver::{drive_frame, Loop};
-use stickshift_core::{EngineCtx, Game, FIXED_DT_DURATION};
+use stickshift_core::graphics::DrawDistance;
+use stickshift_core::{EngineCtx, Game, GraphicsSettings, FIXED_DT_DURATION};
 use stickshift_ecs::hecs::{Entity, With, Without, World};
 use stickshift_ecs::{DynamicTag, RenderComponent, RenderShape, StaticTag, TransformComponent};
-use stickshift_math::glam::{Quat, Vec3};
+use stickshift_math::glam::{Mat4, Quat, Vec3};
 use stickshift_math::Transform;
 use stickshift_render_api::NullRenderer;
 use stickshift_scene::{SpawnCtx, StreamingConfig};
@@ -88,6 +102,69 @@ fn wider(c: StreamingConfig) -> StreamingConfig {
 
 fn player_start() -> Transform {
     Transform::from_position(Vec3::new(0.0, 0.5, 0.0))
+}
+
+/// The chase camera the probe follows the player with.
+const CHASE: StickShiftChase = StickShiftChase {
+    distance: 7.5,
+    height: 3.0,
+    look_at_height: 1.25,
+    up: StickShiftVec3 {
+        x: 0.0,
+        y: 1.0,
+        z: 0.0,
+    },
+    half_life: 0.15,
+};
+
+/// The draw distance the probe requests at update `n`, if any: once before
+/// the reach change halfway, once after. Each rescales the streaming reach
+/// from its base when the next frame applies it.
+fn draw_distance_at(n: u32) -> Option<DrawDistance> {
+    match n {
+        n if n == FRAMES / 3 => Some(DrawDistance::Near),
+        n if n == 2 * FRAMES / 3 => Some(DrawDistance::Medium),
+        _ => None,
+    }
+}
+
+fn hash_mat(m: Mat4) -> u64 {
+    m.to_cols_array()
+        .iter()
+        .fold(FNV_OFFSET, |h, v| fnv(h, &v.to_bits().to_le_bytes()))
+}
+
+fn v(p: Vec3) -> String {
+    format!("{} {} {}", f(p.x), f(p.y), f(p.z))
+}
+
+/// The camera's line: its position, target and view-projection, then the
+/// camera the renderer was last given (none before the first push).
+fn camera_line(
+    position: Vec3,
+    target: Vec3,
+    view_projection: Mat4,
+    pushed: Option<(Mat4, Vec3)>,
+) -> String {
+    let pushed = pushed.map_or_else(
+        || "none".to_owned(),
+        |(m, p)| format!("{:016x} {}", hash_mat(m), v(p)),
+    );
+    format!(
+        "camera {} | {} | {:016x} pushed {pushed}",
+        v(position),
+        v(target),
+        hash_mat(view_projection)
+    )
+}
+
+/// The reach and the graphics revision.
+fn reach_line(spawn_ahead: f32, despawn_behind: f32, revision: u64) -> String {
+    format!(
+        "reach {} {} revision {revision}",
+        f(spawn_ahead),
+        f(despawn_behind)
+    )
 }
 
 /// One entity a slot spawns.
@@ -319,13 +396,28 @@ impl Game for RustProbe {
             .get::<&mut TransformComponent>(player)
             .expect("the player is alive")
             .transform = t;
-        if ctx.scene_mut().maybe_rebase(t.position) != Vec3::ZERO {
+        let offset = ctx.scene_mut().maybe_rebase(t.position);
+        if offset != Vec3::ZERO {
             self.rebases += 1;
+            // Carry the camera through the coordinate change, as the demo does.
+            let camera = ctx.camera_mut();
+            let position = camera.position() + offset;
+            let target = camera.target() + offset;
+            camera.set_position(position);
+            camera.set_target(target);
         }
         let pos = self.player_transform(ctx.world()).position;
+        rust_chase().follow(ctx.camera_mut(), pos, Vec3::NEG_Z, dt);
         if n == FRAMES / 2 {
             let c = wider(ctx.scene().config());
             ctx.scene_mut().set_config(c);
+        }
+        if let Some(draw_distance) = draw_distance_at(n) {
+            let s = GraphicsSettings {
+                draw_distance,
+                ..ctx.graphics_settings()
+            };
+            ctx.set_graphics_settings(s);
         }
         ctx.scene_mut().stream(pos, rust_spawn);
 
@@ -405,6 +497,25 @@ impl Game for RustProbe {
     }
 }
 
+fn rust_chase() -> ChaseController {
+    ChaseController::new(CHASE.distance, CHASE.height)
+        .with_up(Vec3::from(CHASE.up))
+        .with_look_at_height(CHASE.look_at_height)
+        .with_half_life(CHASE.half_life)
+}
+
+fn rust_camera_line(camera: &Camera, renderer: &NullRenderer) -> String {
+    let pushed = renderer
+        .view_projection()
+        .map(|m| (m, renderer.camera_position().unwrap_or(Vec3::NAN)));
+    camera_line(
+        camera.position(),
+        camera.target(),
+        camera.view_projection_matrix(),
+        pushed,
+    )
+}
+
 fn rust_shape(r: &RenderComponent) -> u32 {
     if r.shape == RenderShape::cube(r.color) {
         STICKSHIFT_RENDER_SHAPE_CUBE
@@ -458,7 +569,11 @@ fn rust_run() -> Vec<String> {
     let mut renderer = NullRenderer::new();
     let mut lines = Vec::new();
     lp.init_once(&mut game, &mut renderer);
-    let report = |lp: &Loop, game: &RustProbe, frame: &str, lines: &mut Vec<String>| {
+    let report = |lp: &Loop,
+                  game: &RustProbe,
+                  renderer: &NullRenderer,
+                  frame: &str,
+                  lines: &mut Vec<String>| {
         lines.push(frame_line(
             frame,
             lp.scene.world().len(),
@@ -466,15 +581,22 @@ fn rust_run() -> Vec<String> {
             game.digest,
             game.rebases,
         ));
+        let c = lp.scene.config();
+        lines.push(reach_line(
+            c.spawn_ahead,
+            c.despawn_behind,
+            lp.graphics.revision(),
+        ));
+        lines.push(rust_camera_line(&lp.camera, renderer));
         rust_dump(lp.scene.world(), lines);
     };
-    report(&lp, &game, "init", &mut lines);
+    report(&lp, &game, &renderer, "init", &mut lines);
     for frame in 0..FRAMES {
         assert_eq!(
             drive_frame(&mut lp, &mut game, &mut renderer, FIXED_DT_DURATION),
             1
         );
-        report(&lp, &game, &format!("frame {frame}"), &mut lines);
+        report(&lp, &game, &renderer, &format!("frame {frame}"), &mut lines);
     }
     lines
 }
@@ -750,6 +872,15 @@ unsafe fn c_player_transform(p: &CProbe, e: *mut StickShiftEngine) -> Transform 
     Transform::from(t)
 }
 
+unsafe fn c_camera(p: &CProbe, e: *mut StickShiftEngine) -> StickShiftCameraState {
+    let mut camera = StickShiftCameraState {
+        size: std::mem::size_of::<StickShiftCameraState>() as u32,
+        ..Default::default()
+    };
+    p.check("camera", stickshift_camera_get(e, &mut camera));
+    camera
+}
+
 unsafe fn c_stream(p: &CProbe, e: *mut StickShiftEngine, focus: Vec3) {
     p.check(
         "stream",
@@ -814,15 +945,41 @@ unsafe extern "C" fn c_update(user: *mut c_void, e: *mut StickShiftEngine, dt: f
         "rebase",
         stickshift_scene_maybe_rebase(e, t.position.into(), &mut offset),
     );
-    if Vec3::from(offset) != Vec3::ZERO {
+    let offset = Vec3::from(offset);
+    if offset != Vec3::ZERO {
         p.rebases.set(p.rebases.get() + 1);
+        // Carry the camera through the coordinate change, as the demo does.
+        let camera = c_camera(p, e);
+        let position = Vec3::from(camera.position) + offset;
+        let target = Vec3::from(camera.target) + offset;
+        p.check(
+            "carry position",
+            stickshift_camera_set_position(e, position.into()),
+        );
+        p.check(
+            "carry target",
+            stickshift_camera_set_target(e, target.into()),
+        );
     }
     let pos = c_player_transform(p, e).position;
+    p.check(
+        "follow",
+        stickshift_camera_follow(e, &CHASE, pos.into(), Vec3::NEG_Z.into(), dt),
+    );
     if n == FRAMES / 2 {
         let mut c = StickShiftStreamingConfig::default();
         p.check("get_config", stickshift_scene_get_config(e, &mut c));
         let c = StickShiftStreamingConfig::from(wider(StreamingConfig::from(c)));
         p.check("set_config", stickshift_scene_set_config(e, &c));
+    }
+    if let Some(draw_distance) = draw_distance_at(n) {
+        let mut s = StickShiftGraphicsSettings::default();
+        p.check("get_current", stickshift_graphics_get_current(e, &mut s));
+        s.draw_distance = match draw_distance {
+            DrawDistance::Near => STICKSHIFT_DRAW_DISTANCE_NEAR,
+            _ => STICKSHIFT_DRAW_DISTANCE_MEDIUM,
+        };
+        p.check("request", stickshift_graphics_request(e, &s));
     }
     c_stream(p, e, pos);
 
@@ -1092,6 +1249,33 @@ fn c_run() -> Vec<String> {
                 probe.digest.get(),
                 probe.rebases.get(),
             ));
+            let mut c = StickShiftStreamingConfig::default();
+            assert_eq!(stickshift_scene_get_config(engine, &mut c), STICKSHIFT_OK);
+            let mut g = StickShiftGraphicsState {
+                size: std::mem::size_of::<StickShiftGraphicsState>() as u32,
+                ..Default::default()
+            };
+            assert_eq!(stickshift_graphics_get_state(engine, &mut g), STICKSHIFT_OK);
+            lines.push(reach_line(c.spawn_ahead, c.despawn_behind, g.revision));
+            let camera = c_camera(&probe, engine);
+            // Between engine calls the context's sticky camera is what the
+            // loop pushed last; nothing is pushed before the first frame.
+            let mut pushed = StickShiftCamera::default();
+            assert_eq!(
+                stickshift_context_get_camera(ctx, &mut pushed),
+                STICKSHIFT_OK
+            );
+            lines.push(camera_line(
+                camera.position.into(),
+                camera.target.into(),
+                Mat4::from(camera.view_projection),
+                (frame != "init").then(|| {
+                    (
+                        Mat4::from(pushed.view_projection),
+                        Vec3::from(pushed.position),
+                    )
+                }),
+            ));
             c_dump(engine, probe.ids.get(), lines);
         };
         report("init", &mut lines);
@@ -1151,6 +1335,19 @@ fn the_c_probe_prints_the_rust_probes_world_frame_for_frame() {
             "no dump line has {needle:?}"
         );
     }
+    // Both settings requests applied, and with the reach change between them
+    // the reach took four values.
+    let mut reaches: Vec<&str> = rust
+        .iter()
+        .filter_map(|l| l.strip_prefix("reach "))
+        .map(|l| l.split(" revision").next().unwrap_or(l))
+        .collect();
+    reaches.dedup();
+    assert_eq!(reaches.len(), 4, "{reaches:?}");
+    assert!(rust.iter().any(|l| l.ends_with("revision 2")));
+    // The renderer had a camera from the first frame on.
+    let unpushed = rust.iter().filter(|l| l.ends_with("pushed none")).count();
+    assert_eq!(unpushed, 1, "only the init line has no pushed camera");
     // A sphere lamp reads back as a sphere.
     assert!(rust.iter().any(|l| l.contains(" 1 static")));
     // Some entity ids were reused, with a bumped generation.
