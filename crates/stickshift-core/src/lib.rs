@@ -89,6 +89,10 @@
 //! ```
 
 #![deny(missing_docs)]
+// The docs link the winit runner (`run`, `RunConfig`, `app`) from across the
+// crate. Without `windowed` those items do not exist, so the links cannot
+// resolve; they are checked in the default build, where they do.
+#![cfg_attr(not(feature = "windowed"), allow(rustdoc::broken_intra_doc_links))]
 
 #[cfg(feature = "windowed")]
 pub mod app;

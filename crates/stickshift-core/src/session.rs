@@ -200,6 +200,12 @@ pub enum HostEvent {
     /// full-screen item returns [`Requests::TOGGLE_FULLSCREEN`]. Either way the
     /// frame clock restarts (see [`Session::reset_clock`]), so the time the menu
     /// was open is not simulated in one burst.
+    ///
+    /// Before the game's init has run (before the first [`Session::resume`]),
+    /// a settings change is not applied: it stays queued, and init makes it
+    /// current, as it does settings restored from the store, with no
+    /// [`Game::graphics_settings_changed`]. It is saved at once, and returns
+    /// no [`Requests::MENU_SYNC`]; the resume that follows does.
     Menu(MenuCommand),
     /// The user asked to close the view: [`Requests::EXIT`].
     Close,
@@ -605,12 +611,25 @@ impl Session {
         let graphics = &self.lp.graphics;
         let base = graphics.pending().unwrap_or_else(|| graphics.current());
         let requests = match command.apply(base) {
-            Some(settings) => {
+            Some(settings) if self.lp.initialized => {
                 // Applied right away, between frames, through the same path a
                 // game's own request takes.
                 self.lp.graphics.request(settings);
                 self.lp.apply_pending_graphics(game, renderer);
                 self.after_graphics_change(renderer)
+            }
+            Some(settings) => {
+                // Before init nothing applies: the choice stays queued, and init
+                // makes it current with no revision bump, as it does restored
+                // settings. So no revision will ever announce it, but it is the
+                // player's change and not a restore: save it now.
+                self.lp.graphics.request(settings);
+                if settings != base {
+                    if let Some(store) = &self.store {
+                        store.save(&settings);
+                    }
+                }
+                Requests::NONE
             }
             None => Requests::TOGGLE_FULLSCREEN,
         };
@@ -1179,6 +1198,57 @@ mod tests {
     }
 
     #[test]
+    fn an_elapsed_frame_between_timestamps_restarts_the_clock() {
+        let mut rig = Rig::resumed();
+        assert_eq!(rig.steps(), 1);
+        rig.now += STEP;
+        assert_eq!(rig.steps(), 1);
+        let (steps, _) = rig.session.frame(
+            Clock::Elapsed(Duration::from_nanos(STEP)),
+            &mut rig.game,
+            &mut rig.renderer,
+        );
+        assert_eq!(steps, 1);
+        // The timestamp mark did not survive the elapsed frame, so the time
+        // since it is not banked.
+        rig.now += 10_000_000_000;
+        assert_eq!(rig.steps(), 1);
+    }
+
+    #[test]
+    fn an_engine_clock_frame_after_a_timestamp_banks_one_step() {
+        let mut rig = Rig::resumed();
+        assert_eq!(rig.steps(), 1);
+        // A timestamp is not an engine-clock reading, whatever its value.
+        let (steps, _) = rig
+            .session
+            .frame(Clock::Engine, &mut rig.game, &mut rig.renderer);
+        assert_eq!(steps, 1);
+    }
+
+    #[test]
+    fn a_change_applied_before_resume_is_not_announced_after_it() {
+        // A host that inits the loop and runs bare frames before reporting a
+        // view: what that applies, resume takes as seen, as the winit runner
+        // did. It is not saved, and the first frame announces nothing.
+        let mut rig = Rig::new();
+        let lp = &mut rig.session.lp;
+        lp.init_once(&mut rig.game, &mut rig.renderer);
+        rig.game.request = Some(GraphicsSettings {
+            shadows: ShadowQuality::Low,
+            ..GraphicsSettings::default()
+        });
+        let _ = drive_frame(lp, &mut rig.game, &mut rig.renderer, FIXED_DT_DURATION);
+        let _ = drive_frame(lp, &mut rig.game, &mut rig.renderer, FIXED_DT_DURATION);
+        assert_eq!(rig.revision(), 1);
+        assert_eq!(rig.current().shadows, ShadowQuality::Low);
+
+        assert_eq!(rig.resume(RETINA), Requests::MENU_SYNC);
+        assert_eq!(rig.frame().1, Requests::NONE);
+        assert_eq!(rig.saves(), 0);
+    }
+
+    #[test]
     fn a_menu_choice_applies_at_once_saves_and_restarts_the_clock() {
         let mut rig = Rig::resumed();
         let _ = rig.frame();
@@ -1224,19 +1294,58 @@ mod tests {
     #[test]
     fn a_menu_choice_before_init_waits_for_it() {
         // Nothing is applied before init; the choice stays queued and init
-        // makes it current, as a restored setting would be.
+        // makes it current, as a restored setting would be. It is the player's
+        // change, though, so it is saved at once: no revision will announce it.
         let mut rig = Rig::new();
         let requests = rig.choose(MenuCommand::Shadows(ShadowQuality::Low));
         assert_eq!(requests, Requests::NONE);
         assert_eq!(rig.revision(), 0);
-        let _ = rig.resume(RETINA);
-        assert_eq!(rig.current().shadows, ShadowQuality::Low);
-        assert_eq!(
-            rig.game.settings_at_init.unwrap().shadows,
-            ShadowQuality::Low
-        );
+        let low = GraphicsSettings {
+            shadows: ShadowQuality::Low,
+            ..GraphicsSettings::default()
+        };
+        assert_eq!(rig.saves(), 1);
+        assert_eq!(rig.codes(), low.to_codes());
+
+        // A second choice composes on the queued one and is saved too.
+        let _ = rig.choose(MenuCommand::DrawDistance(DrawDistance::Near));
+        let both = GraphicsSettings {
+            draw_distance: DrawDistance::Near,
+            ..low
+        };
+        assert_eq!(rig.saves(), 2);
+        assert_eq!(rig.codes(), both.to_codes());
+
+        // A choice that changes nothing saves nothing.
+        let _ = rig.choose(MenuCommand::DrawDistance(DrawDistance::Near));
+        assert_eq!(rig.saves(), 2);
+
+        assert_eq!(rig.resume(RETINA), Requests::MENU_SYNC);
+        assert_eq!(rig.current(), both);
+        assert_eq!(rig.game.settings_at_init, Some(both));
         assert!(rig.game.changes.is_empty());
-        assert_eq!(rig.saves(), 0);
+        assert_eq!(rig.revision(), 0);
+        assert_eq!(rig.frame().1, Requests::NONE, "nothing more to announce");
+        assert_eq!(rig.saves(), 2);
+    }
+
+    #[test]
+    fn a_menu_choice_before_init_composes_on_restored_settings() {
+        let restored = GraphicsSettings {
+            shadows: ShadowQuality::Low,
+            ..GraphicsSettings::default()
+        };
+        let mut rig = Rig::with_saved(restored.to_codes());
+        let _ = rig.choose(MenuCommand::DrawDistance(DrawDistance::Near));
+        let chosen = GraphicsSettings {
+            draw_distance: DrawDistance::Near,
+            ..restored
+        };
+        assert_eq!(rig.saves(), 1);
+        assert_eq!(rig.codes(), chosen.to_codes());
+        let _ = rig.resume(RETINA);
+        assert_eq!(rig.current(), chosen);
+        assert_eq!(rig.saves(), 1);
     }
 
     #[test]
