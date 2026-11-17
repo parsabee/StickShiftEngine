@@ -132,7 +132,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         // (`activateIgnoringOtherApps:YES`): the cooperative `activate()` is
         // refused when a terminal, which never yields, started the process.
         NSApp.setActivationPolicy(.regular)
-        activateIgnoringOtherApps()
+        NSApp.activate(ignoringOtherApps: true)
         NSApp.mainMenu = StickShiftApp.applicationMenu()
 
         let window = StickShiftApp.makeWindow(title: title, size: size)
@@ -182,18 +182,5 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private func fail(_ error: any Error) -> Never {
         FileHandle.standardError.write(Data("error: \(error)\n".utf8))
         exit(1)
-    }
-
-    /// `activateIgnoringOtherApps:` through the runtime: deprecated since
-    /// macOS 14 in favour of the cooperative `activate()`, which does not do
-    /// what winit needs here.
-    private func activateIgnoringOtherApps() {
-        typealias Activate = @convention(c) (AnyObject, Selector, Bool) -> Void
-        let selector = NSSelectorFromString("activateIgnoringOtherApps:")
-        guard NSApp.responds(to: selector) else {
-            NSApp.activate()
-            return
-        }
-        unsafeBitCast(NSApp.method(for: selector), to: Activate.self)(NSApp, selector, true)
     }
 }
