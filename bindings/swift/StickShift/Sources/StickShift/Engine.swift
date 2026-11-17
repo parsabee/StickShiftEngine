@@ -106,10 +106,17 @@ public final class Engine {
     }
 
     /// The context the engine renders through. It outlives the engine.
-    public let context: Context
+    public var context: Context { core.context }
     /// The C engine. Used by `deinit`, which is not isolated.
     nonisolated(unsafe) let raw: OpaquePointer
-    let core: EngineCore
+    /// The game box. Unowned: the C engine's retain, which `stickshift_engine_destroy`
+    /// gives back through the `release` hook, is its only owner. So the game,
+    /// and every resource it holds, is released where the engine is destroyed
+    /// (on the main thread), never on a thread that dropped the last reference.
+    unowned let core: EngineCore
+    /// A test's stand-in for the thread that drops the engine being preempted:
+    /// run by an off-main `deinit` after it has sent the destroy to the main thread.
+    nonisolated(unsafe) var afterSendingDestroy: (@Sendable () -> Void)?
 
     /// Create an engine on `context` that runs `game`. No hook runs yet: call
     /// ``initialize()`` (or ``resume(_:)``, for a view) next.
@@ -121,19 +128,10 @@ public final class Engine {
     ///   ``StickShiftError/Code-swift.struct/invalidArgument`` for a
     ///   ``Options/settingsSuite`` without ``Options/persistsSettings``.
     public init(context: Context, game: some Game, options: Options = .headless) throws {
-        try Self.requireLibrary(minor: stickshift_api_minor())
+        try Self.requireLibrary(minor: Self.linkedAPIMinor())
         let core = EngineCore(game: game, context: context)
         var hooks = core.retainedHooks()
-        var desc = StickShiftEngineDesc()
-        desc.api_version = UInt32(STICKSHIFT_API_VERSION)
-        desc.size = UInt32(MemoryLayout<StickShiftEngineDesc>.size)
-        desc.audio = StickShiftAudioOutput(options.audio == .device ? STICKSHIFT_AUDIO_DEVICE : STICKSHIFT_AUDIO_SILENT)
-        desc.pacing = StickShiftFramePacing(
-            options.framePacing == .skip ? STICKSHIFT_FRAME_PACING_SKIP : STICKSHIFT_FRAME_PACING_WAIT
-        )
-        if options.persistsSettings { desc.flags |= UInt32(STICKSHIFT_ENGINE_PERSIST_SETTINGS) }
-        if options.quitsOnEscape { desc.flags |= UInt32(STICKSHIFT_ENGINE_QUIT_ON_ESCAPE) }
-        if options.holdsUntilLoaded { desc.flags |= UInt32(STICKSHIFT_ENGINE_HOLD_UNTIL_LOADED) }
+        var desc = options.c
         var out: OpaquePointer?
         let result: StickShiftResult
         if let suite = options.settingsSuite {
@@ -150,7 +148,7 @@ public final class Engine {
             try check(result)
             throw StickShiftError(code: .internal, message: "stickshift_engine_create returned no engine")
         }
-        self.context = context
+        // From here the C retain owns the box; this local reference ends with init.
         self.core = core
         raw = out
     }
@@ -162,13 +160,16 @@ public final class Engine {
     }
 
     deinit {
-        let doomed = DoomedEngine(raw: raw, context: context)
+        // The C retain keeps `core` alive until the destroy, so reading it here
+        // (on any thread) is safe, and never its last release.
+        let doomed = DoomedEngine(raw: raw, context: core.context)
         if Thread.isMainThread {
             doomed.destroy()
         } else {
             // The C engine is bound to the thread that created it, the main
             // one: destroy it there, then drop the context it was attached to.
             DispatchQueue.main.async { doomed.destroy() }
+            afterSendingDestroy?()
         }
     }
 
@@ -187,6 +188,10 @@ public final class Engine {
 
     /// The most updates one tick runs; time owed past them is dropped.
     public nonisolated static var maxStepsPerFrame: Int { Int(STICKSHIFT_MAX_STEPS_PER_FRAME) }
+
+    /// The linked library's API minor, as `init` checks it. A test swaps it to
+    /// stand in for an older library, inside one synchronous test body.
+    static var linkedAPIMinor: () -> UInt32 = { stickshift_api_minor() }
 
     /// Throw unless a library reporting API minor `minor` has everything this
     /// package calls.
@@ -417,7 +422,9 @@ private final class DoomedEngine: @unchecked Sendable {
     // Touched only on the main thread: in `Engine.deinit` there, or in the
     // block it sends there.
     let raw: OpaquePointer
-    let context: Context
+    /// Held until the C engine is gone, so the context it is attached to dies
+    /// after it, and (if this was the last reference) on the main thread.
+    private var context: Context?
 
     init(raw: OpaquePointer, context: Context) {
         self.raw = raw
@@ -427,6 +434,25 @@ private final class DoomedEngine: @unchecked Sendable {
     func destroy() {
         let result = stickshift_engine_destroy(raw)
         assert(result == STICKSHIFT_OK, "stickshift_engine_destroy returned \(result)")
+        context = nil
+    }
+}
+
+extension Engine.Options {
+    /// The C descriptor for these options, without the settings suite, whose
+    /// C string ``Engine/init(context:game:options:)`` lends for the create call alone.
+    var c: StickShiftEngineDesc {
+        var desc = StickShiftEngineDesc()
+        desc.api_version = UInt32(STICKSHIFT_API_VERSION)
+        desc.size = UInt32(MemoryLayout<StickShiftEngineDesc>.size)
+        desc.audio = StickShiftAudioOutput(audio == .device ? STICKSHIFT_AUDIO_DEVICE : STICKSHIFT_AUDIO_SILENT)
+        desc.pacing = StickShiftFramePacing(
+            framePacing == .skip ? STICKSHIFT_FRAME_PACING_SKIP : STICKSHIFT_FRAME_PACING_WAIT
+        )
+        if persistsSettings { desc.flags |= UInt32(STICKSHIFT_ENGINE_PERSIST_SETTINGS) }
+        if quitsOnEscape { desc.flags |= UInt32(STICKSHIFT_ENGINE_QUIT_ON_ESCAPE) }
+        if holdsUntilLoaded { desc.flags |= UInt32(STICKSHIFT_ENGINE_HOLD_UNTIL_LOADED) }
+        return desc
     }
 }
 
@@ -490,9 +516,11 @@ public struct EngineState: Sendable, Equatable {
     /// ``Engine/resume(_:)`` has run.
     public var isHosted: Bool
     /// The game's ``Game/initialize(_:)`` threw: the engine can only be dropped.
+    ///
+    /// There is no flag for a poisoned engine (a panic, a bug in the engine,
+    /// was caught): every later call on it, this one included, traps with the
+    /// engine's message, and only dropping it works.
     public var hasFailed: Bool
-    /// A bug in the engine was caught: the engine can only be dropped.
-    public var isPoisoned: Bool
     /// The game, the host or an event asked to exit.
     public var exitRequested: Bool
     /// The last tick was held by ``Engine/Options/holdsUntilLoaded``.
@@ -510,7 +538,6 @@ public struct EngineState: Sendable, Equatable {
         isInitialized = s.initialized != 0
         isHosted = s.hosted != 0
         hasFailed = s.failed != 0
-        isPoisoned = s.poisoned != 0
         exitRequested = s.exit_requested != 0
         isHolding = s.holding != 0
         frames = s.frames

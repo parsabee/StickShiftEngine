@@ -167,6 +167,52 @@ final class SyncLoader: Game {
     }
 }
 
+/// A game whose initialize starts loading a model and does not wait for it.
+@MainActor
+final class EagerLoader: Game {
+    let url: URL
+    var model: Model?
+    var hooks: [String] = []
+
+    init(url: URL) {
+        self.url = url
+    }
+
+    func initialize(_ ctx: EngineContext) throws {
+        model = try ctx.renderer.startLoadingModel(contentsOf: url)
+    }
+
+    func update(_ ctx: EngineContext, dt: Float) { hooks.append("update") }
+    func render(_ ctx: EngineContext, into frame: Frame) throws { hooks.append("render") }
+}
+
+/// A named pipe the engine's model loader blocks on until `closeEmpty` opens it.
+struct Fifo: ~Copyable {
+    let url: URL
+
+    init() throws {
+        url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stickshift-swift-\(UUID().uuidString).gltf")
+        guard mkfifo(url.path, 0o600) == 0 else {
+            throw StickShiftError(code: .io, message: "mkfifo \(url.path) failed: errno \(errno)")
+        }
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    /// Open the pipe's write end from another thread (opening blocks until the
+    /// loader has the read end) and close it at once: the loader reads an empty file.
+    func closeEmpty() {
+        let path = url.path
+        Thread.detachNewThread {
+            let fd = open(path, O_WRONLY)
+            if fd >= 0 { close(fd) }
+        }
+    }
+}
+
 let fixedStep = Engine.fixedStepNanoseconds
 
 @MainActor
@@ -194,7 +240,7 @@ struct EngineTests {
         #expect(game.surfaces.last == Surface(width: 1280, height: 720, scale: 1))
 
         let state = engine.state
-        #expect(state.isInitialized && !state.isHosted && !state.hasFailed && !state.isPoisoned)
+        #expect(state.isInitialized && !state.isHosted && !state.hasFailed)
         #expect(state.frames == 3 && state.updates == 3 && state.framesRendered == 3)
         #expect(state.framesDiscarded == 0)
         #expect(engine.perf.frameCount == 3)
@@ -385,6 +431,88 @@ struct EngineTests {
         #expect(Engine.libraryAPIMinor >= UInt32(STICKSHIFT_API_MINOR))
     }
 
+    // Synchronous, so no other main-actor test makes an engine while the
+    // library's minor is swapped.
+    @Test func anEngineIsNotCreatedOnAnOlderLibrary() throws {
+        let context = try nullContext()
+        let linked = Engine.linkedAPIMinor
+        defer { Engine.linkedAPIMinor = linked }
+        Engine.linkedAPIMinor = { UInt32(STICKSHIFT_API_MINOR) - 1 }
+        weak var released: Recorder?
+        do {
+            let game = Recorder()
+            released = game
+            let error = #expect(throws: StickShiftError.self) { try Engine(context: context, game: game) }
+            #expect(error?.code == .unsupported)
+        }
+        #expect(released == nil, "the refused engine's game was released")
+        Engine.linkedAPIMinor = linked
+        _ = try Engine(context: context, game: Recorder())
+    }
+
+    @Test func optionsCrossAsTheirCValues() {
+        let headless = Engine.Options.headless.c
+        #expect(headless.api_version == UInt32(STICKSHIFT_API_VERSION))
+        #expect(headless.size == UInt32(MemoryLayout<StickShiftEngineDesc>.size))
+        #expect(headless.flags == 0 && headless.settings_suite == nil)
+        #expect(headless.audio == StickShiftAudioOutput(STICKSHIFT_AUDIO_SILENT))
+        #expect(headless.pacing == StickShiftFramePacing(STICKSHIFT_FRAME_PACING_WAIT))
+
+        #expect(Engine.Options(audio: .device).c.audio == StickShiftAudioOutput(STICKSHIFT_AUDIO_DEVICE))
+        #expect(Engine.Options(framePacing: .skip).c.pacing == StickShiftFramePacing(STICKSHIFT_FRAME_PACING_SKIP))
+        #expect(Engine.Options(persistsSettings: true).c.flags == UInt32(STICKSHIFT_ENGINE_PERSIST_SETTINGS))
+        #expect(Engine.Options(quitsOnEscape: true).c.flags == UInt32(STICKSHIFT_ENGINE_QUIT_ON_ESCAPE))
+        #expect(Engine.Options(holdsUntilLoaded: true).c.flags == UInt32(STICKSHIFT_ENGINE_HOLD_UNTIL_LOADED))
+        let app = Engine.Options.app.c
+        #expect(app.audio == StickShiftAudioOutput(STICKSHIFT_AUDIO_DEVICE))
+        #expect(app.flags == UInt32(STICKSHIFT_ENGINE_PERSIST_SETTINGS | STICKSHIFT_ENGINE_QUIT_ON_ESCAPE))
+    }
+
+    @Test func holdsUntilLoadedRunsNoHookWhileAModelLoads() throws {
+        let fifo = try Fifo()
+        let game = EagerLoader(url: fifo.url)
+        let engine = try Engine(context: nullContext(), game: game, options: Engine.Options(holdsUntilLoaded: true))
+        try engine.initialize()
+        // The loader is blocked on the empty pipe, so the model is still loading.
+        for _ in 0..<3 {
+            let tick = engine.advance()
+            #expect(tick.held && tick.steps == 0 && !tick.rendered && !tick.submitted)
+            #expect(engine.state.isHolding)
+        }
+        #expect(game.hooks.isEmpty)
+
+        // Close the pipe empty. The load fails (glTF import cannot read from a
+        // pipe anyway), and a load that failed ends the hold as one that finished does.
+        fifo.closeEmpty()
+        let model = try #require(game.model)
+        #expect(throws: StickShiftError.self) { try model.wait() }
+        let tick = engine.advance()
+        #expect(!tick.held && tick.steps == 1 && tick.rendered)
+        #expect(!engine.state.isHolding)
+        #expect(game.hooks == ["update", "render"])
+    }
+
+    @Test func persistedSettingsComeBackInTheNextEngine() throws {
+        let suite = "dev.stickshift.swift-tests.\(UUID().uuidString)"
+        defer { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+        let options = Engine.Options(persistsSettings: true, settingsSuite: suite)
+
+        let first = try Engine(context: nullContext(), game: Recorder(), options: options)
+        try first.initialize()
+        // Shadows: Off, from the Graphics menu: saved at once.
+        first.push(.menu(GraphicsMenu.Tag(rawValue: 101)))
+
+        let context = try nullContext()
+        let second = try Engine(context: context, game: Recorder(), options: options)
+        try second.initialize()
+        #expect(context.settings.shadows == .off, "the next engine restored the saved choice")
+
+        let unsaved = try nullContext()
+        let third = try Engine(context: unsaved, game: Recorder())
+        try third.initialize()
+        #expect(unsaved.settings.shadows == .high, "an engine that does not persist starts from the defaults")
+    }
+
     @Test func aTickReadsItsFrameBack() throws {
         let engine = try Engine(context: nullContext(width: 8, height: 4), game: Recorder())
         try engine.initialize()
@@ -431,6 +559,16 @@ struct EngineTests {
         let holder = EngineHolder(try Engine(context: context, game: Mortal(witness: witness)))
         try holder.engine?.initialize()
 
+        // Stand in for the dropping thread being preempted right after it sends
+        // the destroy: it waits (up to two seconds) for the main thread to run it.
+        // Its own release of the engine's storage then comes last; the game must
+        // already be gone.
+        holder.engine?.afterSendingDestroy = { [witness] in
+            for _ in 0..<1000 where witness.value == nil {
+                usleep(2000)
+            }
+        }
+
         let droppedOnMain = await Task.detached { holder.drop() }.value
         #expect(!droppedOnMain)
         for _ in 0..<1000 where witness.value == nil {
@@ -455,6 +593,22 @@ struct EngineTests {
         }
         let stderr = String(decoding: result?.standardErrorContent ?? [], as: UTF8.self)
         #expect(stderr.contains("EngineContext.requestExit() was used after the game's initialize(_:) hook returned"))
+    }
+
+    @Test func aReadBackNeedsWaitPacing() async {
+        let result = await #expect(processExitsWith: .failure, observing: [\.standardErrorContent]) {
+            await MainActor.run {
+                let engine = try! Engine(
+                    context: nullContext(width: 8, height: 4),
+                    game: Recorder(),
+                    options: Engine.Options(framePacing: .skip)
+                )
+                try! engine.initialize()
+                engine.advance(readback: PixelBuffer(width: 8, height: 4))
+            }
+        }
+        let stderr = String(decoding: result?.standardErrorContent ?? [], as: UTF8.self)
+        #expect(stderr.contains("a tick read-back needs an offscreen context and STICKSHIFT_FRAME_PACING_WAIT"))
     }
 
     @Test func aStaleLoadContextTraps() async {
