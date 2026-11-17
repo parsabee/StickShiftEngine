@@ -42,6 +42,7 @@ enum At {
     Init,
     Update,
     Render,
+    Settings,
     Release,
 }
 
@@ -71,6 +72,14 @@ unsafe extern "C" fn render(user: *mut c_void, e: *mut StickShiftEngine, _: *mut
     run(user, At::Render, e);
 }
 
+unsafe extern "C" fn settings_changed(
+    user: *mut c_void,
+    e: *mut StickShiftEngine,
+    _: *const StickShiftGraphicsSettings,
+) {
+    run(user, At::Settings, e);
+}
+
 unsafe extern "C" fn release(user: *mut c_void) {
     let e = (*user.cast::<Probe>()).engine;
     run(user, At::Release, e);
@@ -96,7 +105,7 @@ impl Harness {
             init: Some(init),
             update: Some(update),
             render: Some(render),
-            graphics_settings_changed: None,
+            graphics_settings_changed: Some(settings_changed),
             release: Some(release),
         };
         let ctx_desc = StickShiftContextDesc {
@@ -1204,6 +1213,25 @@ fn the_scope_matrix_for_world_and_scene_calls() {
         }
     });
     h.init();
+    // A menu choice after init runs the settings hook inside the push.
+    let menu = StickShiftHostEvent {
+        kind: STICKSHIFT_HOST_MENU,
+        // Shadows: Off (section 1, item 1), a change from the default High.
+        code: 101,
+        ..Default::default()
+    };
+    let mut requests = 0;
+    // SAFETY: a live engine, between engine calls; one event.
+    let pushed = unsafe {
+        stickshift_engine_push_events(
+            h.engine,
+            &menu,
+            1,
+            std::mem::size_of::<StickShiftHostEvent>() as u32,
+            &mut requests,
+        )
+    };
+    assert_eq!(pushed, OK, "{}", last_error());
     h.tick();
     let e = h.engine;
     // Between engine calls.
@@ -1260,6 +1288,7 @@ fn the_scope_matrix_for_world_and_scene_calls() {
     // Game hooks and between calls: everything but tracking (and destroy in a hook).
     expect("Init", &["track", "destroy"]);
     expect("Update", &["track", "destroy"]);
+    expect("Settings", &["track", "destroy"]);
     expect("Idle", &["track"]);
     // Render: reads only.
     expect(
