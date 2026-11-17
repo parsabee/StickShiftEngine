@@ -240,7 +240,8 @@ reports them in order.
   once and does nothing; it never waits for the other call and never corrupts state.
 - Different contexts are independent and may be used from different threads at the same time.
 - Thread-safe, callable from anywhere at any time: `stickshift_api_version`, `stickshift_version_string`,
-  `stickshift_result_name`, `stickshift_last_error_message`, the `stickshift_mat4_*` / `stickshift_quat_*` helpers,
+  `stickshift_result_name`, `stickshift_last_error_message`, the math helpers (`stickshift_mat4_*`,
+  `stickshift_quat_*`, `stickshift_vec3_*` and `stickshift_transform_to_mat4`),
   `stickshift_render_settings_default` and `stickshift_sun_sky_default`.
 - Callbacks and `release` functions run on the thread that is inside the `stickshift_*` call that
   delivers them, never on an engine thread.
@@ -339,8 +340,27 @@ Pure functions, thread-safe, never fail.
 | `StickShiftMat4 stickshift_mat4_perspective(float fov_y, float aspect, float z_near, float z_far)` | Right-handed projection, depth `0..1`; the projection `stickshift-camera` uses. |
 | `StickShiftQuat stickshift_quat_from_axis_angle(StickShiftVec3 axis, float angle)` | `axis` need not be normalised. |
 
+The helpers below are glam's own operations, run on the library's target, so a host that does its
+game math through them gets the bits a Rust game gets (glam's SIMD paths included), which its own
+`simd` code need not. Each is the glam function named, and none normalises a quaternion it is given.
+
+| Function | glam |
+|---|---|
+| `float stickshift_vec3_dot(StickShiftVec3 a, StickShiftVec3 b)` | `Vec3::dot` |
+| `StickShiftVec3 stickshift_vec3_cross(StickShiftVec3 a, StickShiftVec3 b)` | `Vec3::cross` |
+| `float stickshift_vec3_length(StickShiftVec3 v)` | `Vec3::length` |
+| `StickShiftVec3 stickshift_vec3_normalize_or_zero(StickShiftVec3 v)` | `Vec3::normalize_or_zero`: `{0, 0, 0}` when `v` cannot be normalised |
+| `StickShiftVec3 stickshift_vec3_lerp(StickShiftVec3 a, StickShiftVec3 b, float t)` | `Vec3::lerp`; `t` is not clamped |
+| `StickShiftQuat stickshift_quat_from_rotation_x(float angle)` (and `_y`, `_z`) | `Quat::from_rotation_x` (`_y`, `_z`) |
+| `StickShiftQuat stickshift_quat_mul(StickShiftQuat a, StickShiftQuat b)` | `Quat * Quat`: `b`, then `a` |
+| `StickShiftVec3 stickshift_quat_mul_vec3(StickShiftQuat q, StickShiftVec3 v)` | `Quat * Vec3` |
+| `StickShiftVec3 stickshift_mat4_transform_point3(StickShiftMat4 m, StickShiftVec3 p)` | `Mat4::transform_point3`: with translation, no divide |
+| `StickShiftVec3 stickshift_mat4_transform_vector3(StickShiftMat4 m, StickShiftVec3 v)` | `Mat4::transform_vector3`: without translation |
+| `StickShiftMat4 stickshift_transform_to_mat4(StickShiftTransform t)` | `Transform::to_matrix`: the same bits as `stickshift_mat4_from_trs` |
+
 Types: `StickShiftVec3 { x, y, z }`, `StickShiftQuat { x, y, z, w }`, `StickShiftMat4 { m[16] }`,
-`StickShiftColor { r, g, b, a }`.
+`StickShiftColor { r, g, b, a }`, `StickShiftTransform { position, rotation, scale }` (a frozen
+mirror of `stickshift_math::Transform`, with no `size` field).
 
 ### Context
 

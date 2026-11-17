@@ -1205,6 +1205,26 @@ typedef struct StickShiftQuat {
 } StickShiftQuat;
 
 /**
+ * A translation, rotation and scale: `stickshift_math::Transform`, field for
+ * field. Its matrix applies scale first, then rotation, then translation
+ * (`stickshift_transform_to_mat4`). A frozen value type, with no `size` field.
+ */
+typedef struct StickShiftTransform {
+  /**
+   * Position (translation).
+   */
+  struct StickShiftVec3 position;
+  /**
+   * Rotation, a unit quaternion; `{0, 0, 0, 1}` for none.
+   */
+  struct StickShiftQuat rotation;
+  /**
+   * Scale along each axis; `{1, 1, 1}` for none.
+   */
+  struct StickShiftVec3 scale;
+} StickShiftTransform;
+
+/**
  * Called exactly once when the engine no longer needs borrowed [`StickShiftData`].
  * NULL means the data is copied.
  */
@@ -2388,6 +2408,88 @@ struct StickShiftMat4 stickshift_mat4_perspective(float fov_y,
  * gives the identity).
  */
 struct StickShiftQuat stickshift_quat_from_axis_angle(struct StickShiftVec3 axis, float angle);
+
+/**
+ * `a · b`: glam's `Vec3::dot`, `(a.x * b.x + a.y * b.y) + a.z * b.z` with
+ * no fused multiply-add.
+ */
+float stickshift_vec3_dot(struct StickShiftVec3 a, struct StickShiftVec3 b);
+
+/**
+ * `a × b` (right-handed): glam's `Vec3::cross`.
+ */
+struct StickShiftVec3 stickshift_vec3_cross(struct StickShiftVec3 a, struct StickShiftVec3 b);
+
+/**
+ * The length of `v`: glam's `Vec3::length`, the square root of `v · v`.
+ */
+float stickshift_vec3_length(struct StickShiftVec3 v);
+
+/**
+ * `v` times `1 / length(v)`, or `{0, 0, 0}` when that reciprocal is not a
+ * finite positive number (a zero, NaN or infinite `v`, or one so small or
+ * so large that its length underflows or overflows): glam's
+ * `Vec3::normalize_or_zero`.
+ */
+struct StickShiftVec3 stickshift_vec3_normalize_or_zero(struct StickShiftVec3 v);
+
+/**
+ * `a * (1 - t) + b * t`, each multiply and add rounded on its own (no fused
+ * multiply-add): glam's `Vec3::lerp`. `t` is not clamped. This is not
+ * `a + (b - a) * t`, whose last bit differs on many inputs.
+ */
+struct StickShiftVec3 stickshift_vec3_lerp(struct StickShiftVec3 a,
+                                           struct StickShiftVec3 b,
+                                           float t);
+
+/**
+ * A rotation of `angle` radians about +X: glam's `Quat::from_rotation_x`.
+ */
+struct StickShiftQuat stickshift_quat_from_rotation_x(float angle);
+
+/**
+ * A rotation of `angle` radians about +Y: glam's `Quat::from_rotation_y`.
+ */
+struct StickShiftQuat stickshift_quat_from_rotation_y(float angle);
+
+/**
+ * A rotation of `angle` radians about +Z: glam's `Quat::from_rotation_z`.
+ */
+struct StickShiftQuat stickshift_quat_from_rotation_z(float angle);
+
+/**
+ * The Hamilton product `a × b`: the rotation that applies `b` first, then
+ * `a`. glam's `Quat * Quat`; neither input is normalised.
+ */
+struct StickShiftQuat stickshift_quat_mul(struct StickShiftQuat a, struct StickShiftQuat b);
+
+/**
+ * `v` rotated by `q`: glam's `Quat * Vec3`. `q` should be a unit quaternion;
+ * it is not normalised here.
+ */
+struct StickShiftVec3 stickshift_quat_mul_vec3(struct StickShiftQuat q, struct StickShiftVec3 v);
+
+/**
+ * The point `p` transformed by `m`, translation included and with no
+ * perspective divide: glam's `Mat4::transform_point3`.
+ */
+struct StickShiftVec3 stickshift_mat4_transform_point3(struct StickShiftMat4 m,
+                                                       struct StickShiftVec3 p);
+
+/**
+ * The direction `v` transformed by `m`, without translation: glam's
+ * `Mat4::transform_vector3`.
+ */
+struct StickShiftVec3 stickshift_mat4_transform_vector3(struct StickShiftMat4 m,
+                                                        struct StickShiftVec3 v);
+
+/**
+ * The matrix of `t`, translation × rotation × scale:
+ * `stickshift_math::Transform::to_matrix`, the matrix the engine draws a
+ * `TransformComponent` with. The same bits as `stickshift_mat4_from_trs` with
+ * `t`'s fields.
+ */
+struct StickShiftMat4 stickshift_transform_to_mat4(struct StickShiftTransform t);
 
 /**
  * Start loading a `.gltf` or `.glb` file. Returns at once with a pending

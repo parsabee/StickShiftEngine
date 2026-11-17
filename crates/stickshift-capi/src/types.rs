@@ -213,6 +213,21 @@ pub struct StickShiftMat4 {
     pub m: [f32; 16],
 }
 
+/// A translation, rotation and scale: `stickshift_math::Transform`, field for
+/// field. Its matrix applies scale first, then rotation, then translation
+/// (`stickshift_transform_to_mat4`). A frozen value type, with no `size` field.
+#[repr(C)]
+// No `Default`: all zeros is a degenerate transform, not the identity.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StickShiftTransform {
+    /// Position (translation).
+    pub position: StickShiftVec3,
+    /// Rotation, a unit quaternion; `{0, 0, 0, 1}` for none.
+    pub rotation: StickShiftQuat,
+    /// Scale along each axis; `{1, 1, 1}` for none.
+    pub scale: StickShiftVec3,
+}
+
 /// A linear RGBA colour, each channel `0..1`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq)]

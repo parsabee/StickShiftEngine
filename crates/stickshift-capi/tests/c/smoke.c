@@ -5,11 +5,11 @@
  *
  * Exercises the whole lifecycle through the header (context, mesh, borrowed
  * texture data, a model loaded off-thread with a completion callback and drawn
- * whole and by part, a frame with a read-back, events, stats, and the context's sticky
- * camera, sun, scale, safe area and last-frame record) and checks the pixels: something
- * was drawn
- * on Metal, zeros on the null backend. Exits 0 on success, 1 on failure, and 0
- * with a message when Metal is requested but no device exists.
+ * whole and by part, a frame with a read-back, events, stats, the context's sticky
+ * camera, sun, scale, safe area and last-frame record, the math helpers) and checks
+ * the pixels: something was drawn on Metal, zeros on the null backend. Exits 0 on
+ * success, 1 on failure, and 0 with a message when Metal is requested but no device
+ * exists.
  *
  * Run by scripts/test-c-api.sh (and CI).
  *
@@ -65,11 +65,83 @@ static StickShiftData copied(const void *ptr, size_t len) {
     return data;
 }
 
+static int near(float a, float b) {
+    float d = a - b;
+    return d < 1e-6f && d > -1e-6f;
+}
+
+static int near3(StickShiftVec3 a, StickShiftVec3 b) {
+    return near(a.x, b.x) && near(a.y, b.y) && near(a.z, b.z);
+}
+
+/* The glam helpers (pure, no context). The values chosen are exact in f32, so they compare with ==;
+ * the bit-for-bit checks against glam are the Rust tests in src/math.rs. */
+static int check_math(void) {
+    StickShiftVec3 a = {1, 2, 3}, b = {4, 5, 6}, zero = {0, 0, 0};
+    StickShiftVec3 x = {1, 0, 0}, y = {0, 1, 0}, ahead = {0, 0, -1};
+    REQUIRE(stickshift_vec3_dot(a, b) == 32.0f);
+    StickShiftVec3 z = stickshift_vec3_cross(x, y);
+    REQUIRE(z.x == 0.0f && z.y == 0.0f && z.z == 1.0f);
+    StickShiftVec3 three_four = {3, 4, 0};
+    REQUIRE(stickshift_vec3_length(three_four) == 5.0f);
+    StickShiftVec3 n = stickshift_vec3_normalize_or_zero(zero);
+    REQUIRE(n.x == 0.0f && n.y == 0.0f && n.z == 0.0f);
+    StickShiftVec3 back = {0, 0, -3};
+    n = stickshift_vec3_normalize_or_zero(back);
+    REQUIRE(n.x == 0.0f && n.y == 0.0f && n.z == -1.0f);
+    StickShiftVec3 far = {2, 4, 8};
+    StickShiftVec3 mid = stickshift_vec3_lerp(zero, far, 0.5f);
+    REQUIRE(mid.x == 1.0f && mid.y == 2.0f && mid.z == 4.0f);
+    /* lerp is a * (1 - t) + b * t, so t = 1 gives b exactly; a + (b - a) * t would give 0 here. */
+    StickShiftVec3 huge = {1e8f, 1e8f, 1e8f}, unit = {1, 1, 1};
+    StickShiftVec3 end = stickshift_vec3_lerp(huge, unit, 1.0f);
+    REQUIRE(end.x == 1.0f && end.y == 1.0f && end.z == 1.0f);
+
+    StickShiftQuat identity = stickshift_quat_from_rotation_y(0.0f);
+    REQUIRE(identity.x == 0.0f && identity.y == 0.0f && identity.z == 0.0f && identity.w == 1.0f);
+    identity = stickshift_quat_from_rotation_x(0.0f);
+    REQUIRE(identity.w == 1.0f);
+    identity = stickshift_quat_from_rotation_z(0.0f);
+    REQUIRE(identity.w == 1.0f);
+    /* The demo's building facing (a quarter turn about +Y) turns the travel axis -Z to +X. */
+    StickShiftQuat facing = stickshift_quat_from_rotation_y(-1.57079632679f);
+    REQUIRE(near3(stickshift_quat_mul_vec3(facing, ahead), x));
+    StickShiftQuat same = stickshift_quat_mul(identity, facing);
+    REQUIRE(same.x == facing.x && same.y == facing.y && same.z == facing.z && same.w == facing.w);
+    /* Two quarter turns, one way and back, are no turn. */
+    StickShiftQuat undo = stickshift_quat_from_rotation_y(1.57079632679f);
+    REQUIRE(near3(stickshift_quat_mul_vec3(stickshift_quat_mul(undo, facing), ahead), ahead));
+
+    StickShiftVec3 t = {1, 2, 3}, s = {2, 2, 2}, ones = {1, 1, 1};
+    StickShiftQuat none = {0, 0, 0, 1};
+    StickShiftMat4 m = stickshift_mat4_from_trs(t, none, s);
+    StickShiftVec3 p = stickshift_mat4_transform_point3(m, ones);
+    REQUIRE(p.x == 3.0f && p.y == 4.0f && p.z == 5.0f);
+    StickShiftVec3 v = stickshift_mat4_transform_vector3(m, ones);
+    REQUIRE(v.x == 2.0f && v.y == 2.0f && v.z == 2.0f);
+
+    /* A transform's matrix is from_trs of its fields, bit for bit. */
+    REQUIRE(sizeof(StickShiftTransform) == 10 * sizeof(float));
+    StickShiftTransform turned = {t, facing, s};
+    StickShiftMat4 from_transform = stickshift_transform_to_mat4(turned);
+    StickShiftMat4 from_trs = stickshift_mat4_from_trs(t, facing, s);
+    REQUIRE(memcmp(&from_transform, &from_trs, sizeof from_trs) == 0);
+    /* Scale first, then rotation: -Z doubled, then turned to +X. */
+    StickShiftVec3 two_ahead = {0, 0, -2}, two_x = {2, 0, 0};
+    REQUIRE(near3(stickshift_mat4_transform_vector3(from_transform, ahead),
+                  stickshift_quat_mul_vec3(facing, two_ahead)));
+    REQUIRE(near3(stickshift_mat4_transform_vector3(from_transform, ahead), two_x));
+    return 0;
+}
+
 int main(int argc, char **argv) {
     int use_null = argc > 1 && strcmp(argv[1], "--null") == 0;
     const char *model_path = argc > 1 + use_null ? argv[1 + use_null] : NULL;
     REQUIRE(model_path != NULL);
     REQUIRE(stickshift_api_version() == STICKSHIFT_API_VERSION);
+    if (check_math() != 0) {
+        return 1;
+    }
 
     StickShiftContextDesc desc = {STICKSHIFT_API_VERSION, use_null ? STICKSHIFT_BACKEND_NULL : STICKSHIFT_BACKEND_METAL,
                              NULL, WIDTH, HEIGHT, 1.0f};
