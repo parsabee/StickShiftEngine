@@ -48,6 +48,11 @@ public struct StickShiftError: Error, Equatable, Sendable, CustomStringConvertib
         public static let `internal` = Code(rawValue: STICKSHIFT_ERROR_INTERNAL)
         /// A wait gave up before its work finished.
         public static let timeout = Code(rawValue: STICKSHIFT_ERROR_TIMEOUT)
+        /// An engine, or a context with an engine attached, used from a thread
+        /// other than the engine's.
+        public static let wrongThread = Code(rawValue: STICKSHIFT_ERROR_WRONG_THREAD)
+        /// The game's init failed; the engine is failed.
+        public static let aborted = Code(rawValue: STICKSHIFT_ERROR_ABORTED)
 
         /// The constant's name, for example `"STICKSHIFT_ERROR_BUSY"`.
         public var description: String {

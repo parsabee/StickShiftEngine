@@ -4,6 +4,7 @@
 
 import CStickShift
 import QuartzCore
+import simd
 
 /// A rendering context: the GPU device, every resource, and the frames drawn
 /// with them.
@@ -48,8 +49,13 @@ public final class Context {
     /// Drawable pixels per point: the UI scale, as last given to
     /// ``init(layer:width:height:scale:)`` or ``resize(width:height:scale:)``.
     /// A value that is not finite and greater than zero counts as 1, as it does
-    /// for the engine. Always 1 for an offscreen context.
-    public private(set) var scale: Float
+    /// for the engine. 1 for a context made with ``init(offscreenWidth:height:backend:)``
+    /// until it is resized.
+    public var scale: Float {
+        var out: Float = 1
+        stickshift_context_get_scale(raw, &out)
+        return out
+    }
 
     /// Creates an offscreen context: it renders into a `width` × `height`
     /// texture whose pixels ``Frame/readPixels()`` returns.
@@ -59,7 +65,6 @@ public final class Context {
     public init(offscreenWidth width: Int, height: Int, backend: Backend = .metal) throws {
         raw = try Self.create(backend: backend, layer: nil, width: width, height: height, scale: 1)
         layer = nil
-        scale = 1
     }
 
     /// Creates a context that renders into `layer`, which you keep in your view
@@ -79,12 +84,6 @@ public final class Context {
             scale: scale
         )
         self.layer = layer
-        self.scale = Self.effective(scale)
-    }
-
-    /// The scale the engine uses for `scale`: 1 unless it is finite and positive.
-    private static func effective(_ scale: Float) -> Float {
-        scale.isFinite && scale > 0 ? scale : 1
     }
 
     private static func create(
@@ -143,17 +142,77 @@ public final class Context {
         return (Int(width), Int(height))
     }
 
-    /// Resize a layer context's drawable: `width` × `height` pixels at `scale`
-    /// pixels per point.
+    /// Resize a layer or null context's drawable: `width` × `height` pixels at
+    /// `scale` pixels per point.
     ///
-    /// - Throws: ``StickShiftError/Code-swift.struct/unsupported`` for an
+    /// - Throws: ``StickShiftError/Code-swift.struct/unsupported`` for a Metal
     ///   offscreen context, whose size is fixed.
     public func resize(width: Int, height: Int, scale: Float) throws {
         guard let width = UInt32(exactly: width), let height = UInt32(exactly: height) else {
             throw StickShiftError(code: .invalidArgument, message: "width and height must fit in UInt32")
         }
         try check(stickshift_context_resize(raw, width, height, scale))
-        self.scale = Self.effective(scale)
+    }
+
+    // MARK: - Sticky state
+
+    /// The sun and sky the next frame is lit by. It can be set outside a frame
+    /// (``setSunSky(_:)``), so a sun set before the first frame lights it;
+    /// ``Frame/setSunSky(_:)`` sets the same value.
+    public var sunSky: SunSky {
+        var out = StickShiftSunSky()
+        stickshift_context_get_sun_sky(raw, &out)
+        return SunSky(out)
+    }
+
+    /// Set the sun and sky, with or without a frame open.
+    public func setSunSky(_ sun: SunSky) throws {
+        var c = sun.c
+        try check(stickshift_context_set_sun_sky(raw, &c))
+    }
+
+    /// The camera the next frame is drawn from: what ``Frame/setCamera(_:)``
+    /// or ``setCamera(_:)`` last set.
+    public var camera: Camera {
+        var out = StickShiftCamera()
+        stickshift_context_get_camera(raw, &out)
+        return Camera(viewProjection: simd_float4x4(out.view_projection), position: SIMD3(out.position))
+    }
+
+    /// Set the camera, with or without a frame open.
+    public func setCamera(_ camera: Camera) throws {
+        var c = StickShiftCamera(
+            view_projection: StickShiftMat4(camera.viewProjection),
+            position: StickShiftVec3(camera.position)
+        )
+        try check(stickshift_context_set_camera(raw, &c))
+    }
+
+    /// The safe-area insets in drawable pixels: top, right, bottom, left. Zero
+    /// until set.
+    public var safeArea: SIMD4<Float> {
+        var out: [Float] = [0, 0, 0, 0]
+        stickshift_context_get_safe_area(raw, &out)
+        return SIMD4(out[0], out[1], out[2], out[3])
+    }
+
+    /// Set the safe-area insets, in drawable pixels: top, right, bottom, left.
+    ///
+    /// - Throws: ``StickShiftError/Code-swift.struct/invalidArgument`` for an
+    ///   inset that is negative or not finite.
+    public func setSafeArea(_ insets: SIMD4<Float>) throws {
+        let values: [Float] = [insets.x, insets.y, insets.z, insets.w]
+        try check(stickshift_context_set_safe_area(raw, values))
+    }
+
+    /// What the last frame to reach submit recorded: the draws and quads still
+    /// valid at submit, its camera, sun and settings, and whether it went to
+    /// the GPU.
+    public var lastFrame: FrameRecord {
+        var out = StickShiftFrameRecord()
+        out.size = UInt32(MemoryLayout<StickShiftFrameRecord>.size)
+        stickshift_context_get_last_frame(raw, &out)
+        return FrameRecord(out)
     }
 
     /// The render quality settings. Setting them applies from the next frame.
@@ -404,5 +463,111 @@ public struct Stats: Sendable, Equatable {
         models = Int(s.models)
         fonts = Int(s.fonts)
         loadsPending = Int(s.loads_pending)
+    }
+}
+
+/// What a frame recorded, from ``Context/lastFrame``.
+public struct FrameRecord: Sendable, Equatable {
+    /// One 3D draw.
+    public struct Draw: Sendable, Equatable {
+        /// The mesh or model handle id the draw named.
+        public var source: UInt64
+        /// The mesh draw's texture handle id, or 0 (always 0 for a model part).
+        public var texture: UInt64
+        /// The model's node-part index, or 0 for a mesh.
+        public var part: UInt32
+        /// The drawn mesh's vertex layout.
+        public var layout: VertexLayout
+        /// The matrix the backend draws with: for a model part,
+        /// `world × (local × node)`.
+        public var model: simd_float4x4
+        /// The base colour, after the tint.
+        public var baseColor: SIMD4<Float>
+        /// Linear RGB emission.
+        public var emissive: SIMD3<Float>
+    }
+
+    /// One overlay quad (text is recorded as its glyphs' quads).
+    public struct RecordedQuad: Sendable, Equatable {
+        /// How a recorded quad is filled.
+        public enum Fill: Sendable, Equatable {
+            /// Its colour.
+            case solid
+            /// A texture's colours, times its colour.
+            case texture
+            /// A signed-distance field, tinted by its colour.
+            case sdf
+            /// A fill this package does not know yet.
+            case other(UInt32)
+        }
+
+        /// Left, top, width, height, in pixels.
+        public var rect: SIMD4<Float>
+        /// The texture rectangle: left, top, right, bottom.
+        public var uv: SIMD4<Float>
+        /// The tint.
+        public var color: SIMD4<Float>
+        /// How it is filled.
+        public var fill: Fill
+        /// The texture handle id it samples, or 0.
+        public var texture: UInt64
+    }
+
+    /// Whether the frame went to the GPU (not discarded, and with a drawable).
+    public var submitted: Bool
+    /// The frame's number, or 0 (before any frame, or when not submitted).
+    public var frameNumber: UInt64
+    /// The draws still valid at submit, in record order.
+    public var draws: [Draw]
+    /// The quads still valid at submit, in record order.
+    public var quads: [RecordedQuad]
+    /// The camera it was drawn from.
+    public var camera: Camera
+    /// The sun and sky it was lit by.
+    public var sunSky: SunSky
+    /// The render settings in effect.
+    public var settings: RenderSettings
+    /// Its point and spot lights.
+    public var lightCount: Int
+
+    init(_ r: StickShiftFrameRecord) {
+        submitted = r.submitted != 0
+        frameNumber = r.frame_number
+        draws = (0..<Int(r.draw_count)).map { i in
+            let d = UnsafeRawPointer(r.draws!).advanced(by: i * Int(r.draw_stride))
+                .loadUnaligned(as: StickShiftDrawRecord.self)
+            return Draw(
+                source: d.source,
+                texture: d.texture,
+                part: d.part,
+                layout: Int32(bitPattern: d.layout) == STICKSHIFT_VERTEX_LAYOUT_POS_NORMAL_UV
+                    ? .positionNormalUV : .positionNormalColor,
+                model: simd_float4x4(d.model),
+                baseColor: SIMD4(d.base_color.r, d.base_color.g, d.base_color.b, d.base_color.a),
+                emissive: SIMD3(d.emissive)
+            )
+        }
+        quads = (0..<Int(r.quad_count)).map { i in
+            let q = UnsafeRawPointer(r.quads!).advanced(by: i * Int(r.quad_stride))
+                .loadUnaligned(as: StickShiftQuad.self)
+            let fill: RecordedQuad.Fill =
+                switch Int32(bitPattern: q.fill) {
+                case STICKSHIFT_FILL_SOLID: .solid
+                case STICKSHIFT_FILL_TEXTURE: .texture
+                case STICKSHIFT_FILL_SDF: .sdf
+                default: .other(q.fill)
+                }
+            return RecordedQuad(
+                rect: SIMD4(q.x, q.y, q.width, q.height),
+                uv: SIMD4(q.u0, q.v0, q.u1, q.v1),
+                color: SIMD4(q.color.r, q.color.g, q.color.b, q.color.a),
+                fill: fill,
+                texture: q.texture.id
+            )
+        }
+        camera = Camera(viewProjection: simd_float4x4(r.camera.view_projection), position: SIMD3(r.camera.position))
+        sunSky = SunSky(r.sun)
+        settings = RenderSettings(r.settings)
+        lightCount = Int(r.light_count)
     }
 }

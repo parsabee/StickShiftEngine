@@ -254,6 +254,18 @@ public struct SunSky: Sendable, Equatable {
         self.skyHorizonColor = skyHorizonColor
     }
 
+    init(_ c: StickShiftSunSky) {
+        self.init(
+            elevation: c.sun_elevation_deg,
+            azimuth: c.sun_azimuth_deg,
+            sunColor: SIMD3(c.sun_color),
+            sunIntensity: c.sun_intensity,
+            skyFill: c.sky_fill,
+            skyZenithColor: SIMD3(c.sky_zenith_color),
+            skyHorizonColor: SIMD3(c.sky_horizon_color)
+        )
+    }
+
     var c: StickShiftSunSky {
         StickShiftSunSky(
             sun_elevation_deg: elevation,
