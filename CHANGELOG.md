@@ -81,6 +81,22 @@ API**.
   own calls, so archetypes, query order and id reuse match Rust types. Queries copy their rows
   into an aligned `Rows` buffer that borrows nothing from the world. Engine components keep
   their Rust types and get a byte form through a `Codec`.
+- **The engine's world and scene in the C API.** `stickshift_component_register` gives a C game
+  its own components (up to 128, tags or values of up to 4096 bytes); the engine's
+  `TransformComponent`, `RenderComponent`, `StaticTag` and `DynamicTag` have fixed ids, with
+  `StickShiftTransform` and `StickShiftRenderComponent` as their values. `stickshift_world_*`
+  spawns an entity with its whole bundle in one call, and gets, sets, inserts, removes and
+  despawns as hecs does, so archetypes, query order and entity ids are what a Rust game gets.
+  `stickshift_world_query` snapshots matching entities in query order, with required, excluded
+  and optional terms, into rows that stay valid until released or until the hook that took them
+  returns (16 at once). `stickshift_scene_stream` runs the scene's streaming pass with a C spawn
+  callback, which spawns into the pass's world and reports entities with
+  `stickshift_stream_track`; `stickshift_scene_set_config` refuses an axis or spacing change once
+  streaming has started (`STICKSHIFT_ERROR_WRONG_STATE`), and `stickshift_scene_maybe_rebase`
+  rebases the floating origin. World changes are refused in the render hook, and a spawn
+  callback reaches only the world. Both refuse a focus that is not finite
+  (`STICKSHIFT_ERROR_INVALID_ARGUMENT`), and `Scene::stream` no longer overflows its frontier (a
+  debug panic, a release re-spawn every pass) once a far focus saturates the slot at `i64::MAX`.
 
 ### Changed
 

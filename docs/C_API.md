@@ -311,6 +311,11 @@ change.
 | Live handles per kind, per context | 16 777 215 |
 | Live contexts per process | 4 095 (`stickshift_context_create` returns `STICKSHIFT_ERROR_LIMIT_EXCEEDED` beyond that) |
 | Mesh size | `MTLDevice.maxBufferLength` after de-indexing (`index_count × vertex stride` bytes) |
+| Game components per engine | 128, tags and values together (`STICKSHIFT_MAX_GAME_COMPONENTS`) |
+| Bytes of one component value | 4096 (`STICKSHIFT_MAX_COMPONENT_SIZE`) |
+| Components in one spawn or insert | 32 (`STICKSHIFT_MAX_BUNDLE`) |
+| Terms in one query | 16 (`STICKSHIFT_MAX_QUERY_TERMS`) |
+| Live query snapshots per engine | 16 (`STICKSHIFT_MAX_LIVE_QUERIES`; `stickshift_world_query` returns `STICKSHIFT_ERROR_LIMIT_EXCEEDED` beyond that) |
 
 ## Reference
 

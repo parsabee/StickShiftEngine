@@ -58,7 +58,9 @@ mod math;
 mod metal;
 mod models;
 mod resources;
+mod scene;
 pub mod types;
+mod world;
 
 pub use context::{
     stickshift_context_create, stickshift_context_destroy, stickshift_context_device_name,
@@ -106,4 +108,16 @@ pub use resources::{
     stickshift_mesh_create, stickshift_mesh_destroy, stickshift_texture_create,
     stickshift_texture_destroy,
 };
+pub use scene::{
+    stickshift_scene_get_config, stickshift_scene_maybe_rebase, stickshift_scene_set_config,
+    stickshift_scene_stream, stickshift_scene_streamed_count, stickshift_stream_track,
+    stickshift_streaming_config_default,
+};
 pub use types::*;
+pub use world::{
+    stickshift_component_get_desc, stickshift_component_register, stickshift_world_contains,
+    stickshift_world_despawn, stickshift_world_get, stickshift_world_has, stickshift_world_insert,
+    stickshift_world_len, stickshift_world_query, stickshift_world_query_count,
+    stickshift_world_query_release, stickshift_world_remove, stickshift_world_set,
+    stickshift_world_spawn,
+};

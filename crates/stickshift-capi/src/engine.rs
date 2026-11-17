@@ -56,6 +56,7 @@ use stickshift_render_api::{
     PipelineDescriptor, PipelineHandle, RenderDevice, RenderSettings, ShadowQuality, SunSky,
     TextureData, TextureHandle,
 };
+use stickshift_scene::{Scene, SpawnCtx};
 
 use crate::context::{
     effective_scale, frame_of, with_context, Inner, StickShiftContext, MAX_DIMENSION,
@@ -122,6 +123,8 @@ pub struct StickShiftEngine {
     in_call: Cell<bool>,
     /// The hooks running now, innermost last.
     scopes: RefCell<Vec<Scope>>,
+    /// The component registry and the query snapshots (`world.rs`).
+    pub(crate) ecs: crate::world::Ecs,
     counters: Cell<Counters>,
     /// What this tick's render did.
     frame_out: Cell<FrameOut>,
@@ -163,14 +166,20 @@ enum Hook {
     Settings,
 }
 
-/// A hook running now, with the `EngineCtx` `drive_frame` passed it.
+/// A hook running now, with the `EngineCtx` `drive_frame` passed it, or a
+/// stream pass's spawn callback.
 #[derive(Clone, Copy)]
 enum Scope {
     /// The pointer is a reborrow of the `&mut EngineCtx` [`CGame`] received,
     /// which it does not use while the hook runs. The kind is for the calls a
     /// hook kind allows (world and scene changes are not allowed in render);
     /// the engine's own calls allow every hook.
-    Hook(*mut EngineCtx<'static>, #[allow(dead_code)] Hook),
+    Hook(*mut EngineCtx<'static>, Hook),
+    /// A reborrow of the `SpawnCtx` `Scene::stream` passed its closure, which
+    /// does not use it while the callback runs. The pass holds the whole
+    /// scene (and, inside a hook, the hook's `EngineCtx`) mutably, so only the
+    /// world it lends is reachable: every other game call is refused.
+    Spawn(*mut SpawnCtx<'static>),
 }
 
 /// How a game call reaches the engine's data.
@@ -200,16 +209,38 @@ impl StickShiftEngine {
             return None;
         }
         let pointer = std::ptr::from_mut(ctx).cast::<EngineCtx<'static>>();
+        let _pop = self.push_scope(Scope::Hook(pointer, hook));
+        Some(f(self.game.user, std::ptr::from_ref(self).cast_mut()))
+    }
+
+    fn push_scope(&self, scope: Scope) -> PopScope<'_> {
         let depth = {
             let mut scopes = self.scopes.borrow_mut();
-            scopes.push(Scope::Hook(pointer, hook));
+            scopes.push(scope);
             scopes.len()
         };
-        let _pop = PopScope {
-            scopes: &self.scopes,
+        PopScope {
+            engine: self,
             depth,
-        };
-        Some(f(self.game.user, std::ptr::from_ref(self).cast_mut()))
+        }
+    }
+
+    /// Put a stream pass's spawn callback on the scope stack until the guard
+    /// drops.
+    pub(crate) fn enter_spawn(&self, cx: &mut SpawnCtx<'_>) -> PopScope<'_> {
+        self.push_scope(Scope::Spawn(
+            std::ptr::from_mut(cx).cast::<SpawnCtx<'static>>(),
+        ))
+    }
+
+    /// How many scopes are running now (0 between engine calls).
+    pub(crate) fn scope_depth(&self) -> usize {
+        self.scopes.borrow().len()
+    }
+
+    /// Whether a panic poisoned the engine.
+    pub(crate) fn is_poisoned(&self) -> bool {
+        self.poisoned.get()
     }
 
     /// The init hook's outcome, after `init_once` ran (possibly earlier).
@@ -232,17 +263,21 @@ impl StickShiftEngine {
     }
 }
 
-/// Pops a scope on every exit from a hook, unwinding too.
-struct PopScope<'a> {
-    scopes: &'a RefCell<Vec<Scope>>,
+/// Pops a scope on every exit from a hook or callback, unwinding too, and
+/// releases the query snapshots taken inside it.
+pub(crate) struct PopScope<'a> {
+    engine: &'a StickShiftEngine,
     depth: usize,
 }
 
 impl Drop for PopScope<'_> {
     fn drop(&mut self) {
-        let mut scopes = self.scopes.borrow_mut();
-        debug_assert_eq!(scopes.len(), self.depth, "a hook's scope was not its own");
-        scopes.pop();
+        {
+            let mut scopes = self.engine.scopes.borrow_mut();
+            debug_assert_eq!(scopes.len(), self.depth, "a hook's scope was not its own");
+            scopes.pop();
+        }
+        self.engine.ecs.release_from(self.depth);
     }
 }
 
@@ -266,7 +301,7 @@ impl Drop for InCall<'_> {
     }
 }
 
-fn poisoned() -> Error {
+pub(crate) fn poisoned() -> Error {
     Error::new(
         STICKSHIFT_ERROR_INTERNAL,
         "the engine is poisoned: a panic (a bug in Stick Shift Engine) was caught in an \
@@ -279,7 +314,7 @@ fn poisoned() -> Error {
 ///
 /// # Safety
 /// `engine` must be NULL or a live engine.
-unsafe fn engine_call(
+pub(crate) unsafe fn engine_call(
     engine: *mut StickShiftEngine,
     body: impl FnOnce(&StickShiftEngine) -> Outcome,
 ) -> StickShiftResult {
@@ -341,15 +376,76 @@ unsafe fn game_call(
             // owner does not use it meanwhile; nothing else reborrows it while
             // `body` runs, which makes no context call.
             Some(Scope::Hook(ctx, _)) => body(engine, Access::Hook(&mut *ctx)),
+            Some(Scope::Spawn(_)) => Err(in_spawn_callback(what)),
             None if !engine.in_call.get() => {
                 let _in_call = InCall::enter(engine);
                 // SAFETY: no engine call is in progress.
                 body(engine, Access::Idle(&mut *engine.state.get()))
             }
-            None => Err(Error::wrong_state(format!(
-                "{what} can be called inside a game hook or between engine calls, not from a \
-                 callback the engine delivers outside a hook"
-            ))),
+            None => Err(outside_hooks(what)),
+        }
+    })
+}
+
+fn outside_hooks(what: &str) -> Error {
+    Error::wrong_state(format!(
+        "{what} can be called inside a game hook or between engine calls, not from a \
+         callback the engine delivers outside a hook"
+    ))
+}
+
+pub(crate) fn in_spawn_callback(what: &str) -> Error {
+    Error::wrong_state(format!(
+        "{what} cannot be called from a stream spawn callback, which reaches only the world"
+    ))
+}
+
+/// How a world or scene call reaches the scene.
+pub(crate) enum SceneAccess<'a> {
+    /// Between engine calls, or inside a hook: the loop's scene. `render` is
+    /// set inside the render hook, where the world and the scene are read only.
+    Scene { scene: &'a mut Scene, render: bool },
+    /// Inside a stream pass's spawn callback: the world the pass lends it.
+    Spawn(&'a mut SpawnCtx<'static>),
+}
+
+/// A world or scene function: between engine calls, inside any hook, or inside
+/// a spawn callback; `body` decides what each allows.
+///
+/// # Safety
+/// `engine` must be NULL or a live engine.
+pub(crate) unsafe fn scene_call(
+    engine: *mut StickShiftEngine,
+    what: &str,
+    body: impl FnOnce(&StickShiftEngine, SceneAccess<'_>) -> Outcome,
+) -> StickShiftResult {
+    engine_call(engine, |engine| {
+        let top = engine.scopes.borrow().last().copied();
+        match top {
+            // SAFETY: as in `game_call`.
+            Some(Scope::Hook(ctx, hook)) => body(
+                engine,
+                SceneAccess::Scene {
+                    scene: (*ctx).scene_mut(),
+                    render: hook == Hook::Render,
+                },
+            ),
+            // SAFETY: the spawn context is live until the callback returns,
+            // and the stream pass does not use it meanwhile.
+            Some(Scope::Spawn(cx)) => body(engine, SceneAccess::Spawn(&mut *cx)),
+            None if !engine.in_call.get() => {
+                let _in_call = InCall::enter(engine);
+                // SAFETY: no engine call is in progress.
+                let state = &mut *engine.state.get();
+                body(
+                    engine,
+                    SceneAccess::Scene {
+                        scene: &mut state.session.lp.scene,
+                        render: false,
+                    },
+                )
+            }
+            None => Err(outside_hooks(what)),
         }
     })
 }
@@ -926,6 +1022,7 @@ pub unsafe extern "C" fn stickshift_engine_create(
             holding: Cell::new(false),
             in_call: Cell::new(false),
             scopes: RefCell::new(Vec::new()),
+            ecs: crate::world::Ecs::new(),
             counters: Cell::new(Counters::default()),
             frame_out: Cell::new(FrameOut::default()),
             panic_in_update: Cell::new(false),
@@ -1180,6 +1277,8 @@ pub unsafe extern "C" fn stickshift_engine_tick(
             }
             Some((desc.readback.cast::<u8>(), need))
         };
+        // Query snapshots taken between engine calls last until this tick.
+        e.ecs.release_from(0);
 
         let State {
             session,

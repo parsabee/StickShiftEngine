@@ -388,7 +388,12 @@ impl Scene {
         // are behind it, so spawning them would only despawn them again.
         let seed = (focus_total / interval_f64).floor() as i64;
         let start = match self.spawn_frontier {
-            Some(f) => (f + 1).max(seed),
+            // A focus so far along (or infinite) that its slot saturates at
+            // `i64::MAX` leaves a frontier with no slot past it: nothing to spawn.
+            Some(f) => match f.checked_add(1) {
+                Some(next) => next.max(seed),
+                None => return,
+            },
             None => seed,
         };
 
@@ -940,5 +945,19 @@ mod tests {
         // 22 slots, not 100,011.
         assert_eq!(spawned, 22);
         assert_eq!(scene.streamed_count(), 11, "the old slots fell behind");
+    }
+
+    /// A focus whose slot saturates at `i64::MAX` (far but finite, or
+    /// infinite) spawns that last slot once and never overflows the frontier.
+    #[test]
+    fn a_saturated_focus_spawns_the_last_slot_once() {
+        for far in [-1.0e30, f32::NEG_INFINITY] {
+            let mut scene = Scene::with_config(unit_slots(3.0, 2.0));
+            let mut slots = Vec::new();
+            for _ in 0..3 {
+                scene.stream(Vec3::new(0.0, 0.0, far), |cx| slots.push(cx.slot));
+            }
+            assert_eq!(slots, [i64::MAX], "{far}");
+        }
     }
 }

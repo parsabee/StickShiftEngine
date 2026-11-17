@@ -35,6 +35,57 @@
 #define STICKSHIFT_MAX_LIGHTS 256
 
 /**
+ * The most game components one engine registers, tags and data together.
+ */
+#define STICKSHIFT_MAX_GAME_COMPONENTS 128
+
+/**
+ * The most bytes in one game component value.
+ */
+#define STICKSHIFT_MAX_COMPONENT_SIZE 4096
+
+/**
+ * The most components in one spawn or insert.
+ */
+#define STICKSHIFT_MAX_BUNDLE 32
+
+/**
+ * The most terms in one query.
+ */
+#define STICKSHIFT_MAX_QUERY_TERMS 16
+
+/**
+ * The most query snapshots one engine holds unreleased at once.
+ */
+#define STICKSHIFT_MAX_LIVE_QUERIES 16
+
+/**
+ * The engine's transform component; its value is a `StickShiftTransform`.
+ */
+#define STICKSHIFT_COMPONENT_TRANSFORM 1
+
+/**
+ * The engine's render component; its value is a `StickShiftRenderComponent`.
+ */
+#define STICKSHIFT_COMPONENT_RENDER 2
+
+/**
+ * The engine's static-entity tag; no value.
+ */
+#define STICKSHIFT_COMPONENT_STATIC_TAG 3
+
+/**
+ * The engine's dynamic-entity tag; no value.
+ */
+#define STICKSHIFT_COMPONENT_DYNAMIC_TAG 4
+
+/**
+ * The id of the first game component registered; ids 5..255 are reserved for
+ * engine components.
+ */
+#define STICKSHIFT_FIRST_GAME_COMPONENT 256
+
+/**
  * The fixed simulation step in integer nanoseconds: `1_000_000_000 / 60`.
  * `STICKSHIFT_CLOCK_FIXED_STEP` banks exactly this much per tick.
  */
@@ -1306,6 +1357,186 @@ typedef struct StickShiftTextureDesc {
 } StickShiftTextureDesc;
 
 /**
+ * A scene's streaming configuration: stickshift-scene's `StreamingConfig`,
+ * field for field. A frozen value type, with no `size` field.
+ */
+typedef struct StickShiftStreamingConfig {
+  /**
+   * The travel axis; `(0, 0, -1)` by default.
+   */
+  struct StickShiftVec3 axis;
+  /**
+   * Distance between spawn slots along the axis; 6 by default.
+   */
+  float spawn_interval;
+  /**
+   * How far ahead of the focus slots are filled; 60 by default.
+   */
+  float spawn_ahead;
+  /**
+   * How far behind the focus streamed entities are despawned; 12 by default.
+   */
+  float despawn_behind;
+  /**
+   * How far the focus may travel before a floating-origin rebase; 1000 by
+   * default.
+   */
+  float rebase_threshold;
+} StickShiftStreamingConfig;
+
+/**
+ * Called once for each new slot of a `stickshift_scene_stream` pass, from
+ * inside the scene's own pass: `position` is the slot's world position.
+ * World calls spawn into the scene; `stickshift_stream_track` reports an
+ * entity for despawning behind.
+ */
+typedef void (*StickShiftSpawnFn)(void *user,
+                                  struct StickShiftEngine *engine,
+                                  int64_t slot,
+                                  struct StickShiftVec3 position);
+
+/**
+ * An entity of an engine's world: hecs `Entity::to_bits`, `generation << 32 |
+ * id`. 0 is the null entity (hecs never issues generation 0). Ids are reused
+ * last-freed first with a bumped generation, so a stale entity reads as
+ * absent, never as another entity. Unlike resource handles, an entity is not
+ * tagged with its context: it is valid only in the engine that issued it.
+ */
+typedef struct StickShiftEntity {
+  /**
+   * The hecs bits; 0 for none.
+   */
+  uint64_t bits;
+} StickShiftEntity;
+
+/**
+ * A game component to register, or what one is.
+ */
+typedef struct StickShiftComponentDesc {
+  /**
+   * UTF-8 and unique per engine; copied when registering. Returned names
+   * are library-owned and valid for the engine's life.
+   */
+  const char *name;
+  /**
+   * The bytes of one value: 0 makes a tag (no value), up to
+   * `STICKSHIFT_MAX_COMPONENT_SIZE`.
+   */
+  uint32_t size;
+  /**
+   * A power of two up to 16: where the value sits in query rows. Values are
+   * always copied, never borrowed.
+   */
+  uint32_t align;
+} StickShiftComponentDesc;
+
+/**
+ * A component: an engine component (`STICKSHIFT_COMPONENT_*`, 1..255) or a
+ * game component from `stickshift_component_register` (from
+ * `STICKSHIFT_FIRST_GAME_COMPONENT`).
+ */
+typedef struct StickShiftComponent {
+  /**
+   * The component's id.
+   */
+  uint32_t id;
+} StickShiftComponent;
+
+/**
+ * One component of a spawn or insert bundle.
+ */
+typedef struct StickShiftComponentValue {
+  /**
+   * The component.
+   */
+  struct StickShiftComponent component;
+  /**
+   * `size` bytes, read during the call; NULL for a tag.
+   */
+  const void *data;
+  /**
+   * The component's registered size (`sizeof` the C struct for an engine
+   * component); 0 for a tag.
+   */
+  uint32_t size;
+} StickShiftComponentValue;
+
+/**
+ * How a query term uses its component.
+ */
+typedef uint32_t StickShiftQueryAccess;
+
+/**
+ * One term of a query.
+ */
+typedef struct StickShiftQueryTerm {
+  /**
+   * The component.
+   */
+  struct StickShiftComponent component;
+  /**
+   * A `STICKSHIFT_QUERY_*` value.
+   */
+  StickShiftQueryAccess access;
+} StickShiftQueryTerm;
+
+/**
+ * A query's snapshot: the matching entities in the world's query order, with
+ * their values copied into rows. Engine-owned; valid until
+ * `stickshift_world_query_release`, until the hook or callback that took it
+ * returns, or (taken between engine calls) until the next tick.
+ */
+typedef struct StickShiftQueryRows {
+  /**
+   * `sizeof(StickShiftQueryRows)`.
+   */
+  uint32_t size;
+  /**
+   * The matching entities.
+   */
+  uint32_t count;
+  /**
+   * `count` entities, in query order.
+   */
+  const struct StickShiftEntity *entities;
+  /**
+   * `count` rows of `stride` bytes, starting 16-byte aligned.
+   */
+  const uint8_t *data;
+  /**
+   * Bytes from one row to the next.
+   */
+  size_t stride;
+  /**
+   * Per term: its value's byte offset in a row (a multiple of the
+   * component's alignment), or `UINT32_MAX` if rows hold no value for it.
+   */
+  const uint32_t *offsets;
+  /**
+   * `count * term_count` flags, row by row: 1 where the entity has the
+   * term's component. An absent optional term's value bytes are zero.
+   */
+  const uint8_t *present;
+  /**
+   * The query's terms.
+   */
+  uint32_t term_count;
+  /**
+   * Reserved.
+   */
+  uint32_t reserved;
+  /**
+   * Pass to `stickshift_world_query_release`; never 0.
+   */
+  uint64_t token;
+} StickShiftQueryRows;
+
+/**
+ * The shape of a `StickShiftRenderComponent`.
+ */
+typedef uint32_t StickShiftRenderShape;
+
+/**
  * A key, by physical position. Append-only.
  */
 typedef uint32_t StickShiftKey;
@@ -1314,6 +1545,21 @@ typedef uint32_t StickShiftKey;
  * A mouse button. Append-only.
  */
 typedef uint32_t StickShiftMouseButton;
+
+/**
+ * The value of `STICKSHIFT_COMPONENT_RENDER`: a colour and a built-in shape. A
+ * frozen value type, with no `size` field.
+ */
+typedef struct StickShiftRenderComponent {
+  /**
+   * Linear RGB, `0..1`.
+   */
+  float color[3];
+  /**
+   * A `STICKSHIFT_RENDER_SHAPE_*` value.
+   */
+  StickShiftRenderShape shape;
+} StickShiftRenderComponent;
 
 /**
  * Done.
@@ -1547,6 +1793,42 @@ typedef uint32_t StickShiftMouseButton;
  * The parts without one: those on the `POS_NORMAL_COLOR` layout.
  */
 #define STICKSHIFT_MODEL_PARTS_UNTEXTURED 2
+
+/**
+ * A unit cube built by the engine, coloured with the component's colour.
+ */
+#define STICKSHIFT_RENDER_SHAPE_CUBE 0
+
+/**
+ * A unit-diameter sphere (20 segments, 20 rings) built by the engine.
+ */
+#define STICKSHIFT_RENDER_SHAPE_SPHERE 1
+
+/**
+ * Read only: a custom mesh a Rust caller made. Writing it is
+ * `STICKSHIFT_ERROR_INVALID_ARGUMENT`.
+ */
+#define STICKSHIFT_RENDER_SHAPE_MESH 2
+
+/**
+ * Required, with the value in each row (for a tag, the same as `WITH`).
+ */
+#define STICKSHIFT_QUERY_READ 0
+
+/**
+ * Required, with no value in the row.
+ */
+#define STICKSHIFT_QUERY_WITH 1
+
+/**
+ * Excluded.
+ */
+#define STICKSHIFT_QUERY_WITHOUT 2
+
+/**
+ * Not a filter: the value when the entity has it, and a presence flag.
+ */
+#define STICKSHIFT_QUERY_OPTIONAL 3
 
 /**
  * Nowhere: every audio call is accepted and counted, nothing plays. Tools and
@@ -2599,6 +2881,266 @@ StickShiftResult stickshift_texture_create(struct StickShiftContext *ctx,
  */
 StickShiftResult stickshift_texture_destroy(struct StickShiftContext *ctx,
                                             struct StickShiftTexture texture);
+
+/**
+ * The default streaming configuration. Thread-safe; NULL does nothing.
+ *
+ * # Safety
+ * `out` must be NULL or valid.
+ */
+void stickshift_streaming_config_default(struct StickShiftStreamingConfig *out);
+
+/**
+ * The scene's streaming configuration, a copy. After init, the engine has
+ * scaled `spawn_ahead` for the draw distance. Not in a spawn callback.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid.
+ */
+StickShiftResult stickshift_scene_get_config(struct StickShiftEngine *engine,
+                                             struct StickShiftStreamingConfig *out);
+
+/**
+ * Replace the streaming configuration. Once streaming has started, changing
+ * `axis` or `spawn_interval` is `STICKSHIFT_ERROR_WRONG_STATE` and changes
+ * nothing; other values are taken as given. Not in the render hook or a
+ * spawn callback.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `config` NULL or valid.
+ */
+StickShiftResult stickshift_scene_set_config(struct StickShiftEngine *engine,
+                                             const struct StickShiftStreamingConfig *config);
+
+/**
+ * One streaming pass for `focus`: first the streamed entities fallen behind
+ * are despawned, in the order they were tracked, then `spawn` is called once
+ * per new slot, in slot order, from inside the pass. `spawn` may be NULL (the
+ * frontier still advances). A `focus` that is not finite is
+ * `STICKSHIFT_ERROR_INVALID_ARGUMENT`. Not in the render hook or a spawn
+ * callback.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `spawn` NULL or a function that
+ * may be called with `user` during this call.
+ */
+StickShiftResult stickshift_scene_stream(struct StickShiftEngine *engine,
+                                         struct StickShiftVec3 focus,
+                                         StickShiftSpawnFn spawn,
+                                         void *user);
+
+/**
+ * Track `entity` for despawning behind, at the current slot's distance when
+ * it has no transform: `SpawnCtx::spawned`. Only in a spawn callback; the
+ * null entity is `STICKSHIFT_ERROR_INVALID_ARGUMENT`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_stream_track(struct StickShiftEngine *engine,
+                                         struct StickShiftEntity entity);
+
+/**
+ * Rebase the floating origin if `focus` has drifted past the threshold:
+ * every transform component is shifted by the same offset, written to
+ * `*out_offset` (zero when no rebase was due). Anything the game keeps in
+ * world coordinates outside the world (the camera, its own state) is the
+ * game's to shift. A `focus` that is not finite is
+ * `STICKSHIFT_ERROR_INVALID_ARGUMENT`. Not in the render hook or a spawn
+ * callback.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out_offset` NULL or valid.
+ */
+StickShiftResult stickshift_scene_maybe_rebase(struct StickShiftEngine *engine,
+                                               struct StickShiftVec3 focus,
+                                               struct StickShiftVec3 *out_offset);
+
+/**
+ * How many streamed entities the scene tracks for despawning behind. Not in a
+ * spawn callback.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid.
+ */
+StickShiftResult stickshift_scene_streamed_count(struct StickShiftEngine *engine, uint32_t *out);
+
+/**
+ * Register a game component, or get the one already registered under the
+ * same name with the same size and alignment. In any scope; registering
+ * touches no world state. See `StickShiftComponentDesc`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `desc` NULL or valid, with `name`
+ * NULL or NUL-terminated; `out` NULL or valid.
+ */
+StickShiftResult stickshift_component_register(struct StickShiftEngine *engine,
+                                               const struct StickShiftComponentDesc *desc,
+                                               struct StickShiftComponent *out);
+
+/**
+ * What a component is: its name (library-owned, valid for the engine's life),
+ * size and alignment. Engine components included. In any scope.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid.
+ */
+StickShiftResult stickshift_component_get_desc(struct StickShiftEngine *engine,
+                                               struct StickShiftComponent component,
+                                               struct StickShiftComponentDesc *out);
+
+/**
+ * Spawn one entity with the whole bundle (`count` values, in any order) in
+ * one hecs spawn: it lands in the archetype a Rust tuple of the same set of
+ * components does. Not in the render hook. In a spawn callback, it spawns
+ * into the stream pass's world.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `values` NULL or valid for `count`
+ * values whose `data` is valid for `size` bytes; `out` NULL or valid.
+ */
+StickShiftResult stickshift_world_spawn(struct StickShiftEngine *engine,
+                                        const struct StickShiftComponentValue *values,
+                                        uint32_t count,
+                                        struct StickShiftEntity *out);
+
+/**
+ * Despawn an entity: its id is freed with a bumped generation, and its row
+ * is swap-removed. A gone entity is `STICKSHIFT_OK` with `*out_existed = 0`
+ * (`out_existed` is optional). Not in the render hook.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out_existed` NULL or valid.
+ */
+StickShiftResult stickshift_world_despawn(struct StickShiftEngine *engine,
+                                          struct StickShiftEntity entity,
+                                          uint8_t *out_existed);
+
+/**
+ * Whether the entity is alive.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid.
+ */
+StickShiftResult stickshift_world_contains(struct StickShiftEngine *engine,
+                                           struct StickShiftEntity entity,
+                                           uint8_t *out);
+
+/**
+ * Whether the entity has the component; 0 for a gone entity.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid.
+ */
+StickShiftResult stickshift_world_has(struct StickShiftEngine *engine,
+                                      struct StickShiftEntity entity,
+                                      struct StickShiftComponent component,
+                                      uint8_t *out);
+
+/**
+ * Copy a component's value into `out` (`size` bytes, the registered size).
+ * `STICKSHIFT_ABSENT` if the entity is gone or lacks it; then `out` is
+ * unchanged. A tag has no value (`STICKSHIFT_ERROR_INVALID_ARGUMENT`).
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid for `size`
+ * bytes.
+ */
+StickShiftResult stickshift_world_get(struct StickShiftEngine *engine,
+                                      struct StickShiftEntity entity,
+                                      struct StickShiftComponent component,
+                                      void *out,
+                                      uint32_t size);
+
+/**
+ * Overwrite a component's value in place (`size` bytes, the registered
+ * size); the entity does not move. `STICKSHIFT_ABSENT` if the entity is gone
+ * or lacks it. Not in the render hook.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `data` NULL or valid for `size`
+ * bytes.
+ */
+StickShiftResult stickshift_world_set(struct StickShiftEngine *engine,
+                                      struct StickShiftEntity entity,
+                                      struct StickShiftComponent component,
+                                      const void *data,
+                                      uint32_t size);
+
+/**
+ * Add the bundle's components to an entity, replacing values it already has,
+ * in one hecs insert: unless its set of components is unchanged, the entity
+ * moves to the end of its new archetype, as in Rust. `STICKSHIFT_ABSENT` for
+ * a gone entity. Not in the render hook.
+ *
+ * # Safety
+ * As `stickshift_world_spawn`.
+ */
+StickShiftResult stickshift_world_insert(struct StickShiftEngine *engine,
+                                         struct StickShiftEntity entity,
+                                         const struct StickShiftComponentValue *values,
+                                         uint32_t count);
+
+/**
+ * Remove one component from an entity (hecs `remove_one`), which moves it as
+ * in Rust. `STICKSHIFT_ABSENT` if the entity is gone or lacks it. Not in the
+ * render hook.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_world_remove(struct StickShiftEngine *engine,
+                                         struct StickShiftEntity entity,
+                                         struct StickShiftComponent component);
+
+/**
+ * The number of live entities.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid.
+ */
+StickShiftResult stickshift_world_len(struct StickShiftEngine *engine, uint32_t *out);
+
+/**
+ * Snapshot the entities matching `terms` in the world's query order
+ * (archetypes in creation order, then rows in order), with their values
+ * copied into engine-owned rows. Nothing stays borrowed, so the caller may
+ * change the world while walking them. At least one term must not be
+ * `STICKSHIFT_QUERY_WITHOUT`. `STICKSHIFT_ERROR_LIMIT_EXCEEDED` past
+ * `STICKSHIFT_MAX_LIVE_QUERIES` live snapshots. Set
+ * `out->size = sizeof(StickShiftQueryRows)`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `terms` NULL or valid for
+ * `term_count` terms; `out` NULL or valid for its declared size.
+ */
+StickShiftResult stickshift_world_query(struct StickShiftEngine *engine,
+                                        const struct StickShiftQueryTerm *terms,
+                                        uint32_t term_count,
+                                        struct StickShiftQueryRows *out);
+
+/**
+ * Count the entities `stickshift_world_query` would snapshot, without
+ * copying anything.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `terms` NULL or valid for
+ * `term_count` terms; `out` NULL or valid.
+ */
+StickShiftResult stickshift_world_query_count(struct StickShiftEngine *engine,
+                                              const struct StickShiftQueryTerm *terms,
+                                              uint32_t term_count,
+                                              uint32_t *out);
+
+/**
+ * Release a query snapshot; its rows are invalid after this. In any scope.
+ * `STICKSHIFT_ERROR_INVALID_ARGUMENT` for a token that is not live (already
+ * released, or released when its scope ended).
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_world_query_release(struct StickShiftEngine *engine, uint64_t token);
 
 #ifdef __cplusplus
 }  // extern "C"
