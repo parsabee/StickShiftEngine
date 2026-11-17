@@ -74,7 +74,12 @@ pub use frame::{
 };
 pub use math::{
     stickshift_mat4_from_trs, stickshift_mat4_identity, stickshift_mat4_look_at,
-    stickshift_mat4_mul, stickshift_mat4_perspective, stickshift_quat_from_axis_angle,
+    stickshift_mat4_mul, stickshift_mat4_perspective, stickshift_mat4_transform_point3,
+    stickshift_mat4_transform_vector3, stickshift_quat_from_axis_angle,
+    stickshift_quat_from_rotation_x, stickshift_quat_from_rotation_y,
+    stickshift_quat_from_rotation_z, stickshift_quat_mul, stickshift_quat_mul_vec3,
+    stickshift_transform_to_mat4, stickshift_vec3_cross, stickshift_vec3_dot,
+    stickshift_vec3_length, stickshift_vec3_lerp, stickshift_vec3_normalize_or_zero,
 };
 pub use models::{
     stickshift_model_destroy, stickshift_model_get_bounds, stickshift_model_load_file,
