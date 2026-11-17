@@ -6,8 +6,9 @@
  * Creates a null context and an engine with a game of plain C callbacks, runs its
  * init, ticks it, and reads what the frames recorded with stickshift_context_get_last_frame.
  * Along the way: host events (a key, a menu choice, close), the scope rules (an engine
- * call a hook may not make), the engine's state, and destroy's release. Exits 0 on
- * success, 1 on failure.
+ * call a hook may not make), the engine's state, and destroy's release. A second game
+ * registers a component, streams slots with a spawn callback that spawns whole bundles and
+ * tracks them, and the host queries and despawns. Exits 0 on success, 1 on failure.
  *
  * Run by scripts/test-c-api.sh (and CI).
  *
@@ -90,6 +91,143 @@ static void settings_changed(void *user, StickShiftEngine *engine,
 static void release(void *user) {
     Game *game = user;
     game->releases++;
+}
+
+/* The streaming game: a registered tag, a stream pass with a C spawn callback, queries
+ * and a despawn. */
+typedef struct Streamer {
+    StickShiftComponent slot_tag;
+    int spawned, tracked;
+    StickShiftResult config_in_spawn; /* scene calls are refused in a spawn callback */
+    StickShiftResult stream_in_spawn;
+    StickShiftResult track_in_update; /* tracking needs a spawn callback */
+    StickShiftResult spawn_in_render; /* render only reads the world */
+    uint32_t count_in_render;
+} Streamer;
+
+static void spawn_slot(void *user, StickShiftEngine *e, int64_t slot, StickShiftVec3 p) {
+    Streamer *s = user;
+    (void)slot;
+    StickShiftTransform t = {p, {0, 0, 0, 1}, {1, 1, 1}};
+    StickShiftRenderComponent r = {{0.5f, 0.5f, 0.5f}, STICKSHIFT_RENDER_SHAPE_CUBE};
+    StickShiftComponentValue bundle[] = {
+        {{STICKSHIFT_COMPONENT_TRANSFORM}, &t, sizeof t},
+        {{STICKSHIFT_COMPONENT_RENDER}, &r, sizeof r},
+        {s->slot_tag, NULL, 0},
+        {{STICKSHIFT_COMPONENT_STATIC_TAG}, NULL, 0},
+    };
+    StickShiftEntity entity;
+    if (stickshift_world_spawn(e, bundle, 4, &entity) == STICKSHIFT_OK) {
+        s->spawned++;
+        if (stickshift_stream_track(e, entity) == STICKSHIFT_OK) s->tracked++;
+    }
+    StickShiftStreamingConfig config;
+    s->config_in_spawn = stickshift_scene_get_config(e, &config);
+    s->stream_in_spawn = stickshift_scene_stream(e, p, NULL, NULL);
+}
+
+static StickShiftResult stream_init(void *user, StickShiftEngine *e) {
+    Streamer *s = user;
+    StickShiftComponentDesc d = {"smoke.SlotTag", 0, 1};
+    StickShiftResult r = stickshift_component_register(e, &d, &s->slot_tag);
+    if (r < 0) return r;
+    StickShiftVec3 origin = {0, 0, 0};
+    return stickshift_scene_stream(e, origin, spawn_slot, s);
+}
+
+static void stream_update(void *user, StickShiftEngine *e, float dt) {
+    Streamer *s = user;
+    (void)dt;
+    StickShiftEntity none = {0};
+    s->track_in_update = stickshift_stream_track(e, none);
+}
+
+static void stream_render(void *user, StickShiftEngine *e, StickShiftFrame *frame) {
+    Streamer *s = user;
+    StickShiftQuad q = {0, 0, 10, 10, 0, 0, 1, 1, {1, 1, 1, 1}, STICKSHIFT_FILL_SOLID, {0}};
+    stickshift_frame_draw_quad(frame, &q);
+    StickShiftQueryTerm tagged = {s->slot_tag, STICKSHIFT_QUERY_WITH};
+    stickshift_world_query_count(e, &tagged, 1, &s->count_in_render);
+    StickShiftEntity entity;
+    s->spawn_in_render = stickshift_world_spawn(e, NULL, 0, &entity);
+}
+
+static int stream_game(void) {
+    StickShiftContextDesc ctx_desc = {STICKSHIFT_API_VERSION, STICKSHIFT_BACKEND_NULL, NULL,
+                                      1280, 720, 1.0f};
+    StickShiftContext *ctx = NULL;
+    CHECK(stickshift_context_create(&ctx_desc, &ctx), STICKSHIFT_OK);
+    Streamer s;
+    memset(&s, 0, sizeof s);
+    StickShiftEngineDesc d;
+    memset(&d, 0, sizeof d);
+    d.api_version = STICKSHIFT_API_VERSION;
+    d.size = sizeof d;
+    StickShiftGame g = {sizeof g, 0, &s, stream_init, stream_update, stream_render, NULL, NULL};
+    StickShiftEngine *e = NULL;
+    CHECK(stickshift_engine_create(ctx, &d, &g, &e), STICKSHIFT_OK);
+    CHECK(stickshift_engine_init(e), STICKSHIFT_OK);
+    REQUIRE(s.slot_tag.id == STICKSHIFT_FIRST_GAME_COMPONENT);
+    StickShiftTickDesc tick = {sizeof tick, STICKSHIFT_CLOCK_FIXED_STEP, 0, NULL, 0};
+    for (int i = 0; i < 3; i++) CHECK(stickshift_engine_tick(e, &tick, NULL), STICKSHIFT_OK);
+
+    /* Slots 0..=10: the default 60 ahead at a 6 spacing. */
+    REQUIRE(s.spawned == 11 && s.tracked == 11 && s.count_in_render == 11);
+    CHECK(s.config_in_spawn, STICKSHIFT_ERROR_WRONG_STATE);
+    CHECK(s.stream_in_spawn, STICKSHIFT_ERROR_WRONG_STATE);
+    CHECK(s.track_in_update, STICKSHIFT_ERROR_WRONG_STATE);
+    CHECK(s.spawn_in_render, STICKSHIFT_ERROR_WRONG_STATE);
+    StickShiftQueryTerm terms[] = {
+        {{STICKSHIFT_COMPONENT_TRANSFORM}, STICKSHIFT_QUERY_READ},
+        {s.slot_tag, STICKSHIFT_QUERY_WITH},
+    };
+    uint32_t count = 0;
+    CHECK(stickshift_world_query_count(e, &terms[1], 1, &count), STICKSHIFT_OK);
+    REQUIRE(count == 11);
+
+    /* A snapshot: the slots in spawn order, 6 apart along -Z. */
+    StickShiftQueryRows rows;
+    memset(&rows, 0, sizeof rows);
+    rows.size = sizeof rows;
+    CHECK(stickshift_world_query(e, terms, 2, &rows), STICKSHIFT_OK);
+    REQUIRE(rows.count == 11 && rows.term_count == 2 && rows.offsets[1] == UINT32_MAX);
+    for (uint32_t i = 0; i < rows.count; i++) {
+        StickShiftTransform t;
+        memcpy(&t, rows.data + i * rows.stride + rows.offsets[0], sizeof t);
+        REQUIRE(t.position.z == -6.0f * (float)i && t.rotation.w == 1.0f);
+    }
+
+    /* Despawn one: it is gone, a second despawn finds nothing, and the snapshot is
+     * unchanged. The scene still tracks it until its next pass. */
+    StickShiftEntity first = rows.entities[0];
+    uint8_t existed = 0;
+    CHECK(stickshift_world_despawn(e, first, &existed), STICKSHIFT_OK);
+    REQUIRE(existed == 1);
+    CHECK(stickshift_world_despawn(e, first, &existed), STICKSHIFT_OK);
+    REQUIRE(existed == 0);
+    REQUIRE(rows.entities[0].bits == first.bits);
+    CHECK(stickshift_world_query_release(e, rows.token), STICKSHIFT_OK);
+    CHECK(stickshift_world_query_release(e, rows.token), STICKSHIFT_ERROR_INVALID_ARGUMENT);
+    CHECK(stickshift_world_query_count(e, &terms[1], 1, &count), STICKSHIFT_OK);
+    REQUIRE(count == 10);
+    StickShiftTransform gone;
+    CHECK(stickshift_world_get(e, first, (StickShiftComponent){STICKSHIFT_COMPONENT_TRANSFORM},
+                               &gone, sizeof gone),
+          STICKSHIFT_ABSENT);
+    uint32_t streamed = 0, len = 0;
+    CHECK(stickshift_scene_streamed_count(e, &streamed), STICKSHIFT_OK);
+    CHECK(stickshift_world_len(e, &len), STICKSHIFT_OK);
+    REQUIRE(streamed == 11 && len == 10);
+
+    StickShiftFrameRecord record;
+    memset(&record, 0, sizeof record);
+    record.size = sizeof record;
+    CHECK(stickshift_context_get_last_frame(ctx, &record), STICKSHIFT_OK);
+    REQUIRE(record.quad_count == 1);
+    CHECK(stickshift_engine_destroy(e), STICKSHIFT_OK);
+    CHECK(stickshift_context_destroy(ctx), STICKSHIFT_OK);
+    printf("c engine: streaming OK (%d spawned, %u left)\n", s.spawned, len);
+    return 0;
 }
 
 int main(void) {
@@ -199,5 +337,5 @@ int main(void) {
     CHECK(stickshift_context_destroy(ctx), STICKSHIFT_OK);
 
     printf("c engine: OK (%d updates, %d renders)\n", game.updates, game.renders);
-    return 0;
+    return stream_game();
 }
