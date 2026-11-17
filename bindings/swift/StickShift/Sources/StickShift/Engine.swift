@@ -222,7 +222,7 @@ public final class Engine {
         }
         core.loadPhase = .loading
         do {
-            try await core.load()
+            try await core.load(raw)
         } catch {
             core.loadPhase = .notLoaded
             throw error
@@ -255,7 +255,13 @@ public final class Engine {
         try initialize()
         for _ in 0..<max(0, frames) {
             if state.exitRequested { break }
-            advance()
+            if advance().isPoisoned {
+                throw StickShiftError(
+                    code: .internal,
+                    message: "a panic (a bug in Stick Shift Engine) was caught during a tick: "
+                        + "the engine is poisoned; drop it"
+                )
+            }
         }
     }
 
@@ -305,6 +311,11 @@ public final class Engine {
     /// or with a `readback` the context cannot fill is a programmer error and
     /// traps.
     ///
+    /// A panic in the engine's own work poisons it (see
+    /// ``EngineState/isPoisoned``): this tick and every later one return
+    /// ``TickResult/poisoned``, which asks for ``HostRequests/exit``, so the
+    /// host stops ticking and drops the engine.
+    ///
     /// - Parameter readback: Filled with the frame's pixels before this
     ///   returns, if ``TickResult/readbackReady``: offscreen contexts with
     ///   ``FramePacing/wait`` only, and the context's size.
@@ -333,6 +344,9 @@ public final class Engine {
         out.size = UInt32(MemoryLayout<StickShiftTickResult>.size)
         let result = stickshift_engine_tick(raw, &desc, &out)
         if result < 0 {
+            if Self.isPoisonedFailure(result, isPoisoned: { state.isPoisoned }) {
+                return .poisoned
+            }
             misuse("Engine.tick(_:readback:)", result)
         }
         return TickResult(out)
@@ -353,6 +367,8 @@ public final class Engine {
     /// An event with a value the engine refuses (a scale factor that is not
     /// finite and positive, a negative inset), or a call from inside a hook,
     /// is a programmer error and traps; then none of the events is applied.
+    /// On a poisoned engine (``EngineState/isPoisoned``) nothing is applied
+    /// and the call returns ``HostRequests/exit``.
     ///
     /// - Returns: What the events ask the host to do.
     @discardableResult
@@ -375,9 +391,19 @@ public final class Engine {
             )
         }
         if result < 0 {
+            if Self.isPoisonedFailure(result, isPoisoned: { state.isPoisoned }) {
+                return .exit
+            }
             misuse("Engine.push(_:)", result)
         }
         return HostRequests(rawValue: requests)
+    }
+
+    /// Whether a tick or a push failed with `result` because the engine is
+    /// poisoned, which the host recovers from by dropping it, rather than by
+    /// misuse.
+    static func isPoisonedFailure(_ result: StickShiftResult, isPoisoned: () -> Bool) -> Bool {
+        result == STICKSHIFT_ERROR_INTERNAL && isPoisoned()
     }
 
     /// Make the next ``Clock/timestamp(nanoseconds:)`` or ``Clock/engine``
@@ -395,9 +421,21 @@ public final class Engine {
 
     // MARK: - Inspection
 
-    /// The engine's flags and counters.
+    /// The engine's flags and counters. Readable on a poisoned engine too:
+    /// see ``EngineState/isPoisoned`` for what else answers on one.
     public var state: EngineState {
-        EngineState(handle.state("Engine.state"))
+        var out = StickShiftEngineState()
+        out.size = UInt32(MemoryLayout<StickShiftEngineState>.size)
+        let result = stickshift_engine_get_state(raw, &out)
+        if result == STICKSHIFT_ERROR_INTERNAL {
+            // A library that answers nothing on a poisoned engine, this call
+            // included: all that is known is that it is poisoned.
+            out = StickShiftEngineState()
+            out.poisoned = 1
+        } else if result < 0 {
+            misuse("Engine.state", result)
+        }
+        return EngineState(out)
     }
 
     /// The latest frame timing.
@@ -476,6 +514,38 @@ public struct TickResult: Sendable, Equatable {
     /// The graphics settings' revision after the tick: it grows by one with
     /// every change.
     public var graphicsRevision: UInt64
+    /// Whether the engine is poisoned (``EngineState/isPoisoned``): nothing
+    /// ran, ``requests`` is ``HostRequests/exit``, and the host should drop
+    /// the engine.
+    public var isPoisoned: Bool
+
+    /// What a tick of a poisoned engine returns: exit, and nothing else.
+    public static let poisoned = TickResult(
+        steps: 0,
+        rendered: false,
+        submitted: false,
+        readbackReady: false,
+        held: false,
+        requests: .exit,
+        frame: nil,
+        graphicsRevision: 0,
+        isPoisoned: true
+    )
+
+    init(
+        steps: Int, rendered: Bool, submitted: Bool, readbackReady: Bool, held: Bool,
+        requests: HostRequests, frame: UInt64?, graphicsRevision: UInt64, isPoisoned: Bool
+    ) {
+        self.steps = steps
+        self.rendered = rendered
+        self.submitted = submitted
+        self.readbackReady = readbackReady
+        self.held = held
+        self.requests = requests
+        self.frame = frame
+        self.graphicsRevision = graphicsRevision
+        self.isPoisoned = isPoisoned
+    }
 
     init(_ r: StickShiftTickResult) {
         steps = Int(r.steps)
@@ -486,6 +556,7 @@ public struct TickResult: Sendable, Equatable {
         requests = HostRequests(rawValue: r.requests)
         frame = r.frame == 0 ? nil : r.frame
         graphicsRevision = r.graphics_revision
+        isPoisoned = false
     }
 }
 
@@ -516,11 +587,21 @@ public struct EngineState: Sendable, Equatable {
     /// ``Engine/resume(_:)`` has run.
     public var isHosted: Bool
     /// The game's ``Game/initialize(_:)`` threw: the engine can only be dropped.
-    ///
-    /// There is no flag for a poisoned engine (a panic, a bug in the engine,
-    /// was caught): every later call on it, this one included, traps with the
-    /// engine's message, and only dropping it works.
     public var hasFailed: Bool
+    /// A panic (a bug in the engine) was caught in an engine call, and only
+    /// dropping the engine works.
+    ///
+    /// How a host sees it depends on where the panic was. In the engine's own
+    /// work during ``Engine/tick(_:readback:)`` or ``Engine/push(_:)``, that
+    /// call returns with ``HostRequests/exit`` (and a tick with
+    /// ``TickResult/isPoisoned``), as every later tick and push does, so the
+    /// host stops and drops the engine. ``Engine/initialize()``,
+    /// ``Engine/resume(_:)`` and ``Scene/setConfig(_:)`` throw `.internal`.
+    /// In a call the game makes from a hook (a world, scene, camera, input,
+    /// audio or graphics call), the process traps at that call, as at any
+    /// failed call: the call has no result to give the game. On a poisoned
+    /// engine every other call but this state traps.
+    public var isPoisoned: Bool
     /// The game, the host or an event asked to exit.
     public var exitRequested: Bool
     /// The last tick was held by ``Engine/Options/holdsUntilLoaded``.
@@ -538,6 +619,7 @@ public struct EngineState: Sendable, Equatable {
         isInitialized = s.initialized != 0
         isHosted = s.hosted != 0
         hasFailed = s.failed != 0
+        isPoisoned = s.poisoned != 0
         exitRequested = s.exit_requested != 0
         isHolding = s.holding != 0
         frames = s.frames

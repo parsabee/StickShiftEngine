@@ -39,6 +39,13 @@ loop on a context: ``Engine/advance(readback:)`` for one fixed step in a tool, o
 ``Engine/tick(_:readback:)`` from a view's display link. Each hook gets an ``EngineContext``,
 valid until it returns.
 
+The context reaches the engine's services: ``EngineContext/world`` (the engine's own ECS, with
+any bitwise-copyable struct as a ``Component``, spawned and queried with parameter packs),
+``EngineContext/scene`` (streaming through a ``StreamSlot``, and the floating origin),
+``EngineContext/camera``, ``EngineContext/input``, ``EngineContext/audio`` and
+``EngineContext/graphics``. Between ticks the ``Engine`` reaches the same services, and the
+Graphics menu as data (``Engine/menu(fullScreen:)``).
+
 ## Topics
 
 ### Running a game
@@ -52,6 +59,37 @@ valid until it returns.
 - ``EngineState``
 - ``PerfSnapshot``
 - ``PixelBuffer``
+
+### The world
+
+- ``World``
+- ``Entity``
+- ``Component``
+- ``Transform``
+- ``RenderComponent``
+- ``StaticTag``
+- ``DynamicTag``
+- ``Query``
+- ``QueryTerm``
+
+### The scene
+
+- ``Scene``
+- ``StreamSlot``
+- ``StreamingConfig``
+
+### Camera, input, sound and graphics
+
+- ``EngineCamera``
+- ``ChaseController``
+- ``Input``
+- ``HostInput``
+- ``Audio``
+- ``Sound``
+- ``Volume``
+- ``AudioStats``
+- ``Graphics``
+- ``GraphicsControl``
 
 ### Host events
 
