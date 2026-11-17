@@ -49,7 +49,8 @@ public final class Model {
     }
 
     deinit {
-        stickshift_model_destroy(context.raw, StickShiftModel(id: id))
+        let id = id
+        destroyResource(of: context) { stickshift_model_destroy($0, StickShiftModel(id: id)) }
     }
 }
 

@@ -3,6 +3,7 @@
 // This software is released under the Apache-2.0 License.
 
 import CStickShift
+import Foundation
 
 /// Where a resource is in its life.
 public enum ResourceState: Sendable, Equatable {
@@ -62,6 +63,20 @@ public enum ColorSpace: Sendable {
     }
 }
 
+/// Run a resource's C destroy for `context`: here on the main thread, and
+/// otherwise sent to it, holding the context until then. A context with an
+/// engine attached refuses every call from another thread, so a resource
+/// whose last reference goes on a background thread would otherwise leak.
+/// On the main thread, a destroy the context cannot take now (inside a
+/// callback, or a stream pass's closure) is retried once the call returns.
+func destroyResource(of context: Context, _ destroy: @escaping @Sendable (OpaquePointer) -> StickShiftResult) {
+    if Thread.isMainThread {
+        let result = destroy(context.raw)
+        guard result == STICKSHIFT_ERROR_BUSY || result == STICKSHIFT_ERROR_WRONG_STATE else { return }
+    }
+    DispatchQueue.main.async { _ = destroy(context.raw) }
+}
+
 /// Bytes passed to the engine, which copies them before the call returns.
 private func copied(_ bytes: UnsafeRawBufferPointer) -> StickShiftData {
     StickShiftData(ptr: bytes.baseAddress, len: bytes.count, release: nil, user: nil)
@@ -89,7 +104,8 @@ public final class Mesh {
     }
 
     deinit {
-        stickshift_mesh_destroy(context.raw, StickShiftMesh(id: id))
+        let id = id
+        destroyResource(of: context) { stickshift_mesh_destroy($0, StickShiftMesh(id: id)) }
     }
 }
 
@@ -124,7 +140,8 @@ public final class Texture {
     var handle: StickShiftTexture { StickShiftTexture(id: id) }
 
     deinit {
-        stickshift_texture_destroy(context.raw, StickShiftTexture(id: id))
+        let id = id
+        destroyResource(of: context) { stickshift_texture_destroy($0, StickShiftTexture(id: id)) }
     }
 }
 
@@ -188,7 +205,8 @@ public final class Font {
     var handle: StickShiftFont { StickShiftFont(id: id) }
 
     deinit {
-        stickshift_font_destroy(context.raw, StickShiftFont(id: id))
+        let id = id
+        destroyResource(of: context) { stickshift_font_destroy($0, StickShiftFont(id: id)) }
     }
 }
 

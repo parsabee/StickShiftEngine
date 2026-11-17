@@ -395,9 +395,21 @@ public final class Engine {
 
     // MARK: - Inspection
 
-    /// The engine's flags and counters.
+    /// The engine's flags and counters. Readable on a poisoned engine too,
+    /// where every other call traps.
     public var state: EngineState {
-        EngineState(handle.state("Engine.state"))
+        var out = StickShiftEngineState()
+        out.size = UInt32(MemoryLayout<StickShiftEngineState>.size)
+        let result = stickshift_engine_get_state(raw, &out)
+        if result == STICKSHIFT_ERROR_INTERNAL {
+            // A library that answers nothing on a poisoned engine, this call
+            // included: all that is known is that it is poisoned.
+            out = StickShiftEngineState()
+            out.poisoned = 1
+        } else if result < 0 {
+            misuse("Engine.state", result)
+        }
+        return EngineState(out)
     }
 
     /// The latest frame timing.
@@ -516,11 +528,11 @@ public struct EngineState: Sendable, Equatable {
     /// ``Engine/resume(_:)`` has run.
     public var isHosted: Bool
     /// The game's ``Game/initialize(_:)`` threw: the engine can only be dropped.
-    ///
-    /// There is no flag for a poisoned engine (a panic, a bug in the engine,
-    /// was caught): every later call on it, this one included, traps with the
-    /// engine's message, and only dropping it works.
     public var hasFailed: Bool
+    /// A panic (a bug in the engine) was caught in an engine call: every
+    /// later call on it but ``Engine/state`` traps with the engine's message,
+    /// and only dropping it works.
+    public var isPoisoned: Bool
     /// The game, the host or an event asked to exit.
     public var exitRequested: Bool
     /// The last tick was held by ``Engine/Options/holdsUntilLoaded``.
@@ -538,6 +550,7 @@ public struct EngineState: Sendable, Equatable {
         isInitialized = s.initialized != 0
         isHosted = s.hosted != 0
         hasFailed = s.failed != 0
+        isPoisoned = s.poisoned != 0
         exitRequested = s.exit_requested != 0
         isHolding = s.holding != 0
         frames = s.frames
