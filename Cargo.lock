@@ -1948,9 +1948,11 @@ dependencies = [
  "stickshift-assets",
  "stickshift-camera",
  "stickshift-core",
+ "stickshift-ecs",
  "stickshift-math",
  "stickshift-render",
  "stickshift-render-api",
+ "stickshift-scene",
 ]
 
 [[package]]

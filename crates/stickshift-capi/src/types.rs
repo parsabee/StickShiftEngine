@@ -243,6 +243,187 @@ pub struct StickShiftColor {
 }
 
 // ---------------------------------------------------------------------------
+// Entities, components and the world (an engine's ECS)
+// ---------------------------------------------------------------------------
+
+/// The most game components one engine registers, tags and data together.
+pub const STICKSHIFT_MAX_GAME_COMPONENTS: u32 = 128;
+/// The most bytes in one game component value.
+pub const STICKSHIFT_MAX_COMPONENT_SIZE: u32 = 4096;
+/// The most components in one spawn or insert.
+pub const STICKSHIFT_MAX_BUNDLE: u32 = 32;
+/// The most terms in one query.
+pub const STICKSHIFT_MAX_QUERY_TERMS: u32 = 16;
+/// The most query snapshots one engine holds unreleased at once.
+pub const STICKSHIFT_MAX_LIVE_QUERIES: u32 = 16;
+
+/// An entity of an engine's world: hecs `Entity::to_bits`, `generation << 32 |
+/// id`. 0 is the null entity (hecs never issues generation 0). Ids are reused
+/// last-freed first with a bumped generation, so a stale entity reads as
+/// absent, never as another entity. Unlike resource handles, an entity is not
+/// tagged with its context: it is valid only in the engine that issued it.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct StickShiftEntity {
+    /// The hecs bits; 0 for none.
+    pub bits: u64,
+}
+
+/// A component: an engine component (`STICKSHIFT_COMPONENT_*`, 1..255) or a
+/// game component from `stickshift_component_register` (from
+/// `STICKSHIFT_FIRST_GAME_COMPONENT`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct StickShiftComponent {
+    /// The component's id.
+    pub id: u32,
+}
+
+/// The engine's transform component; its value is a `StickShiftTransform`.
+pub const STICKSHIFT_COMPONENT_TRANSFORM: u32 = 1;
+/// The engine's render component; its value is a `StickShiftRenderComponent`.
+pub const STICKSHIFT_COMPONENT_RENDER: u32 = 2;
+/// The engine's static-entity tag; no value.
+pub const STICKSHIFT_COMPONENT_STATIC_TAG: u32 = 3;
+/// The engine's dynamic-entity tag; no value.
+pub const STICKSHIFT_COMPONENT_DYNAMIC_TAG: u32 = 4;
+/// The id of the first game component registered; ids 5..255 are reserved for
+/// engine components.
+pub const STICKSHIFT_FIRST_GAME_COMPONENT: u32 = 256;
+
+/// The shape of a `StickShiftRenderComponent`.
+pub type StickShiftRenderShape = u32;
+/// A unit cube built by the engine, coloured with the component's colour.
+pub const STICKSHIFT_RENDER_SHAPE_CUBE: StickShiftRenderShape = 0;
+/// A unit-diameter sphere (20 segments, 20 rings) built by the engine.
+pub const STICKSHIFT_RENDER_SHAPE_SPHERE: StickShiftRenderShape = 1;
+/// Read only: a custom mesh a Rust caller made. Writing it is
+/// `STICKSHIFT_ERROR_INVALID_ARGUMENT`.
+pub const STICKSHIFT_RENDER_SHAPE_MESH: StickShiftRenderShape = 2;
+
+/// The value of `STICKSHIFT_COMPONENT_RENDER`: a colour and a built-in shape. A
+/// frozen value type, with no `size` field.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StickShiftRenderComponent {
+    /// Linear RGB, `0..1`.
+    pub color: [f32; 3],
+    /// A `STICKSHIFT_RENDER_SHAPE_*` value.
+    pub shape: StickShiftRenderShape,
+}
+
+/// A game component to register, or what one is.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct StickShiftComponentDesc {
+    /// UTF-8 and unique per engine; copied when registering. Returned names
+    /// are library-owned and valid for the engine's life.
+    pub name: *const c_char,
+    /// The bytes of one value: 0 makes a tag (no value), up to
+    /// `STICKSHIFT_MAX_COMPONENT_SIZE`.
+    pub size: u32,
+    /// A power of two up to 16: where the value sits in query rows. Values are
+    /// always copied, never borrowed.
+    pub align: u32,
+}
+
+/// One component of a spawn or insert bundle.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct StickShiftComponentValue {
+    /// The component.
+    pub component: StickShiftComponent,
+    /// `size` bytes, read during the call; NULL for a tag.
+    pub data: *const c_void,
+    /// The component's registered size (`sizeof` the C struct for an engine
+    /// component); 0 for a tag.
+    pub size: u32,
+}
+
+/// How a query term uses its component.
+pub type StickShiftQueryAccess = u32;
+/// Required, with the value in each row (for a tag, the same as `WITH`).
+pub const STICKSHIFT_QUERY_READ: StickShiftQueryAccess = 0;
+/// Required, with no value in the row.
+pub const STICKSHIFT_QUERY_WITH: StickShiftQueryAccess = 1;
+/// Excluded.
+pub const STICKSHIFT_QUERY_WITHOUT: StickShiftQueryAccess = 2;
+/// Not a filter: the value when the entity has it, and a presence flag.
+pub const STICKSHIFT_QUERY_OPTIONAL: StickShiftQueryAccess = 3;
+
+/// One term of a query.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StickShiftQueryTerm {
+    /// The component.
+    pub component: StickShiftComponent,
+    /// A `STICKSHIFT_QUERY_*` value.
+    pub access: StickShiftQueryAccess,
+}
+
+/// A query's snapshot: the matching entities in the world's query order, with
+/// their values copied into rows. Engine-owned; valid until
+/// `stickshift_world_query_release`, until the hook or callback that took it
+/// returns, or (taken between engine calls) until the next tick.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct StickShiftQueryRows {
+    /// `sizeof(StickShiftQueryRows)`.
+    pub size: u32,
+    /// The matching entities.
+    pub count: u32,
+    /// `count` entities, in query order.
+    pub entities: *const StickShiftEntity,
+    /// `count` rows of `stride` bytes, starting 16-byte aligned.
+    pub data: *const u8,
+    /// Bytes from one row to the next.
+    pub stride: usize,
+    /// Per term: its value's byte offset in a row (a multiple of the
+    /// component's alignment), or `UINT32_MAX` if rows hold no value for it.
+    pub offsets: *const u32,
+    /// `count * term_count` flags, row by row: 1 where the entity has the
+    /// term's component. An absent optional term's value bytes are zero.
+    pub present: *const u8,
+    /// The query's terms.
+    pub term_count: u32,
+    /// Reserved.
+    pub reserved: u32,
+    /// Pass to `stickshift_world_query_release`; never 0.
+    pub token: u64,
+}
+
+/// A scene's streaming configuration: stickshift-scene's `StreamingConfig`,
+/// field for field. A frozen value type, with no `size` field.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StickShiftStreamingConfig {
+    /// The travel axis; `(0, 0, -1)` by default.
+    pub axis: StickShiftVec3,
+    /// Distance between spawn slots along the axis; 6 by default.
+    pub spawn_interval: f32,
+    /// How far ahead of the focus slots are filled; 60 by default.
+    pub spawn_ahead: f32,
+    /// How far behind the focus streamed entities are despawned; 12 by default.
+    pub despawn_behind: f32,
+    /// How far the focus may travel before a floating-origin rebase; 1000 by
+    /// default.
+    pub rebase_threshold: f32,
+}
+
+/// Called once for each new slot of a `stickshift_scene_stream` pass, from
+/// inside the scene's own pass: `position` is the slot's world position.
+/// World calls spawn into the scene; `stickshift_stream_track` reports an
+/// entity for despawning behind.
+pub type StickShiftSpawnFn = Option<
+    unsafe extern "C" fn(
+        user: *mut c_void,
+        engine: *mut StickShiftEngine,
+        slot: i64,
+        position: StickShiftVec3,
+    ),
+>;
+
+// ---------------------------------------------------------------------------
 // Handles
 // ---------------------------------------------------------------------------
 
