@@ -1566,8 +1566,18 @@ fn a_panic_in_a_call_from_a_hook_poisons_the_rest_of_the_tick() {
             // SAFETY: inside an update hook, on the engine's thread.
             let r = unsafe { testing::panic_in_call(e) };
             p.seen.push(format!("panic_in_call {r}"));
-            p.seen
-                .push(format!("get_state {:?}", state_of(e).map(|_| ())));
+            p.seen.push(format!(
+                "get_state {:?}",
+                state_of(e).map(|s| (s.poisoned, s.updates))
+            ));
+            // Every other call is refused now.
+            let mut perf = StickShiftPerf {
+                size: std::mem::size_of::<StickShiftPerf>() as u32,
+                ..Default::default()
+            };
+            // SAFETY: inside an update hook, on the engine's thread.
+            let r = unsafe { stickshift_engine_get_perf(e, &mut perf) };
+            p.seen.push(format!("get_perf {r}"));
         }
     });
     assert_eq!(h.init(), STICKSHIFT_OK);
@@ -1582,12 +1592,23 @@ fn a_panic_in_a_call_from_a_hook_poisons_the_rest_of_the_tick() {
         h.probe.seen,
         [
             format!("panic_in_call {STICKSHIFT_ERROR_INTERNAL}"),
-            format!("get_state Err({STICKSHIFT_ERROR_INTERNAL})"),
+            "get_state Ok((1, 1))".to_owned(),
+            format!("get_perf {STICKSHIFT_ERROR_INTERNAL}"),
         ]
     );
     // The second update and the render hook never ran.
     assert_eq!((h.probe.updates, h.probe.renders), (1, 0));
-    assert_eq!(state_of(h.engine), Err(STICKSHIFT_ERROR_INTERNAL));
+    // The host learns why its calls fail.
+    let state = state_of(h.engine).expect("a poisoned engine still answers get_state");
+    assert_eq!(
+        (
+            state.poisoned,
+            state.failed,
+            state.initialized,
+            state.updates
+        ),
+        (1, 0, 1, 1)
+    );
     assert_eq!(
         h.tick_with(STICKSHIFT_CLOCK_FIXED_STEP, 0).0,
         STICKSHIFT_ERROR_INTERNAL
@@ -1649,12 +1670,33 @@ fn a_panic_poisons_the_engine_and_release_still_runs_once() {
         "{}",
         last_error()
     );
-    assert_eq!(state_of(h.engine), Err(STICKSHIFT_ERROR_INTERNAL));
+    let state = state_of(h.engine).expect("a poisoned engine still answers get_state");
+    assert_eq!(
+        (state.poisoned, state.failed, state.exit_requested),
+        (1, 0, 0)
+    );
+    // A size below the first layout is still refused.
+    let mut small = StickShiftEngineState {
+        size: 4,
+        ..Default::default()
+    };
+    // SAFETY: a live engine; `small` is valid for its declared size.
+    assert_eq!(
+        unsafe { stickshift_engine_get_state(h.engine, &mut small) },
+        STICKSHIFT_ERROR_INVALID_ARGUMENT
+    );
     assert_eq!(
         h.tick_with(STICKSHIFT_CLOCK_FIXED_STEP, 0).0,
         STICKSHIFT_ERROR_INTERNAL
     );
     assert_eq!(h.init(), STICKSHIFT_ERROR_INTERNAL);
+    // SAFETY: a live engine, between calls.
+    assert_eq!(
+        unsafe { stickshift_engine_request_exit(h.engine) },
+        STICKSHIFT_ERROR_INTERNAL
+    );
+    // Still poisoned: get_state did not clear it.
+    assert_eq!(state_of(h.engine).map(|s| s.poisoned), Ok(1));
     // The context still works, and destroy still releases the game.
     let (mut w, mut hgt) = (0, 0);
     // SAFETY: a live context, between calls.

@@ -1043,7 +1043,9 @@ pub struct StickShiftEngineState {
     pub hosted: u8,
     /// 1 if the init hook failed.
     pub failed: u8,
-    /// 1 if a panic was caught in an engine call.
+    /// 1 if a panic was caught in an engine call: every call but
+    /// `stickshift_engine_get_state` and `stickshift_engine_destroy` is now
+    /// `STICKSHIFT_ERROR_INTERNAL`; destroy the engine.
     pub poisoned: u8,
     /// 1 once the game, the host or an event asked to exit.
     pub exit_requested: u8,

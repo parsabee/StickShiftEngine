@@ -946,7 +946,9 @@ typedef struct StickShiftEngineState {
    */
   uint8_t failed;
   /**
-   * 1 if a panic was caught in an engine call.
+   * 1 if a panic was caught in an engine call: every call but
+   * `stickshift_engine_get_state` and `stickshift_engine_destroy` is now
+   * `STICKSHIFT_ERROR_INTERNAL`; destroy the engine.
    */
   uint8_t poisoned;
   /**
@@ -2809,7 +2811,9 @@ StickShiftResult stickshift_engine_request_exit(struct StickShiftEngine *engine)
 
 /**
  * The engine's flags and counters. In a hook, or between engine calls. Set
- * `out->size = sizeof(StickShiftEngineState)`.
+ * `out->size = sizeof(StickShiftEngineState)`. This is the one call besides
+ * destroy that a poisoned engine still answers, with `poisoned` set, so a
+ * host can tell a poisoned engine (destroy it) from a failed one.
  *
  * # Safety
  * `engine` must be NULL or a live engine; `out` NULL or valid for its

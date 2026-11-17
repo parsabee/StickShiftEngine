@@ -120,8 +120,8 @@ pub struct StickShiftEngine {
     sounds: RefCell<audio::Sounds>,
     /// The Graphics menu the host last asked for ([`graphics`]).
     menu: RefCell<graphics::MenuCache>,
-    /// A panic was caught in an engine call: every later call but destroy is
-    /// `STICKSHIFT_ERROR_INTERNAL`.
+    /// A panic was caught in an engine call: every later call but destroy and
+    /// get_state is `STICKSHIFT_ERROR_INTERNAL`.
     poisoned: Cell<bool>,
     /// The init hook failed.
     failed: Cell<bool>,
@@ -329,12 +329,34 @@ pub(crate) unsafe fn engine_call(
     engine: *mut StickShiftEngine,
     body: impl FnOnce(&StickShiftEngine) -> Outcome,
 ) -> StickShiftResult {
+    checked_call(engine, Poison::Refuse, body)
+}
+
+/// Whether an engine call refuses a poisoned engine.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Poison {
+    /// `STICKSHIFT_ERROR_INTERNAL`: every engine call but destroy and get_state.
+    Refuse,
+    /// Answer anyway: `stickshift_engine_get_state`, which is how a host
+    /// learns the engine is poisoned. Its body only reads.
+    Answer,
+}
+
+/// [`engine_call`], with a choice about a poisoned engine.
+///
+/// # Safety
+/// `engine` must be NULL or a live engine.
+unsafe fn checked_call(
+    engine: *mut StickShiftEngine,
+    poison: Poison,
+    body: impl FnOnce(&StickShiftEngine) -> Outcome,
+) -> StickShiftResult {
     call(|| {
         let engine = input(engine.cast_const(), "engine")?;
         if engine.thread != current_thread() {
             return Err(wrong_thread());
         }
-        if engine.poisoned.get() {
+        if poison == Poison::Refuse && engine.poisoned.get() {
             return Err(poisoned());
         }
         match catch_unwind(AssertUnwindSafe(|| body(engine))) {
@@ -380,7 +402,20 @@ unsafe fn game_call(
     what: &str,
     body: impl FnOnce(&StickShiftEngine, Access<'_>) -> Outcome,
 ) -> StickShiftResult {
-    engine_call(engine, |engine| {
+    game_call_as(engine, what, Poison::Refuse, body)
+}
+
+/// [`game_call`], with a choice about a poisoned engine.
+///
+/// # Safety
+/// `engine` must be NULL or a live engine.
+unsafe fn game_call_as(
+    engine: *mut StickShiftEngine,
+    what: &str,
+    poison: Poison,
+    body: impl FnOnce(&StickShiftEngine, Access<'_>) -> Outcome,
+) -> StickShiftResult {
+    checked_call(engine, poison, |engine| {
         let top = engine.scopes.borrow().last().copied();
         match top {
             // SAFETY: the hook's `EngineCtx` is live until it returns, and its
@@ -531,10 +566,13 @@ impl Game for CGame {
             !engine.panic_in_update.take(),
             "a panic a test asked for, inside the engine's update step"
         );
-        engine.bump(|c| c.updates += 1);
         let update = engine.game.update.expect("checked at create");
+        // Counted only when the hook runs (not on a poisoned engine).
         // SAFETY: as in `init`.
-        engine.run_hook(ctx, Hook::Update, |user, e| unsafe { update(user, e, dt) });
+        engine.run_hook(ctx, Hook::Update, |user, e| {
+            engine.bump(|c| c.updates += 1);
+            unsafe { update(user, e, dt) }
+        });
     }
 
     fn render(&mut self, ctx: &mut EngineCtx<'_>) {
@@ -1453,7 +1491,9 @@ pub unsafe extern "C" fn stickshift_engine_request_exit(
 }
 
 /// The engine's flags and counters. In a hook, or between engine calls. Set
-/// `out->size = sizeof(StickShiftEngineState)`.
+/// `out->size = sizeof(StickShiftEngineState)`. This is the one call besides
+/// destroy that a poisoned engine still answers, with `poisoned` set, so a
+/// host can tell a poisoned engine (destroy it) from a failed one.
 ///
 /// # Safety
 /// `engine` must be NULL or a live engine; `out` NULL or valid for its
@@ -1463,29 +1503,34 @@ pub unsafe extern "C" fn stickshift_engine_get_state(
     engine: *mut StickShiftEngine,
     out: *mut StickShiftEngineState,
 ) -> StickShiftResult {
-    game_call(engine, "stickshift_engine_get_state", |e, access| {
-        let exit_requested = match access {
-            Access::Idle(state) => state.session.lp.exit_requested,
-            Access::Hook(ctx) => ctx.exit_requested(),
-        };
-        let counters = e.counters.get();
-        let state = StickShiftEngineState {
-            size: 0,
-            initialized: u8::from(e.initialized.get()),
-            hosted: u8::from(e.hosted.get()),
-            failed: u8::from(e.failed.get()),
-            poisoned: u8::from(e.poisoned.get()),
-            exit_requested: u8::from(exit_requested),
-            holding: u8::from(e.holding.get()),
-            reserved: [0; 2],
-            frames: counters.frames,
-            updates: counters.updates,
-            frames_rendered: counters.rendered,
-            frames_discarded: counters.discarded,
-        };
-        write_sized(out, state, "out")?;
-        Ok(STICKSHIFT_OK)
-    })
+    game_call_as(
+        engine,
+        "stickshift_engine_get_state",
+        Poison::Answer,
+        |e, access| {
+            let exit_requested = match access {
+                Access::Idle(state) => state.session.lp.exit_requested,
+                Access::Hook(ctx) => ctx.exit_requested(),
+            };
+            let counters = e.counters.get();
+            let state = StickShiftEngineState {
+                size: 0,
+                initialized: u8::from(e.initialized.get()),
+                hosted: u8::from(e.hosted.get()),
+                failed: u8::from(e.failed.get()),
+                poisoned: u8::from(e.poisoned.get()),
+                exit_requested: u8::from(exit_requested),
+                holding: u8::from(e.holding.get()),
+                reserved: [0; 2],
+                frames: counters.frames,
+                updates: counters.updates,
+                frames_rendered: counters.rendered,
+                frames_discarded: counters.discarded,
+            };
+            write_sized(out, state, "out")?;
+            Ok(STICKSHIFT_OK)
+        },
+    )
 }
 
 /// Frame timing: in a hook, the snapshot the hook's frame started with and,
