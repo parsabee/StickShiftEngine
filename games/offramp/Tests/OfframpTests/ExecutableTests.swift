@@ -152,6 +152,35 @@ struct ExecutableTests {
         #expect(cluster.status == 0)
         #expect(cluster.out == OFFRAMP_HELP)
         #expect(cluster.stderr.isEmpty)
+        // Before the assets are looked for, as clap exits in Rust: with none to
+        // be found, the help still prints and exits 0.
+        let noAssets = try offramp("--help", environment: [AssetRoot.environmentVariable: "/nonexistent"])
+        #expect(noAssets.status == 0)
+        #expect(noAssets.out == OFFRAMP_HELP)
+        #expect(noAssets.stderr.isEmpty)
+    }
+
+    @Test func aFailedRunPrintsItsErrorAndExitsOne() throws {
+        // An asset directory that passes the lookup (it has the `road.gltf`
+        // marker) but holds no real models: `initialize` throws on a model's
+        // import, and the run prints that error and exits 1, with nothing on
+        // stdout (not the smoke run's OK line).
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("offramp-assets-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        FileManager.default.createFile(atPath: directory.appendingPathComponent("road.gltf").path, contents: Data())
+
+        for arguments in [["--smoke"], ["--trace", "smoke"]] {
+            let run = try start(arguments, environment: [AssetRoot.environmentVariable: directory.path]).finish()
+            #expect(run.status == 1, "\(arguments)")
+            #expect(run.stdout.isEmpty, "\(arguments)")
+            let lines = run.err.split(separator: "\n", omittingEmptySubsequences: false)
+            #expect(lines.last == "", "\(arguments): stderr ends with a newline")
+            let errors = lines.filter { $0.hasPrefix("error: ") }
+            #expect(errors.count == 1, "\(arguments): one error line: \(run.err)")
+            #expect(errors.first?.contains(".gltf") == true, "\(arguments): a model's import fails: \(run.err)")
+            #expect(lines.dropLast().last?.hasPrefix("error: ") == true, "\(arguments): nothing after the error")
+        }
     }
 
     @Test func stdoutIsLineBufferedIntoAFile() throws {
