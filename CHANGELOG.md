@@ -73,6 +73,14 @@ API**.
 - `Camera::fov_y`, `Camera::set_fov_y` and `Camera::aspect_ratio`.
 - `Scene::try_set_config`, which returns `StreamingConfigError::AxisOrIntervalChanged` where
   `Scene::set_config` panics, and changes nothing.
+- **Components registered at run time**, in `stickshift-ecs` behind a new `dynamic` feature
+  (off by default), for hosts that cannot define Rust types. `stickshift_ecs::dynamic::Registry`
+  gives each registered component its own slot type from one of two families, `Tag<N>`
+  (zero-sized) and `Blob<N>` (the value's bytes, inline up to 32 bytes and boxed up to 4096), with 128
+  slots each and at most 128 game components per registry. Spawn, insert and remove are hecs's
+  own calls, so archetypes, query order and id reuse match Rust types. Queries copy their rows
+  into an aligned `Rows` buffer that borrows nothing from the world. Engine components keep
+  their Rust types and get a byte form through a `Codec`.
 
 ### Changed
 

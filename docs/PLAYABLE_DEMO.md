@@ -456,7 +456,7 @@ Five crates carry a self-scanning **guard test** that embeds the crate's own sou
 | `tests::no_game_specific_symbols` ([lib.rs:858](../crates/stickshift-scene/src/lib.rs#L858)) | `stickshift-scene` |
 | `guard_tests::no_game_specific_symbols` ([lib.rs:74](../crates/stickshift-assets/src/lib.rs#L74)) | `stickshift-assets` |
 | `guard_tests::no_game_specific_symbols` ([lib.rs](../crates/stickshift-audio/src/lib.rs)) | `stickshift-audio` |
-| `tests::test_no_game_specific_symbols` ([lib.rs:648](../crates/stickshift-ecs/src/lib.rs#L648)) | `stickshift-ecs` |
+| `tests::test_no_game_specific_symbols` ([lib.rs:654](../crates/stickshift-ecs/src/lib.rs#L654)) | `stickshift-ecs` |
 
 The forbidden words are assembled from ASCII byte codes rather than written as literals, so each
 test's own body contains no occurrence of them and can scan every file in its crate — itself
