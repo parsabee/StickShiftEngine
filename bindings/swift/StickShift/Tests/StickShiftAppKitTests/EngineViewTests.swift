@@ -11,9 +11,10 @@ import Testing
 
 // The engine's view in a real, offscreen window (Offramp's `GameViewTests`,
 // moved here with the host): AppKit's resizes and display changes reach the
-// engine as the Rust runner reports winit's, keys and the mouse reach the
-// game, and the view does what the engine asks. Needs a Metal device for the
-// view's layer, and no display.
+// engine as winit reports them to the Rust runner (a display change as a
+// scale change and then a resize), keys and the mouse reach the game, and the
+// view does what the engine asks. Needs a Metal device for the view's layer,
+// and no display.
 
 /// A window whose display density the test sets, standing in for a move between
 /// a Retina and a 1x display, and that counts its full-screen toggles.
@@ -141,8 +142,11 @@ struct EngineViewTests {
         #expect(rig.game.initialized == 1)
     }
 
-    @Test func aResizeIsViewResizedAndADensityChangeIsScaleChanged() throws {
+    @Test func aResizeIsViewResizedAndADensityChangeIsScaleChangedThenViewResized() throws {
         guard let rig = try Rig.make() else { return }
+        let bar = rig.view.makeMenuBar()
+        let resolution = try #require(bar.menu.items.first { $0.title == "Resolution" }?.submenu)
+        let checked = try #require(resolution.items.first { $0.state == .on })
         rig.setAspect(1)
         rig.window.setContentSize(NSSize(width: 1000, height: 700))
         #expect(rig.events.all == [.viewResized(ViewMetrics(width: 2000, height: 1400, scaleFactor: 2))])
@@ -150,17 +154,21 @@ struct EngineViewTests {
         rig.expectDrawable("resized")
         #expect(rig.view.engine.cameraAspect == rig.viewAspect, "the aspect follows a resize")
 
-        // Dragged to a 1x display: half a drawable pixel per point, and the
-        // aspect left alone.
+        // Dragged to a 1x display: half a drawable pixel per point. winit
+        // follows its ScaleFactorChanged with a Resized, so the aspect follows
+        // the view and the menu syncs, as in the Rust runner.
         rig.events.all.removeAll()
         rig.setAspect(1)
+        checked.state = .off
         rig.window.density = 1
         rig.view.viewDidChangeBackingProperties()
-        #expect(rig.events.all == [.scaleChanged(ViewMetrics(width: 1000, height: 700, scaleFactor: 1))])
+        let oneX = ViewMetrics(width: 1000, height: 700, scaleFactor: 1)
+        #expect(rig.events.all == [.scaleChanged(oneX), .viewResized(oneX)])
         #expect(rig.view.context.size == (500, 350))
         #expect(rig.view.context.scale == 0.5)
         rig.expectDrawable("moved to 1x")
-        #expect(rig.view.engine.cameraAspect == 1, "a scale change leaves the aspect alone")
+        #expect(rig.view.engine.cameraAspect == rig.viewAspect, "the aspect follows the view")
+        #expect(checked.state == .on, "the menu synced")
 
         // Nothing changed: nothing reported.
         rig.events.all.removeAll()
@@ -169,8 +177,6 @@ struct EngineViewTests {
         #expect(rig.events.all.isEmpty)
 
         // The Resolution menu at 100% sizes the drawable to the native pixels.
-        let bar = rig.view.makeMenuBar()
-        let resolution = try #require(bar.menu.items.first { $0.title == "Resolution" }?.submenu)
         resolution.performActionForItem(at: 2)
         #expect(rig.events.all == [.menu(GraphicsMenu.Tag(rawValue: 403))])
         #expect(rig.view.context.size == (1000, 700))
@@ -185,6 +191,14 @@ struct EngineViewTests {
         rig.window.setContentSize(NSSize(width: 801, height: 601))
         #expect(rig.view.context.size == (1602, 1202))
         rig.expectDrawable("an odd size")
+    }
+
+    /// Each side is `round(points × backing scale)`, halves away from zero, as
+    /// winit's `inner_size` rounds.
+    @Test func aFractionalSizeRoundsHalvesAwayFromZero() throws {
+        guard let rig = try Rig.make() else { return }
+        rig.view.setFrameSize(NSSize(width: 100.25, height: 50.75))
+        #expect(rig.events.all == [.viewResized(ViewMetrics(width: 201, height: 102, scaleFactor: 2))])
     }
 
     @Test func keysGoThroughTheKeycodeTable() throws {
@@ -235,6 +249,30 @@ struct EngineViewTests {
         #expect(input.cursor_x == 100 && input.cursor_y == 150)
         rig.view.mouseDragged(with: rig.mouse(.leftMouseDragged, at: NSPoint(x: 0, y: 600)))
         #expect(rig.events.all.last == .cursor([0, 0]))
+    }
+
+    /// winit's view accepts the first mouse, and reports the cursor before
+    /// each press and release: a click with no move before it, into a window
+    /// that was not the key window, reaches the game with its position.
+    @Test func aClickReportsTheCursorFirstAndActivationDoesNotSwallowIt() throws {
+        guard let rig = try Rig.make() else { return }
+        #expect(rig.view.acceptsFirstMouse(for: nil))
+        let engine = rig.view.engine
+        #expect(engine.inputState.has_cursor == 0)
+
+        rig.view.mouseDown(with: rig.mouse(.leftMouseDown, at: NSPoint(x: 100, y: 450)))
+        #expect(rig.events.all == [.cursor([100, 150]), .mouseDown(.left)])
+        let input = engine.inputState
+        #expect(input.has_cursor == 1)
+        #expect(input.cursor_x == 100 && input.cursor_y == 150)
+        #expect(engine.isMouseDown(.left))
+
+        rig.events.all.removeAll()
+        rig.view.mouseUp(with: rig.mouse(.leftMouseUp, at: NSPoint(x: 120, y: 400)))
+        rig.view.rightMouseDown(with: rig.mouse(.rightMouseDown, at: NSPoint(x: 5, y: 590)))
+        #expect(
+            rig.events.all == [.cursor([120, 200]), .mouseUp(.left), .cursor([5, 10]), .mouseDown(.right)]
+        )
     }
 
     @Test func losingTheKeyWindowReleasesEverything() throws {
@@ -299,6 +337,9 @@ struct EngineViewTests {
         #expect(rig.view.hasExited)
         #expect(!rig.view.isRunning && !rig.view.watchdog.isRunning, "ticking stopped")
         #expect(rig.view.engine.isKeyDown(.escape), "the game still sees the key")
+        // Another exit request after the first: `onExit` is not called again.
+        #expect(rig.view.push(.close).contains(.exit))
+        #expect(exits == 1)
 
         guard let other = try Rig.make() else { return }
         other.view.onExit = { exits += 1 }
@@ -326,6 +367,36 @@ struct EngineViewTests {
         rig.view.stop()
         rig.view.watchdog.timerFired()
         #expect(rig.view.engine.state.frames == frames + 2)
+    }
+
+    /// The display link's frames restart the watchdog's count, so it drives no
+    /// frame alongside a running display link.
+    @Test func theDisplayLinkKeepsTheWatchdogQuiet() throws {
+        guard let rig = try Rig.make() else { return }
+        var now: UInt64 = 5_000_000_000
+        rig.view.watchdog.clock = { now }
+        rig.view.start()
+        defer { rig.view.stop() }
+        now += 200_000_000
+        // The display link's callback.
+        rig.view.onFrame?(rig.view.context, 0)
+        #expect(rig.view.watchdog.lastDisplayFrame == now)
+        let frames = rig.view.engine.state.frames
+        now += 100_000_000
+        #expect(!rig.view.watchdog.timerFired(), "100 ms since the display link's frame")
+        #expect(rig.view.engine.state.frames == frames)
+    }
+
+    /// The view ticks on the engine's own clock, in real time: a frame 60 ms
+    /// after the last runs the fixed steps that fit (one per display refresh
+    /// would be `.fixedStep`).
+    @Test func framesTickOnTheEngineClock() throws {
+        guard let rig = try Rig.make() else { return }
+        rig.view.driveFrame()
+        let updates = rig.game.updates
+        Thread.sleep(forTimeInterval: 0.06)
+        rig.view.driveFrame()
+        #expect(rig.game.updates >= updates + 3, "60 ms is three 1/60 s steps")
     }
 
     @Test func theFullScreenRequestTogglesTheWindowAndTheMenuFollows() throws {

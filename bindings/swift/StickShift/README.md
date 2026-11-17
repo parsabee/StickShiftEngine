@@ -190,7 +190,8 @@ import StickShiftAppKit
 StickShiftApp.run(title: "Cubes", size: CGSize(width: 800, height: 600)) { Cubes() }
 ```
 
-It makes a regular app that takes the keyboard from whatever launched it, installs winit's
+It makes an unbundled executable a regular app (a bundled one keeps its `Info.plist`'s policy,
+as with winit), takes the keyboard from whatever launched it, installs winit's
 application menu, opens a centred, resizable window with an `EngineView` in it, runs the game's
 `load` and `initialize`, adds the Graphics menu, and quits on Escape or when the window closes.
 Its options default to `Engine.Options.app`: the sound device, saved settings, Escape quits.
@@ -198,11 +199,12 @@ Its options default to `Engine.Options.app`: the sound device, saved settings, E
 - **`EngineView`** is a `StickShiftView` that runs an `Engine` on its context. `run()` reports
   the view (`resume`) and starts the frames: each display refresh ticks the engine on its own
   monotonic clock (`tick(.engine)`) and polls the context. It reports its size in physical pixels
-  as `viewResized` (the camera's aspect follows) and a move to a display of another density as
-  `scaleChanged` (the aspect does not); the engine sizes the drawable for its Resolution setting.
-  Keys go through the macOS keycode table (`Key(macKeyCode:)`), with repeats flagged; mouse
-  buttons and the cursor (in points from the top-left) and losing the key window
-  (`focusLost`) go too. It carries out what the engine asks: full screen, a menu sync, and on
+  as `viewResized` (the camera's aspect follows, the menu syncs), and a move to a display of
+  another density as `scaleChanged` and then `viewResized`, as winit reports it to the Rust
+  runner; the engine sizes the drawable for its Resolution setting. Keys go through the macOS
+  keycode table (`Key(macKeyCode:)`), with repeats flagged; mouse buttons (each with the cursor
+  first, the first click into an inactive window included, as winit), the cursor (in points from
+  the top-left) and losing the key window (`focusLost`) go too. It carries out what the engine asks: full screen, a menu sync, and on
   exit it stops and calls `onExit`.
 - **`FrameWatchdog`** keeps the game running while AppKit has stopped the display link (the
   window minimised, the app hidden): a 60 Hz timer in the run loop's common modes ticks the
@@ -266,9 +268,11 @@ the screen sees is checked by hand, with the Cubes example, before a release:
 - **The macOS host (`StickShiftAppKitTests`):** `StickShiftView` sizing its context at a render
   scale, its UI scale, and taking the keyboard, a key-up with Command held included; `EngineView`
   in an offscreen window reporting a resize as `viewResized` and a display change as
-  `scaleChanged` (the drawable, the UI scale and the camera's aspect checked against the engine's
-  own rules), keys through the keycode table, the mouse and the cursor, focus loss, Escape and
-  closing, the full-screen request, and ticking only once resumed and until exit; the Graphics
+  `scaleChanged` then `viewResized` (the drawable, the UI scale, the camera's aspect and the menu
+  checked against the engine's own rules), sizes rounded as winit rounds, keys through the
+  keycode table, the mouse with the cursor before each click, focus loss, Escape and closing
+  (exit reported once), the full-screen request, ticking on the engine clock only once resumed
+  and until exit, and the display link keeping the watchdog quiet; the Graphics
   menu built from the engine's data (titles, tags, checkmarks, enabled states, the full-screen
   title and ⌃⌘F, one target and action) and synced after a choice; winit's application menu; the
   keycode table; and the watchdog on a fake clock, its timer in the run loop's common modes (the
@@ -281,7 +285,7 @@ fails them instead.
 
 | Path | |
 |---|---|
-| `Package.swift` | The package: the `CStickShift` C module and the `StickShift` Swift target |
+| `Package.swift` | The package: the `CStickShift` C module, the `StickShift` Swift target, and the macOS `StickShiftAppKit` target |
 | `Sources/CStickShift/module.modulemap` | The C API as a Clang module, over `crates/stickshift-capi/include/stickshift.h` |
 | `Sources/StickShift/` | The Swift API (no AppKit) |
 | `Sources/StickShiftAppKit/` | The macOS host: `StickShiftView`, `EngineView`, `GraphicsMenuBar`, `FrameWatchdog`, `StickShiftApp`, the keycode table |

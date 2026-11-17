@@ -16,9 +16,11 @@ import StickShift
 public enum StickShiftApp {
     /// Run `makeGame`'s game in a window until the player quits. Never returns.
     ///
-    /// - The application is a regular one, with a Dock icon and a menu bar, and
-    ///   takes the keyboard from whatever launched it (a terminal included), as
-    ///   winit does.
+    /// - An executable outside a bundle becomes a regular application, with a
+    ///   Dock icon and a menu bar; a bundled one keeps its `Info.plist`'s
+    ///   policy (`LSUIElement`, `LSBackgroundOnly`). Either way it takes the
+    ///   keyboard from whatever launched it (a terminal included). All as winit
+    ///   does.
     /// - The menu bar has winit's application menu (About, Services, Hide, Hide
     ///   Others, Show All, Quit), and the engine's Graphics menu
     ///   (``GraphicsMenuBar``) once the game has initialized.
@@ -52,6 +54,13 @@ public enum StickShiftApp {
             app.run()
         }
         exit(0)
+    }
+
+    /// Whether the app sets the regular activation policy: only outside a
+    /// bundle (no `bundleIdentifier`), as winit does with no policy given, so
+    /// a bundle's `LSUIElement` or `LSBackgroundOnly` is kept.
+    static func setsRegularPolicy(bundleIdentifier: String?) -> Bool {
+        bundleIdentifier == nil
     }
 
     /// winit's application menu (`platform_impl/macos/menu.rs`): About,
@@ -127,11 +136,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // An executable outside a bundle gets no menu bar, Dock icon or
-        // keyboard unless it asks to be a regular app, as winit does. Then it
-        // takes the keyboard from whatever launched it, as winit does
-        // (`activateIgnoringOtherApps:YES`): the cooperative `activate()` is
-        // refused when a terminal, which never yields, started the process.
-        NSApp.setActivationPolicy(.regular)
+        // keyboard unless it asks to be a regular app; a bundled one keeps the
+        // policy its Info.plist gives it. Both as winit does, with no policy
+        // set (`app_state.rs`). Then it takes the keyboard from whatever
+        // launched it, as winit does (`activateIgnoringOtherApps:YES`): the
+        // cooperative `activate()` is refused when a terminal, which never
+        // yields, started the process.
+        if StickShiftApp.setsRegularPolicy(bundleIdentifier: NSRunningApplication.current.bundleIdentifier) {
+            NSApp.setActivationPolicy(.regular)
+        }
         NSApp.activate(ignoringOtherApps: true)
         NSApp.mainMenu = StickShiftApp.applicationMenu()
 

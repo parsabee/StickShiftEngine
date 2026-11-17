@@ -167,4 +167,11 @@ struct GraphicsMenuBarTests {
         let hideOthers = try #require(menu.items.first { $0.title == "Hide Others" })
         #expect(hideOthers.keyEquivalentModifierMask == [.option, .command])
     }
+
+    /// winit sets no activation policy for a bundled app, so its Info.plist's
+    /// `LSUIElement` holds; an unbundled executable becomes a regular app.
+    @Test func onlyAnUnbundledAppIsMadeRegular() {
+        #expect(StickShiftApp.setsRegularPolicy(bundleIdentifier: nil))
+        #expect(!StickShiftApp.setsRegularPolicy(bundleIdentifier: "com.example.cubes"))
+    }
 }

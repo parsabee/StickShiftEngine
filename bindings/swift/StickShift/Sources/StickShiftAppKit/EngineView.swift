@@ -25,16 +25,20 @@ import StickShift
 ///
 /// - **Its size**, in physical pixels (each side `round(points × backing
 ///   scale)`, winit's `inner_size`), with its backing scale: a change of size
-///   is ``HostEvent/viewResized(_:)`` (the camera's aspect follows), a move to a
-///   display of another density ``HostEvent/scaleChanged(_:)`` (the aspect is
-///   left alone). The engine sizes the drawable for its Resolution setting, so
-///   the view's ``StickShiftView/renderScale`` is not used.
+///   is ``HostEvent/viewResized(_:)`` (the camera's aspect follows, and the
+///   menu syncs). A move to a display of another density is
+///   ``HostEvent/scaleChanged(_:)`` and then ``HostEvent/viewResized(_:)``, as
+///   winit follows its `ScaleFactorChanged` with a `Resized`. The engine sizes
+///   the drawable for its Resolution setting, so the view's
+///   ``StickShiftView/renderScale`` is not used.
 /// - **Keys**, through the macOS keycode table (``Key/init(macKeyCode:)``),
 ///   repeats flagged; a key released while Command is held included. The view
 ///   takes the keyboard when it joins a window. Keys the engine does not know
 ///   are dropped, and no key event goes on up the responder chain.
 /// - **The mouse**: the left, right and middle buttons, and the cursor in
-///   points from the view's top-left.
+///   points from the view's top-left. Each press and release reports the
+///   cursor first, and a click into an inactive window is not only an
+///   activation, as with winit.
 /// - **Focus loss**: when its window stops being the key window, everything
 ///   held is released.
 ///
@@ -229,18 +233,20 @@ public final class EngineView: StickShiftView {
 
     /// The engine sizes the drawable, for its own render scale: report the
     /// change instead, once the engine has a view and only if the view's
-    /// metrics changed. A new size is a resize; a new backing scale alone (a
-    /// move to another display) is a scale change.
+    /// metrics changed. A new size is a resize. A new backing scale (a move to
+    /// another display) is a scale change and then a resize, in winit's order:
+    /// its `ScaleFactorChanged` is always followed by a `Resized`, so the Rust
+    /// runner also resets the camera's aspect and syncs the menu.
     override func layoutDrawable(_ change: DrawableChange) {
         guard isResumed else { return }
         let current = metrics
         guard current != reportedMetrics else { return }
+        let previous = reportedMetrics
         reportedMetrics = current
-        switch change {
-        case .size:
+        if current.scaleFactor != previous?.scaleFactor {
+            push(.scaleChanged(current), .viewResized(current))
+        } else {
             push(.viewResized(current))
-        case .backing, .window, .renderScale:
-            push(.scaleChanged(current))
         }
     }
 
@@ -251,22 +257,47 @@ public final class EngineView: StickShiftView {
         push(isDown ? .keyDown(key, isRepeat: isRepeat) : .keyUp(key))
     }
 
-    private func button(_ number: Int, isDown: Bool) {
+    /// A click into the window while it is not the key window reaches the
+    /// game too, as winit's view accepts the first mouse by default.
+    public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// The cursor first, then the button, as winit's view reports a press or
+    /// a release: the game sees where the click was even without a move
+    /// before it.
+    private func button(_ number: Int, isDown: Bool, _ event: NSEvent) {
         guard let button = MouseButton(macButtonNumber: number) else { return }
-        push(isDown ? .mouseDown(button) : .mouseUp(button))
+        let click: HostEvent = isDown ? .mouseDown(button) : .mouseUp(button)
+        if let cursor = cursorEvent(event) {
+            push(cursor, click)
+        } else {
+            push(click)
+        }
     }
 
     private func cursor(_ event: NSEvent) {
-        let p = convert(event.locationInWindow, from: nil)
-        push(.cursor([Double(p.x), Double(bounds.height - p.y)]))
+        if let cursor = cursorEvent(event) {
+            push(cursor)
+        }
     }
 
-    public override func mouseDown(with event: NSEvent) { button(0, isDown: true) }
-    public override func mouseUp(with event: NSEvent) { button(0, isDown: false) }
-    public override func rightMouseDown(with event: NSEvent) { button(1, isDown: true) }
-    public override func rightMouseUp(with event: NSEvent) { button(1, isDown: false) }
-    public override func otherMouseDown(with event: NSEvent) { button(event.buttonNumber, isDown: true) }
-    public override func otherMouseUp(with event: NSEvent) { button(event.buttonNumber, isDown: false) }
+    /// The cursor at `event`, in points from the view's top-left; `nil`, as
+    /// winit's `mouse_motion` does, when it is outside the view with no
+    /// button held.
+    private func cursorEvent(_ event: NSEvent) -> HostEvent? {
+        let p = convert(event.locationInWindow, from: nil)
+        let outside = p.x < 0 || p.y < 0 || p.x > bounds.width || p.y > bounds.height
+        if outside, NSEvent.pressedMouseButtons == 0 {
+            return nil
+        }
+        return .cursor([Double(p.x), Double(bounds.height - p.y)])
+    }
+
+    public override func mouseDown(with event: NSEvent) { button(0, isDown: true, event) }
+    public override func mouseUp(with event: NSEvent) { button(0, isDown: false, event) }
+    public override func rightMouseDown(with event: NSEvent) { button(1, isDown: true, event) }
+    public override func rightMouseUp(with event: NSEvent) { button(1, isDown: false, event) }
+    public override func otherMouseDown(with event: NSEvent) { button(event.buttonNumber, isDown: true, event) }
+    public override func otherMouseUp(with event: NSEvent) { button(event.buttonNumber, isDown: false, event) }
     public override func mouseMoved(with event: NSEvent) { cursor(event) }
     public override func mouseDragged(with event: NSEvent) { cursor(event) }
     public override func rightMouseDragged(with event: NSEvent) { cursor(event) }
