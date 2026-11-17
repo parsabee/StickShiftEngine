@@ -10,8 +10,8 @@ import simd
 @testable import OfframpGame
 
 /// `game.rs`'s tests, one to one, with their names and messages, against the
-/// Swift `Headless`. The audio tests are in `AudioTests`, the lane-PRNG test in
-/// `RngTests`. Where the Rust probe captured the values a test reaches, they are
+/// Swift `Headless`. The audio tests are in `GameAudioTests`, the lane-PRNG test
+/// in `RngTests`. Where the Rust probe captured the values a test reaches, they are
 /// checked too, bit for bit ("golden").
 @MainActor
 @Suite("game")

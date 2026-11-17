@@ -192,6 +192,14 @@ OFFRAMP_RUST_FRAMES=/tmp/rust-frames ./scripts/test-offramp.sh --filter 'Recorde
 
 `OFFRAMP_SAVE_FRAMES=<dir>` also writes the Swift frame 150 there as a PNG.
 
+The tests run the engine's audio silent, which decodes nothing. The one that decodes the
+committed WAVs on the default output device (ignored in Rust, as it needs sound hardware) runs
+only with `OFFRAMP_DEVICE_TESTS=1`, at -60 dB:
+
+```sh
+OFFRAMP_DEVICE_TESTS=1 ./scripts/test-offramp.sh --filter GameAudioTests
+```
+
 To regenerate the fixtures after a deliberate change to the Rust demo (the
 [fixtures README](Tests/OfframpTests/Fixtures/README.md) says what each holds):
 
