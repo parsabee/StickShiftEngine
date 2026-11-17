@@ -73,6 +73,11 @@ view.start()
   throws `.wrongState`.
 - **The camera and the sun are sticky** across frames. **Lights last one frame**: add them every
   frame. `Material(emissive:)` makes a surface glow without lighting anything else.
+- **Models** draw whole with `frame.draw(model, transform:)`, or with
+  `frame.draw(model, world:local:parts:tint:)`, which places each part at
+  `world × (local × node)` and can draw only the `.textured` or only the `.untextured` parts. A
+  game that fits a model to its world passes the fit as `local`, and can draw every textured
+  surface first and the untextured ones after its other draws.
 - **Model loads are `async`.** The engine parses on its own threads and uploads during
   `pollEvents()`. While a load is pending the context polls by itself, so `await` works without
   a render loop. `StickShiftView` polls every frame anyway.
@@ -81,7 +86,10 @@ view.start()
 - **Math** is plain `simd`: `simd_float4x4`, `SIMD3<Float>`, `simd_quatf`, with
   `.perspective(fovY:aspect:near:far:)`, `.lookAt(eye:target:up:)` and
   `init(translation:rotation:scale:)` matching the engine's conventions (right-handed, +Y up,
-  column-major, depth `0...1`).
+  column-major, depth `0...1`). simd's `*` on two matrices fuses multiplies and adds, so its
+  products can differ in the last bit from the engine's. `StickShiftMath.multiply(_:_:)` and
+  `StickShiftMath.rotation(axis:angle:)` call the engine's own math instead, for results that
+  match a Rust game bit for bit; `Camera.perspective` multiplies with it.
 
 ### Threading
 
@@ -96,15 +104,34 @@ the layer, keeps the drawable sized to the view in pixels (on resize and when th
 a screen with another backing scale), and runs a `CADisplayLink` while it is in a window and
 started. Each refresh calls `onFrame` and then `pollEvents()`.
 
+- **Render scale.** `renderScale` (default 1, or `StickShiftView(size:renderScale:)`) renders
+  below the view's native resolution: each side's native pixels, `round(points × backing)`,
+  times `renderScale`, rounded and at least 1. Core Animation scales the frame up to fill the
+  view. `context.scale`, the HUD's pixels per point, becomes `backing × renderScale`.
+- **Keyboard.** Set `onKey(keyCode, isDown, isRepeat)` and the view takes the keyboard: it
+  becomes its window's first responder (at once, and whenever it joins a window) and hands it
+  each key-down and key-up with the virtual key code (`NSEvent.keyCode`, a physical key
+  position). It then passes no key event on, so AppKit does not beep; menu key equivalents
+  such as ⌘Q still work. Without a handler (the default) the view does not take focus and key
+  events go on up the responder chain. A key released while Command is held
+  arrives too, so no key is left down: `NSApplication` never hands a window such a key-up, so
+  while the view is in a window and its first responder, a local event monitor sends it to the
+  window itself (winit overrides `sendEvent:` for the same reason).
+
 ## Tests
 
 `./scripts/test-swift.sh` runs the package's Swift Testing suite:
 
 - **Null backend:** contexts, resources and their lifetimes, errors, frames (including a
   discarded one and a frame used too late), lights and their limit, emission, settings, fonts
-  and quads, and `async` model loads (from a file, from memory, failing).
-- **Metal:** offscreen rendering with read-back, lights and emission changing the pixels, and
-  the host view sizing its context.
+  and quads, `async` model loads (from a file, from memory, failing), and model draws that
+  select their textured or untextured parts.
+- **Math:** `StickShiftMath.multiply` matches the engine's unfused product bit for bit,
+  `StickShiftMath.rotation` matches its quaternions (signed zeros included), and
+  `Camera.perspective` multiplies with it.
+- **Metal:** offscreen rendering with read-back, lights and emission changing the pixels, a model
+  drawn at `world × local` (and tinted, and by part), and the host view: sizing its context at
+  a render scale, its UI scale, and taking the keyboard, a key-up with Command held included.
 
 The Metal tests skip without a device; CI sets `STICKSHIFT_REQUIRE_GPU=1` so a missing device
 fails them instead.

@@ -338,6 +338,48 @@ pub unsafe extern "C" fn stickshift_frame_draw_mesh(
     })
 }
 
+/// Record, in node order, the parts of `model` on the pipeline `only` names
+/// (every part for `None`), each at `place(node matrix)` with its base colour
+/// multiplied by `tint`. `STICKSHIFT_NOT_READY` (one skipped draw) until the
+/// model loads.
+fn record_model(
+    inner: &mut Inner,
+    model: StickShiftModel,
+    only: Option<PipelineKind>,
+    tint: [f32; 4],
+    place: impl Fn(Mat4) -> Mat4,
+) -> Result<StickShiftResult, Error> {
+    let entry = inner
+        .models
+        .get(model.id)
+        .ok_or_else(|| Error::invalid_handle("model"))?;
+    if entry.state != ModelState::Ready {
+        inner.counters.draws_skipped += 1;
+        return Ok(STICKSHIFT_NOT_READY);
+    }
+    let call = inner.recording.next_call();
+    for &(part, transform) in &entry.instances {
+        let part = &entry.parts[part];
+        if only.is_some_and(|kind| kind != part.kind) {
+            continue;
+        }
+        let mut base_color = part.base_color;
+        for (c, t) in base_color.iter_mut().zip(tint) {
+            *c *= t;
+        }
+        inner.recording.draws.push(DrawCall {
+            kind: part.kind,
+            mesh: part.mesh,
+            model: place(transform),
+            base_color,
+            emissive: part.emissive,
+            texture: part.texture,
+        });
+        inner.recording.draw_sources.push((model.id, 0, call));
+    }
+    Ok(STICKSHIFT_OK)
+}
+
 /// Record a draw of every part of `model` at `*world`, its base colours
 /// multiplied by `*tint` (NULL: white). `STICKSHIFT_NOT_READY` until it loads.
 ///
@@ -354,32 +396,44 @@ pub unsafe extern "C" fn stickshift_frame_draw_model(
         let world = Mat4::from(*input(world, "world")?);
         let tint = tint.as_ref().copied().unwrap_or(WHITE).to_array();
         with_frame(frame, |inner| {
-            let entry = inner
-                .models
-                .get(model.id)
-                .ok_or_else(|| Error::invalid_handle("model"))?;
-            if entry.state != ModelState::Ready {
-                inner.counters.draws_skipped += 1;
-                return Ok(STICKSHIFT_NOT_READY);
+            record_model(inner, model, None, tint, |node| world * node)
+        })
+    })
+}
+
+/// Like `stickshift_frame_draw_model`, with a local matrix and a part filter:
+/// record the parts of `model` that `draw->parts` selects, in node order, each
+/// at `draw->world × (draw->local × node)` with its base colour multiplied by
+/// `draw->tint`. Drawing a model's textured parts and its untextured parts in
+/// two calls lets other draws go between them. `STICKSHIFT_NOT_READY` until the
+/// model loads; `STICKSHIFT_ERROR_INVALID_ARGUMENT` for an unknown `parts`
+/// value.
+///
+/// # Safety
+/// `frame` must be NULL or an open frame; `draw` NULL or valid.
+#[no_mangle]
+pub unsafe extern "C" fn stickshift_frame_draw_model_ex(
+    frame: *mut StickShiftFrame,
+    model: StickShiftModel,
+    draw: *const StickShiftModelDraw,
+) -> StickShiftResult {
+    call(|| {
+        let draw = *input(draw, "draw")?;
+        let only = match draw.parts {
+            STICKSHIFT_MODEL_PARTS_ALL => None,
+            STICKSHIFT_MODEL_PARTS_TEXTURED => Some(PipelineKind::Textured),
+            STICKSHIFT_MODEL_PARTS_UNTEXTURED => Some(PipelineKind::VertexColor),
+            other => {
+                return Err(Error::invalid_argument(format!(
+                    "{other} is not a STICKSHIFT_MODEL_PARTS_* value"
+                )))
             }
-            let call = inner.recording.next_call();
-            for &(part, transform) in &entry.instances {
-                let part = &entry.parts[part];
-                let mut base_color = part.base_color;
-                for (c, t) in base_color.iter_mut().zip(tint) {
-                    *c *= t;
-                }
-                inner.recording.draws.push(DrawCall {
-                    kind: part.kind,
-                    mesh: part.mesh,
-                    model: world * transform,
-                    base_color,
-                    emissive: part.emissive,
-                    texture: part.texture,
-                });
-                inner.recording.draw_sources.push((model.id, 0, call));
-            }
-            Ok(STICKSHIFT_OK)
+        };
+        let (world, local) = (Mat4::from(draw.world), Mat4::from(draw.local));
+        with_frame(frame, |inner| {
+            record_model(inner, model, only, draw.tint.to_array(), |node| {
+                world * (local * node)
+            })
         })
     })
 }
@@ -644,4 +698,122 @@ pub unsafe extern "C" fn stickshift_frame_discard(frame: *mut StickShiftFrame) -
             Ok(STICKSHIFT_OK)
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use stickshift_math::glam::Quat;
+
+    use super::*;
+    use crate::context::{stickshift_context_create, stickshift_context_destroy};
+    use crate::context::{stickshift_context_flush, with_context};
+    use crate::models::stickshift_model_load_memory;
+
+    /// One triangle under two nodes turned -90° about X at scale 100, as the
+    /// sports car's are, the second also moved.
+    const TURNED_TRIANGLE: &[u8] = br#"{
+        "asset": {"version": "2.0"},
+        "buffers": [{"byteLength": 36,
+            "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA"}],
+        "bufferViews": [{"buffer": 0, "byteLength": 36}],
+        "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+            "min": [0, 0, 0], "max": [1, 1, 0]}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+        "nodes": [
+            {"mesh": 0, "rotation": [-0.7071068, 0, 0, 0.7071067], "scale": [100, 100, 100]},
+            {"mesh": 0, "rotation": [-0.7071068, 0, 0, 0.7071067], "scale": [100, 100, 100],
+             "translation": [0.37, 0.21, -0.93]}
+        ],
+        "scenes": [{"nodes": [0, 1]}],
+        "scene": 0
+    }"#;
+
+    fn bits(m: Mat4) -> [u32; 16] {
+        m.to_cols_array().map(f32::to_bits)
+    }
+
+    #[test]
+    fn model_parts_are_placed_at_world_times_local_times_node() {
+        let desc = StickShiftContextDesc {
+            api_version: STICKSHIFT_API_VERSION,
+            backend: STICKSHIFT_BACKEND_NULL,
+            metal_layer: std::ptr::null_mut(),
+            width: 4,
+            height: 4,
+            scale: 1.0,
+        };
+        let mut ctx = std::ptr::null_mut();
+        let mut model = StickShiftModel::default();
+        let bytes = StickShiftData {
+            ptr: TURNED_TRIANGLE.as_ptr().cast(),
+            len: TURNED_TRIANGLE.len(),
+            release: None,
+            user: std::ptr::null_mut(),
+        };
+        // A fit like the demo's car fit: a small uniform scale, a half turn,
+        // and a lift.
+        let local = Mat4::from_scale_rotation_translation(
+            Vec3::splat(0.012_345_7),
+            Quat::from_rotation_y(std::f32::consts::PI),
+            Vec3::new(0.013, 0.31, -0.027),
+        );
+        // The car's placement at a run of positions down the road.
+        let worlds: Vec<Mat4> = (0..16)
+            .map(|i| {
+                Mat4::from_scale_rotation_translation(
+                    Vec3::ONE,
+                    Quat::from_rotation_y(0.05 * i as f32),
+                    Vec3::new(1.75, 0.3, -3.7 * i as f32 - 0.61),
+                )
+            })
+            .collect();
+        // SAFETY: valid pointers to locals; the bytes are copied.
+        unsafe {
+            assert_eq!(stickshift_context_create(&desc, &mut ctx), STICKSHIFT_OK);
+            assert_eq!(
+                stickshift_model_load_memory(ctx, bytes, std::ptr::null(), &mut model),
+                STICKSHIFT_OK
+            );
+            assert_eq!(stickshift_context_flush(ctx), STICKSHIFT_OK);
+            let mut frame = std::ptr::null_mut();
+            assert_eq!(stickshift_frame_acquire(ctx, &mut frame), STICKSHIFT_OK);
+            for &world in &worlds {
+                let draw = StickShiftModelDraw {
+                    world: world.into(),
+                    local: local.into(),
+                    tint: WHITE,
+                    parts: STICKSHIFT_MODEL_PARTS_ALL,
+                };
+                assert_eq!(
+                    stickshift_frame_draw_model_ex(frame, model, &draw),
+                    STICKSHIFT_OK
+                );
+            }
+            let (nodes, recorded) = with_context(ctx, |inner| {
+                let entry = inner.models.get(model.id).expect("a live model");
+                let nodes: Vec<Mat4> = entry.instances.iter().map(|&(_, node)| node).collect();
+                let recorded: Vec<Mat4> = inner.recording.draws.iter().map(|d| d.model).collect();
+                Ok((nodes, recorded))
+            })
+            .expect("a live context");
+            assert_eq!(nodes.len(), 2);
+            assert_eq!(recorded.len(), worlds.len() * nodes.len());
+
+            let mut regrouped_differs = false;
+            for (draw, (world, node)) in recorded.iter().zip(
+                worlds
+                    .iter()
+                    .flat_map(|world| nodes.iter().map(move |node| (world, node))),
+            ) {
+                assert_eq!(bits(*draw), bits(*world * (local * *node)));
+                regrouped_differs |= bits(*draw) != bits((*world * local) * *node);
+            }
+            assert!(
+                regrouped_differs,
+                "these matrices do not tell the two groupings apart"
+            );
+            assert_eq!(stickshift_frame_discard(frame), STICKSHIFT_OK);
+            assert_eq!(stickshift_context_destroy(ctx), STICKSHIFT_OK);
+        }
+    }
 }

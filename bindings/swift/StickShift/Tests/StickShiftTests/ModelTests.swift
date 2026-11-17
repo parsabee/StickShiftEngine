@@ -5,6 +5,7 @@
 import Foundation
 import StickShift
 import Testing
+import simd
 
 @MainActor
 @Suite("Model loading (null backend)")
@@ -21,6 +22,30 @@ struct ModelTests {
             #expect(drawn)
         }
         #expect(context.stats.drawsSubmitted >= 1)
+    }
+
+    @Test func aModelDrawCanSelectItsParts() async throws {
+        let context = try nullContext()
+        let cube = try await context.loadModel(contentsOf: cubeFixture)
+        let textured = try await context.loadModel(contentsOf: texturedCubeFixture)
+        // The 3D draws one frame recording `record` hands over.
+        func drawn(_ record: (Frame) throws -> Bool) throws -> UInt64 {
+            let before = context.stats.drawsSubmitted
+            try context.frame { frame in
+                let ready = try record(frame)
+                #expect(ready)
+            }
+            return context.stats.drawsSubmitted - before
+        }
+        let placed = simd_float4x4(translation: [0, 0, -3])
+        for (model, texturedParts, untexturedParts): (Model, UInt64, UInt64) in [(cube, 0, 1), (textured, 1, 0)] {
+            #expect(try drawn { try $0.draw(model, transform: placed) } == texturedParts + untexturedParts)
+            #expect(try drawn { try $0.draw(model, world: placed) } == texturedParts + untexturedParts)
+            #expect(try drawn { try $0.draw(model, world: placed, parts: .all) } == texturedParts + untexturedParts)
+            #expect(try drawn { try $0.draw(model, world: placed, parts: .textured) } == texturedParts)
+            #expect(try drawn { try $0.draw(model, world: placed, parts: .untextured) } == untexturedParts)
+        }
+        #expect(context.stats.drawsSkipped == 0)
     }
 
     @Test func aModelLoadsFromMemory() async throws {

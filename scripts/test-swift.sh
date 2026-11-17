@@ -13,7 +13,12 @@ cd "$root"
 package="bindings/swift/StickShift"
 
 cargo build --quiet -p stickshift-capi --features "${STICKSHIFT_FEATURES:-}"
-[[ -f target/debug/libstickshift.a ]] || { echo "target/debug/libstickshift.a was not built" >&2; exit 1; }
+# Link the library just built, wherever cargo builds: target/ unless
+# $CARGO_TARGET_DIR or a build.target-dir setting moves it.
+target_dir="$(cargo metadata --no-deps --format-version 1 \
+    | python3 -I -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"
+export STICKSHIFT_LIB_DIR="$target_dir/debug"
+[[ -f "$STICKSHIFT_LIB_DIR/libstickshift.a" ]] || { echo "$STICKSHIFT_LIB_DIR/libstickshift.a was not built" >&2; exit 1; }
 
 # SwiftPM does not notice that libstickshift.a changed; touch a source so the
 # package relinks against the library just built.

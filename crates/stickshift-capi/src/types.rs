@@ -145,6 +145,15 @@ pub const STICKSHIFT_FILL_TEXTURE: StickShiftFill = 1;
 /// `STICKSHIFT_COLOR_SPACE_LINEAR`.
 pub const STICKSHIFT_FILL_SDF: StickShiftFill = 2;
 
+/// Which parts of a model `stickshift_frame_draw_model_ex` records.
+pub type StickShiftModelParts = u32;
+/// Every part.
+pub const STICKSHIFT_MODEL_PARTS_ALL: StickShiftModelParts = 0;
+/// The parts with a base-colour texture: those on the `POS_NORMAL_UV` layout.
+pub const STICKSHIFT_MODEL_PARTS_TEXTURED: StickShiftModelParts = 1;
+/// The parts without one: those on the `POS_NORMAL_COLOR` layout.
+pub const STICKSHIFT_MODEL_PARTS_UNTEXTURED: StickShiftModelParts = 2;
+
 // ---------------------------------------------------------------------------
 // Math
 // ---------------------------------------------------------------------------
@@ -342,9 +351,10 @@ pub struct StickShiftStats {
     /// 3D draws handed to the GPU: one per recorded mesh draw, one per model
     /// part.
     pub draws_submitted: u64,
-    /// Draw calls (`stickshift_frame_draw_mesh`, `_draw_model`, `_draw_quad`,
-    /// `_draw_text`) not made because a resource was pending, failed or
-    /// destroyed. Counted once per call, however many parts or glyphs it drew.
+    /// Draw calls (`stickshift_frame_draw_mesh`, `_draw_model`, `_draw_model_ex`,
+    /// `_draw_quad`, `_draw_text`) not made because a resource was pending,
+    /// failed or destroyed. Counted once per call, however many parts or glyphs
+    /// it drew.
     pub draws_skipped: u64,
     /// Live mesh handles, any state.
     pub meshes: u32,
@@ -510,6 +520,29 @@ pub struct StickShiftMaterial {
     /// window or a lamp glows without lighting anything else. May exceed 1.
     /// `{0, 0, 0}` emits nothing.
     pub emissive: [f32; 3],
+}
+
+/// A model draw for `stickshift_frame_draw_model_ex`: where the model goes and
+/// which of its parts to record.
+///
+/// Each selected part is drawn at `world × (local × node)`, where `node` is the
+/// part's node matrix from the glTF file, multiplied in that grouping. Float
+/// products are not associative, so this can differ in the last bit from
+/// passing `world × local` as the world matrix of `stickshift_frame_draw_model`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StickShiftModelDraw {
+    /// Model to world, applied last.
+    pub world: StickShiftMat4,
+    /// Applied to each node matrix first, for example the transform that fits
+    /// a model to a game's scale. The identity places the model by `world`
+    /// alone.
+    pub local: StickShiftMat4,
+    /// Multiplies each part's base colour, not its emission. `{1, 1, 1, 1}`
+    /// leaves the model's colours as they are.
+    pub tint: StickShiftColor,
+    /// A `STICKSHIFT_MODEL_PARTS_*` value.
+    pub parts: StickShiftModelParts,
 }
 
 /// A 2D overlay quad, in drawable pixels with the origin at the top-left.

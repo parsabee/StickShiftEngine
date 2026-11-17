@@ -127,9 +127,10 @@ typedef struct StickShiftStats {
    */
   uint64_t draws_submitted;
   /**
-   * Draw calls (`stickshift_frame_draw_mesh`, `_draw_model`, `_draw_quad`,
-   * `_draw_text`) not made because a resource was pending, failed or
-   * destroyed. Counted once per call, however many parts or glyphs it drew.
+   * Draw calls (`stickshift_frame_draw_mesh`, `_draw_model`, `_draw_model_ex`,
+   * `_draw_quad`, `_draw_text`) not made because a resource was pending,
+   * failed or destroyed. Counted once per call, however many parts or glyphs
+   * it drew.
    */
   uint64_t draws_skipped;
   /**
@@ -494,6 +495,42 @@ typedef struct StickShiftModel {
 } StickShiftModel;
 
 /**
+ * Which parts of a model `stickshift_frame_draw_model_ex` records.
+ */
+typedef uint32_t StickShiftModelParts;
+
+/**
+ * A model draw for `stickshift_frame_draw_model_ex`: where the model goes and
+ * which of its parts to record.
+ *
+ * Each selected part is drawn at `world × (local × node)`, where `node` is the
+ * part's node matrix from the glTF file, multiplied in that grouping. Float
+ * products are not associative, so this can differ in the last bit from
+ * passing `world × local` as the world matrix of `stickshift_frame_draw_model`.
+ */
+typedef struct StickShiftModelDraw {
+  /**
+   * Model to world, applied last.
+   */
+  struct StickShiftMat4 world;
+  /**
+   * Applied to each node matrix first, for example the transform that fits
+   * a model to a game's scale. The identity places the model by `world`
+   * alone.
+   */
+  struct StickShiftMat4 local;
+  /**
+   * Multiplies each part's base colour, not its emission. `{1, 1, 1, 1}`
+   * leaves the model's colours as they are.
+   */
+  struct StickShiftColor tint;
+  /**
+   * A `STICKSHIFT_MODEL_PARTS_*` value.
+   */
+  StickShiftModelParts parts;
+} StickShiftModelDraw;
+
+/**
  * How a 2D quad is filled.
  */
 typedef uint32_t StickShiftFill;
@@ -855,6 +892,21 @@ typedef struct StickShiftTextureDesc {
  */
 #define STICKSHIFT_FILL_SDF 2
 
+/**
+ * Every part.
+ */
+#define STICKSHIFT_MODEL_PARTS_ALL 0
+
+/**
+ * The parts with a base-colour texture: those on the `POS_NORMAL_UV` layout.
+ */
+#define STICKSHIFT_MODEL_PARTS_TEXTURED 1
+
+/**
+ * The parts without one: those on the `POS_NORMAL_COLOR` layout.
+ */
+#define STICKSHIFT_MODEL_PARTS_UNTEXTURED 2
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -1134,6 +1186,22 @@ StickShiftResult stickshift_frame_draw_model(struct StickShiftFrame *frame,
                                              struct StickShiftModel model,
                                              const struct StickShiftMat4 *world,
                                              const struct StickShiftColor *tint);
+
+/**
+ * Like `stickshift_frame_draw_model`, with a local matrix and a part filter:
+ * record the parts of `model` that `draw->parts` selects, in node order, each
+ * at `draw->world × (draw->local × node)` with its base colour multiplied by
+ * `draw->tint`. Drawing a model's textured parts and its untextured parts in
+ * two calls lets other draws go between them. `STICKSHIFT_NOT_READY` until the
+ * model loads; `STICKSHIFT_ERROR_INVALID_ARGUMENT` for an unknown `parts`
+ * value.
+ *
+ * # Safety
+ * `frame` must be NULL or an open frame; `draw` NULL or valid.
+ */
+StickShiftResult stickshift_frame_draw_model_ex(struct StickShiftFrame *frame,
+                                                struct StickShiftModel model,
+                                                const struct StickShiftModelDraw *draw);
 
 /**
  * Record a 2D overlay quad, composited over the 3D scene in record order.

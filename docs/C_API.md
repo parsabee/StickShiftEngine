@@ -437,6 +437,15 @@ A model is static geometry: its meshes, base-colour textures and node matrices, 
 import. Node matrices are kept whole, so a rotated child under a non-uniformly scaled parent
 draws exactly where glTF puts it. Load failures (`IO`, `PARSE`) arrive as `RESOURCE_FAILED` with a message.
 
+`stickshift_frame_draw_model` draws every part at `world × node`.
+`stickshift_frame_draw_model_ex` adds two things. A `local` matrix goes between the two, so each
+part is drawn at `world × (local × node)`: a game that fits a model to its world (a scale, a turn,
+a lift) passes the fit as `local` and its entity's transform as `world`. Float products are not
+associative, so this grouping can differ in the last bit from passing `world × local` as one
+matrix. A part filter records only the textured parts or only the untextured ones, so a game can
+draw every textured surface in the frame, then other draws, then the untextured parts, in the
+order it chooses.
+
 ### Fonts (SDF text)
 
 | Function | |
@@ -473,6 +482,7 @@ typedef struct StickShiftFontDesc {
 | `StickShiftResult stickshift_frame_add_light(StickShiftFrame *frame, const StickShiftLight *light)` | This frame only. `INVALID_ARGUMENT` for a light that cannot be drawn (see `StickShiftLight`); `LIMIT_EXCEEDED` past `STICKSHIFT_MAX_LIGHTS`. |
 | `StickShiftResult stickshift_frame_draw_mesh(StickShiftFrame *frame, StickShiftMesh mesh, const StickShiftMat4 *model, const StickShiftMaterial *material)` | `material` may be NULL (white, no texture, no emission). `emissive` channels must be finite and `>= 0`. |
 | `StickShiftResult stickshift_frame_draw_model(StickShiftFrame *frame, StickShiftModel model, const StickShiftMat4 *world, const StickShiftColor *tint)` | `tint` may be NULL (white); it multiplies each part's base colour, not its emission. |
+| `StickShiftResult stickshift_frame_draw_model_ex(StickShiftFrame *frame, StickShiftModel model, const StickShiftModelDraw *draw)` | The parts `draw->parts` selects, in node order, each at `draw->world × (draw->local × node)`. `INVALID_ARGUMENT` for an unknown `parts` value. A filter that matches no part records nothing and returns `OK`. |
 | `StickShiftResult stickshift_frame_draw_quad(StickShiftFrame *frame, const StickShiftQuad *quad)` | 2D overlay. |
 | `StickShiftResult stickshift_frame_draw_text(StickShiftFrame *frame, StickShiftFont font, const char *text, float x, float y, float px, StickShiftColor color)` | `(x, y)`: left end of the first line's baseline, in pixels. `\n` starts a new line. |
 | `StickShiftResult stickshift_frame_read_pixels_async(StickShiftFrame *frame, void *dst, size_t len, const StickShiftCompletion *completion)` | Offscreen contexts. `dst` (`width × height × 4` bytes, BGRA8) must stay valid until `READBACK_COMPLETE` / `READBACK_FAILED`. |
@@ -514,6 +524,18 @@ typedef struct StickShiftMaterial {
     StickShiftTexture base_color_texture;  // {0}: none
     float emissive[3];                // linear RGB light the surface gives off; may exceed 1
 } StickShiftMaterial;
+
+typedef uint32_t StickShiftModelParts;
+// STICKSHIFT_MODEL_PARTS_ALL (0):        every part
+// STICKSHIFT_MODEL_PARTS_TEXTURED (1):   parts with a base-colour texture (POS_NORMAL_UV)
+// STICKSHIFT_MODEL_PARTS_UNTEXTURED (2): parts without one (POS_NORMAL_COLOR)
+
+typedef struct StickShiftModelDraw {
+    StickShiftMat4       world;  // model to world, applied last
+    StickShiftMat4       local;  // applied to each node matrix first; the identity for none
+    StickShiftColor      tint;   // multiplies base colours, not emission; {1, 1, 1, 1} for none
+    StickShiftModelParts parts;
+} StickShiftModelDraw;
 
 typedef uint32_t StickShiftFill;  // STICKSHIFT_FILL_SOLID, STICKSHIFT_FILL_TEXTURE, STICKSHIFT_FILL_SDF
 

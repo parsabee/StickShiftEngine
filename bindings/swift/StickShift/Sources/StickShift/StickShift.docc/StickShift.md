@@ -29,6 +29,11 @@ Resources destroy themselves when you drop the last reference. Failures throw
 ``StickShiftError``, which carries the C API's code and message. A context is bound to the main
 actor, as the C API's one-thread-at-a-time rule asks.
 
+A model can also be drawn part by part: ``Frame/draw(_:world:local:parts:tint:)`` places each
+part at `world × (local × node)` and can record only its textured or only its untextured
+parts. For results that match the Rust engine bit for bit, multiply matrices with
+``StickShiftMath`` rather than simd's `*`, which fuses multiplies and adds.
+
 ## Topics
 
 ### Rendering
@@ -50,8 +55,13 @@ actor, as the C API's one-thread-at-a-time rule asks.
 - ``SunSky``
 - ``Light``
 - ``Material``
+- ``ModelParts``
 - ``Quad``
 - ``PixelReadback``
+
+### Math
+
+- ``StickShiftMath``
 
 ### Errors and diagnostics
 

@@ -4,8 +4,9 @@
  *   smoke [--null] <model.gltf>
  *
  * Exercises the whole lifecycle through the header (context, mesh, borrowed
- * texture data, a model loaded off-thread with a completion callback, a frame
- * with a read-back, events, stats) and checks the pixels: something was drawn
+ * texture data, a model loaded off-thread with a completion callback and drawn
+ * whole and by part, a frame with a read-back, events, stats) and checks the
+ * pixels: something was drawn
  * on Metal, zeros on the null backend. Exits 0 on success, 1 on failure, and 0
  * with a message when Metal is requested but no device exists.
  *
@@ -124,7 +125,8 @@ int main(int argc, char **argv) {
     CHECK(stickshift_model_get_bounds(ctx, model, &lo, &hi), STICKSHIFT_OK);
     REQUIRE(hi.x > lo.x);
 
-    /* One frame: the triangle, the model, two lights, a HUD bar, and a read-back. */
+    /* One frame: the triangle, the model (whole, then by part), two lights, a HUD bar, and a
+     * read-back. */
     StickShiftFrame *frame = NULL;
     StickShiftFrame *second = NULL;
     CHECK(stickshift_frame_acquire(ctx, &frame), STICKSHIFT_OK);
@@ -156,6 +158,16 @@ int main(int argc, char **argv) {
     StickShiftQuat spin = stickshift_quat_from_axis_angle(up, 0.6f);
     StickShiftMat4 world = stickshift_mat4_from_trs(beside, spin, scale);
     CHECK(stickshift_frame_draw_model(frame, model, &world, NULL), STICKSHIFT_OK);
+    /* The model again, at world x (local x node) with an identity local matrix: every part,
+     * then its textured parts, then its untextured ones, which add up to every part. */
+    StickShiftModelDraw by_part = {world, identity, {1, 1, 1, 1}, STICKSHIFT_MODEL_PARTS_ALL};
+    CHECK(stickshift_frame_draw_model_ex(frame, model, &by_part), STICKSHIFT_OK);
+    by_part.parts = STICKSHIFT_MODEL_PARTS_TEXTURED;
+    CHECK(stickshift_frame_draw_model_ex(frame, model, &by_part), STICKSHIFT_OK);
+    by_part.parts = STICKSHIFT_MODEL_PARTS_UNTEXTURED;
+    CHECK(stickshift_frame_draw_model_ex(frame, model, &by_part), STICKSHIFT_OK);
+    by_part.parts = 7;
+    CHECK(stickshift_frame_draw_model_ex(frame, model, &by_part), STICKSHIFT_ERROR_INVALID_ARGUMENT);
     StickShiftQuad bar = {2, 2, 20, 4, 0, 0, 1, 1, {1, 1, 1, 0.8f}, STICKSHIFT_FILL_SOLID, {0}};
     CHECK(stickshift_frame_draw_quad(frame, &bar), STICKSHIFT_OK);
 
@@ -196,7 +208,9 @@ int main(int argc, char **argv) {
     StickShiftStats stats;
     CHECK(stickshift_context_get_stats(ctx, &stats), STICKSHIFT_OK);
     REQUIRE(stats.frames_submitted == 1 && stats.frames_completed == 1);
-    REQUIRE(stats.draws_submitted >= 2 && stats.draws_skipped == 0);
+    /* The triangle, then each of the model's parts three times: whole, all by part, and split. */
+    REQUIRE(stats.draws_submitted >= 4 && (stats.draws_submitted - 1) % 3 == 0);
+    REQUIRE(stats.draws_skipped == 0);
     REQUIRE(stats.meshes == 1 && stats.textures == 1 && stats.models == 1);
 
     CHECK(stickshift_model_destroy(ctx, model), STICKSHIFT_OK);

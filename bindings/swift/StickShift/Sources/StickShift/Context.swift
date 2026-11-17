@@ -45,6 +45,12 @@ public final class Context {
     var pendingCompletions = 0
     private var pumping = false
 
+    /// Drawable pixels per point: the UI scale, as last given to
+    /// ``init(layer:width:height:scale:)`` or ``resize(width:height:scale:)``.
+    /// A value that is not finite and greater than zero counts as 1, as it does
+    /// for the engine. Always 1 for an offscreen context.
+    public private(set) var scale: Float
+
     /// Creates an offscreen context: it renders into a `width` × `height`
     /// texture whose pixels ``Frame/readPixels()`` returns.
     ///
@@ -53,6 +59,7 @@ public final class Context {
     public init(offscreenWidth width: Int, height: Int, backend: Backend = .metal) throws {
         raw = try Self.create(backend: backend, layer: nil, width: width, height: height, scale: 1)
         layer = nil
+        scale = 1
     }
 
     /// Creates a context that renders into `layer`, which you keep in your view
@@ -72,6 +79,12 @@ public final class Context {
             scale: scale
         )
         self.layer = layer
+        self.scale = Self.effective(scale)
+    }
+
+    /// The scale the engine uses for `scale`: 1 unless it is finite and positive.
+    private static func effective(_ scale: Float) -> Float {
+        scale.isFinite && scale > 0 ? scale : 1
     }
 
     private static func create(
@@ -140,6 +153,7 @@ public final class Context {
             throw StickShiftError(code: .invalidArgument, message: "width and height must fit in UInt32")
         }
         try check(stickshift_context_resize(raw, width, height, scale))
+        self.scale = Self.effective(scale)
     }
 
     /// The render quality settings. Setting them applies from the next frame.

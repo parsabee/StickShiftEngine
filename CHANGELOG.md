@@ -35,6 +35,28 @@ API**.
   `CAMetalLayer` that keeps the drawable sized to the view and drives a display link.
   `scripts/test-swift.sh` builds `libstickshift` with cargo and runs the package's Swift
   Testing suite (null backend, plus Metal), which CI now runs too.
+- **Model draws with a local matrix and a part filter** in the C API:
+  `stickshift_frame_draw_model_ex(frame, model, &draw)` takes a `StickShiftModelDraw`
+  (`world`, `local`, `tint`, `parts`) and records each selected part at
+  `world × (local × node)`, in node order. `STICKSHIFT_MODEL_PARTS_TEXTURED` and
+  `STICKSHIFT_MODEL_PARTS_UNTEXTURED` record only the parts with or without a base-colour
+  texture, so a game can draw its textured surfaces, then other draws, then its untextured
+  parts, as the playable demo's render pass does; `STICKSHIFT_MODEL_PARTS_ALL` records every
+  part. The products are grouped as the Rust demo groups them, which a single `world` matrix
+  cannot reproduce bit for bit. The addition changes no existing type, so
+  `STICKSHIFT_API_VERSION` stays 4.
+- **The Swift package** gained what a Swift port of the playable demo needs:
+  `Frame.draw(_:world:local:parts:tint:)` with `ModelParts` (`.all`, `.textured`,
+  `.untextured`) over the new C call; `StickShiftMath.multiply(_:_:)` and
+  `StickShiftMath.rotation(axis:angle:)`, the engine's own unfused matrix product and
+  quaternion, which `Camera.perspective` now multiplies with instead of simd's fused `*`;
+  `Context.scale`, the UI scale last given to the context; and on `StickShiftView`, a
+  `renderScale` (also `init(size:renderScale:)`) that renders below native resolution with
+  the engine's rounding, and keyboard input: once `onKey(keyCode, isDown, isRepeat)` is set,
+  the view becomes first responder and hands it every key-down and key-up without passing it
+  on, so AppKit does not beep. Without a handler it takes no focus and passes keys on. A key
+  released while Command is held arrives too: `NSApplication` never hands a window that key-up,
+  so the view's local event monitor sends it to the window, as winit does.
 
 ### Changed
 
