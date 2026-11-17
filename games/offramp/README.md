@@ -171,6 +171,10 @@ Everything through the StickShift package, which wraps the C API:
 
 - **Missing assets.** A missing model or font makes `initialize` throw, and Offramp prints the
   error and exits 1. Rust panics.
+- **A failed frame.** `--smoke`, like the trace and the recorder, checks every frame: one
+  update, and a rendered, submitted frame with no render error, no draw skipped. A frame that
+  fails those, or a run of the wrong length, prints the error and exits 1, never the
+  `smoke: ... OK` line. Rust panics.
 
 ## Testing
 
