@@ -57,6 +57,9 @@ API**.
   on, so AppKit does not beep. Without a handler it takes no focus and passes keys on. A key
   released while Command is held arrives too: `NSApplication` never hands a window that key-up,
   so the view's local event monitor sends it to the window, as winit does.
+- `Camera::fov_y`, `Camera::set_fov_y` and `Camera::aspect_ratio`.
+- `Scene::try_set_config`, which returns `StreamingConfigError::AxisOrIntervalChanged` where
+  `Scene::set_config` panics, and changes nothing.
 
 ### Changed
 

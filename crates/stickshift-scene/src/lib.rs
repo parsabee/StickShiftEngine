@@ -97,6 +97,30 @@ impl Default for StreamingConfig {
     }
 }
 
+/// Why [`Scene::try_set_config`] refused a [`StreamingConfig`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum StreamingConfigError {
+    /// Streaming has started, and the new config changes
+    /// [`axis`](StreamingConfig::axis) or
+    /// [`spawn_interval`](StreamingConfig::spawn_interval). The spawn frontier is
+    /// a slot index along that axis at that spacing, so either change would
+    /// silently re-spawn or skip slots.
+    AxisOrIntervalChanged,
+}
+
+impl std::fmt::Display for StreamingConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AxisOrIntervalChanged => f.write_str(
+                "cannot change the streaming axis or spawn_interval once streaming has started",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for StreamingConfigError {}
+
 /// The engine-generic scene: an ECS [`World`], with spawn/despawn streaming and
 /// floating-origin rebase.
 ///
@@ -205,13 +229,52 @@ impl Scene {
     /// assert_eq!(scene.config().spawn_ahead, 180.0);
     /// ```
     pub fn set_config(&mut self, config: StreamingConfig) {
-        assert!(
-            self.spawn_frontier.is_none()
-                || (config.axis == self.config.axis
-                    && config.spawn_interval == self.config.spawn_interval),
-            "cannot change the streaming axis or spawn_interval once streaming has started"
-        );
+        if let Err(err) = self.try_set_config(config) {
+            panic!("{err}");
+        }
+    }
+
+    /// Replaces the streaming configuration, or refuses and changes nothing.
+    ///
+    /// [`set_config`](Self::set_config) without the panic, for a caller that
+    /// cannot unwind (a host across a foreign-function boundary): the same
+    /// check, reported as a [`StreamingConfigError`] instead. Every other value
+    /// is taken as given, as `set_config` takes it.
+    ///
+    /// # Errors
+    ///
+    /// [`StreamingConfigError::AxisOrIntervalChanged`] if streaming has already
+    /// started and the new config changes [`axis`](StreamingConfig::axis) or
+    /// [`spawn_interval`](StreamingConfig::spawn_interval). The scene keeps its
+    /// old config.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use stickshift_math::glam::Vec3;
+    /// use stickshift_scene::{Scene, StreamingConfig, StreamingConfigError};
+    ///
+    /// let mut scene = Scene::new();
+    /// scene.stream(Vec3::ZERO, |_| {});
+    /// // The reach may change mid-stream; the spacing may not.
+    /// let reach = StreamingConfig { spawn_ahead: 180.0, ..scene.config() };
+    /// assert_eq!(scene.try_set_config(reach), Ok(()));
+    /// let spacing = StreamingConfig { spawn_interval: 3.0, ..scene.config() };
+    /// assert_eq!(
+    ///     scene.try_set_config(spacing),
+    ///     Err(StreamingConfigError::AxisOrIntervalChanged)
+    /// );
+    /// assert_eq!(scene.config(), reach);
+    /// ```
+    pub fn try_set_config(&mut self, config: StreamingConfig) -> Result<(), StreamingConfigError> {
+        if self.spawn_frontier.is_some()
+            && (config.axis != self.config.axis
+                || config.spawn_interval != self.config.spawn_interval)
+        {
+            return Err(StreamingConfigError::AxisOrIntervalChanged);
+        }
         self.config = config;
+        Ok(())
     }
 
     /// Number of entities the scene is currently tracking for despawn-behind.
@@ -590,6 +653,82 @@ mod tests {
             spawn_interval: 3.0,
             ..scene.config()
         });
+    }
+
+    /// The panic keeps the message it has always had.
+    #[test]
+    #[should_panic(
+        expected = "cannot change the streaming axis or spawn_interval once streaming has started"
+    )]
+    fn set_config_rejects_a_new_axis_once_streaming() {
+        let mut scene = Scene::new();
+        scene.stream(Vec3::ZERO, |_| {});
+        scene.set_config(StreamingConfig {
+            axis: Vec3::X,
+            ..scene.config()
+        });
+    }
+
+    /// `try_set_config` makes the same check as `set_config`, and refuses
+    /// without changing anything instead of panicking.
+    #[test]
+    fn try_set_config_refuses_what_set_config_rejects() {
+        let mut scene = Scene::new();
+        let start = scene.config();
+
+        // Before the first pass anything goes, the axis and spacing included.
+        let respaced = StreamingConfig {
+            axis: Vec3::X,
+            spawn_interval: 2.0,
+            ..start
+        };
+        assert_eq!(scene.try_set_config(respaced), Ok(()));
+        assert_eq!(scene.config(), respaced);
+        assert_eq!(scene.try_set_config(start), Ok(()));
+
+        scene.stream(Vec3::ZERO, |_| {});
+        let refused = Err(StreamingConfigError::AxisOrIntervalChanged);
+        for changed in [
+            StreamingConfig {
+                axis: Vec3::X,
+                ..start
+            },
+            StreamingConfig {
+                spawn_interval: 3.0,
+                ..start
+            },
+            // A NaN never equals itself, so it is a change, as `set_config`'s
+            // comparison has always treated it.
+            StreamingConfig {
+                spawn_interval: f32::NAN,
+                ..start
+            },
+        ] {
+            assert_eq!(scene.try_set_config(changed), refused, "{changed:?}");
+            assert_eq!(scene.config(), start, "nothing changed");
+        }
+
+        // The reach, the trim and the rebase distance may change mid-stream.
+        let reach = StreamingConfig {
+            spawn_ahead: 180.0,
+            despawn_behind: 30.0,
+            rebase_threshold: 500.0,
+            ..start
+        };
+        assert_eq!(scene.try_set_config(reach), Ok(()));
+        assert_eq!(scene.config(), reach);
+        // The same config again is no change.
+        assert_eq!(scene.try_set_config(reach), Ok(()));
+    }
+
+    #[test]
+    fn the_error_says_what_was_refused() {
+        let err = StreamingConfigError::AxisOrIntervalChanged;
+        assert_eq!(
+            err.to_string(),
+            "cannot change the streaming axis or spawn_interval once streaming has started"
+        );
+        let _: &dyn std::error::Error = &err;
     }
 
     /// No unbounded growth: driving many frames of advancing focus keeps the ECS

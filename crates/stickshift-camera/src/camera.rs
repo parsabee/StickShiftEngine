@@ -6,8 +6,9 @@
 //!
 //! This is the migrated core of the prototype camera, trimmed to what the
 //! engine's render seam actually consumes: a look-at view
-//! matrix, a right-handed perspective projection, their product, an aspect
-//! update, position/target setters, and the forward/right basis vectors. The
+//! matrix, a right-handed perspective projection, their product, the aspect
+//! ratio and field of view, position/target setters, and the forward/right
+//! basis vectors. The
 //! prototype's free-fly `move_*` / orbit `rotate_*` controllers are
 //! intentionally not migrated here — the runner needs
 //! a chase camera (see [`crate::chase`]), and those controllers migrate lazily if
@@ -115,6 +116,42 @@ impl Camera {
     /// Update the viewport aspect ratio (width / height); call this on resize.
     pub fn set_aspect_ratio(&mut self, aspect_ratio: f32) {
         self.aspect_ratio = aspect_ratio;
+    }
+
+    /// The viewport aspect ratio (width / height) the projection uses: the value
+    /// given to [`new`](Self::new) or the last
+    /// [`set_aspect_ratio`](Self::set_aspect_ratio), exactly as stored.
+    #[must_use]
+    pub fn aspect_ratio(&self) -> f32 {
+        self.aspect_ratio
+    }
+
+    /// Set the vertical field of view, in **radians**. The default is 45°
+    /// (`45.0_f32.to_radians()`).
+    ///
+    /// Stored as given, like [`set_aspect_ratio`](Self::set_aspect_ratio): a value
+    /// that is not finite, or not strictly between 0 and π, gives a non-finite or
+    /// degenerate [`projection_matrix`](Self::projection_matrix).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use stickshift_camera::Camera;
+    ///
+    /// let mut camera = Camera::new(16.0 / 9.0);
+    /// assert_eq!(camera.fov_y(), 45.0_f32.to_radians());
+    /// camera.set_fov_y(60.0_f32.to_radians());
+    /// assert_eq!(camera.fov_y(), 60.0_f32.to_radians());
+    /// ```
+    pub fn set_fov_y(&mut self, fov_y: f32) {
+        self.fov_y = fov_y;
+    }
+
+    /// The vertical field of view, in radians: 45° until
+    /// [`set_fov_y`](Self::set_fov_y), exactly as stored.
+    #[must_use]
+    pub fn fov_y(&self) -> f32 {
+        self.fov_y
     }
 
     /// Set the near and far clip distances (view-space depth, world units).
@@ -373,5 +410,44 @@ mod tests {
         let f = 1.0 / (45.0_f32.to_radians() / 2.0).tan();
         assert!((cols[0][0] - f / 2.0).abs() < 1e-4);
         assert!((cols[1][1] - f).abs() < 1e-4);
+    }
+
+    #[test]
+    fn the_getters_report_the_stored_fov_and_aspect() {
+        let mut cam = Camera::new(4.0 / 3.0);
+        assert_eq!(cam.aspect_ratio().to_bits(), (4.0_f32 / 3.0).to_bits());
+        assert_eq!(cam.fov_y().to_bits(), 45.0_f32.to_radians().to_bits());
+
+        // Plain stores: what goes in comes back bit for bit, even a value the
+        // projection cannot use.
+        for aspect in [1600.0 / 1200.0, 640.0, -0.0, f32::NAN] {
+            cam.set_aspect_ratio(aspect);
+            assert_eq!(cam.aspect_ratio().to_bits(), aspect.to_bits());
+        }
+        for fov in [0.3, 1.2, f32::INFINITY] {
+            cam.set_fov_y(fov);
+            assert_eq!(cam.fov_y().to_bits(), fov.to_bits());
+        }
+    }
+
+    #[test]
+    fn the_projection_uses_the_fov_it_was_given() {
+        let mut cam = Camera::new(16.0 / 9.0);
+        let default = cam.projection_matrix();
+        cam.set_fov_y(cam.fov_y());
+        assert_eq!(
+            cam.projection_matrix(),
+            default,
+            "the same fov, the same bits"
+        );
+
+        let fov = 70.0_f32.to_radians();
+        cam.set_fov_y(fov);
+        let (near, far) = cam.clip_planes();
+        assert_eq!(
+            cam.projection_matrix(),
+            Mat4::perspective_rh(fov, 16.0 / 9.0, near, far)
+        );
+        assert_ne!(cam.projection_matrix(), default);
     }
 }

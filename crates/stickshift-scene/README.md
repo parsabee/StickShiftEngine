@@ -13,7 +13,8 @@ Part of the [Stick Shift Engine](../../README.md) workspace. Apache-2.0.
 - `StreamingConfig` — 1-D streaming policy along an `axis`: `spawn_interval`, `spawn_ahead`,
   `despawn_behind`, `rebase_threshold`. `set_config` replaces it on a scene the game did not
   construct (the engine loop's), e.g. to set its own reach in `init`; the axis and spacing are
-  fixed once streaming has started.
+  fixed once streaming has started. Changing them then panics in `set_config`, while
+  `try_set_config` returns `StreamingConfigError::AxisOrIntervalChanged` and changes nothing.
 - `stream(focus, spawn)` — despawns tracked entities that fell more than `despawn_behind` behind
   the focus, then invokes the game's `spawn` callback once per unfilled slot up to
   `focus + spawn_ahead`. `SpawnCtx` gives the callback `world`/`position`/`slot` and a
