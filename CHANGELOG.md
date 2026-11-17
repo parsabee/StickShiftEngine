@@ -76,6 +76,11 @@ API**.
 
 ### Changed
 
+- **`libstickshift` links two more frameworks, AudioToolbox and CoreAudio.** The library now
+  carries the engine loop, and with it the engine's audio (kira over cpal), so a host that links
+  `libstickshift.a` statically must add `-framework AudioToolbox -framework CoreAudio`, even if it
+  never creates an engine. `pkg-config --static --libs stickshift` and rustc's
+  `--print native-static-libs` already list them; the `StickShift` Swift package links them.
 - **The C API is at `STICKSHIFT_API_VERSION` 4.** `StickShiftMaterial` gained an `emissive` field,
   which changes its size, so code built against version 3 must be rebuilt (contexts created with
   `api_version = 3` are refused). Zero-initialising the field keeps the old look.

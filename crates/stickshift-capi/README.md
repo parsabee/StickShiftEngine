@@ -18,14 +18,17 @@ callbacks on the host's thread, and `stickshift_frame_acquire` never waits.
 | `src/types.rs` | Every C-visible type and constant |
 | `src/core.rs` | The boundary: errors, the per-thread last error, panic containment, version |
 | `src/context.rs` | `StickShiftContext`: the busy guard, events and callbacks, housekeeping |
+| `src/engine.rs` | `StickShiftEngine`: the engine loop run for a host, its game hooks and their scopes |
 | `src/resources.rs`, `src/models.rs`, `src/fonts.rs` | Meshes and textures, glTF models (worker pool), SDF fonts |
 | `src/frame.rs` | Recording and submitting frames, read-back |
 | `src/backend.rs`, `src/metal.rs` | The backend trait, the null backend, and the Metal backend (macOS) |
 | `src/handles.rs` | Generational handle tables (32-bit generations, never reissued) |
 
-The crate is graphics-only: it depends on `stickshift-render` (macOS), `stickshift-render-api`,
-`stickshift-assets` (without its `ecs` feature) and `stickshift-math`, and CI fails if a windowing,
-audio or ECS crate reaches it.
+The crate depends on `stickshift-render` (macOS), `stickshift-render-api`, `stickshift-assets`
+(without its `ecs` feature), `stickshift-math` and `stickshift-core` without its `windowed` feature,
+so the engine's loop, ECS (hecs) and audio (kira over cpal) are in the library, and the host owns
+the window. CI fails if a windowing, AppKit-menu or physics crate (winit, objc2-app-kit, rapier)
+reaches it.
 
 ## Building and testing
 

@@ -207,7 +207,8 @@ cc -std=c11 app.c $(pkg-config --cflags --libs stickshift) -o app
 # From a checkout, linking the static library by hand:
 cc -std=c11 app.c -I crates/stickshift-capi/include target/release/libstickshift.a \
    -framework Metal -framework QuartzCore -framework Foundation -framework CoreGraphics \
-   -framework AppKit -framework CoreFoundation -lobjc -liconv -o app
+   -framework AppKit -framework CoreFoundation -framework AudioToolbox -framework CoreAudio \
+   -lobjc -liconv -o app
 ```
 
 The exact library list for static linking is what rustc reports

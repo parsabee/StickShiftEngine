@@ -612,7 +612,9 @@ cargo rustc -p stickshift-capi --lib --crate-type staticlib -- --print native-st
 ```
 
 On macOS that is `-framework Metal -framework QuartzCore -framework Foundation
--framework CoreGraphics -framework CoreFoundation -framework AppKit -lobjc -liconv`.
+-framework CoreGraphics -framework CoreFoundation -framework AppKit -framework AudioToolbox
+-framework CoreAudio -lobjc -liconv`. The audio frameworks are the engine's sound, and a static
+host needs them even if it never creates an engine.
 [`scripts/test-c-api.sh`](../scripts/test-c-api.sh) builds the C smoke test and
 [`examples/c/offscreen.c`](../examples/c/offscreen.c) exactly this way.
 
