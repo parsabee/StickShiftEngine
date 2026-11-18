@@ -154,6 +154,8 @@ stickshift-engine/
 │   ├── stickshift-assets        # glTF + textures                         (new)
 │   ├── stickshift-audio         # kira wrapper: sounds/one-shots/loops    (new)
 │   └── stickshift-capi          # the C API: libstickshift + stickshift.h           (new)
+├── bindings/
+│   └── swift/StickShift    # Swift package over the C API (SwiftPM)
 ├── games/
 │   └── playable-demo       # reference title; only uses engine public API
 ├── docs/                   # architecture, design, guides, roadmap
