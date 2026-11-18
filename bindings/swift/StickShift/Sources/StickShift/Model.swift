@@ -33,8 +33,24 @@ public final class Model {
         return (SIMD3(lo), SIMD3(hi))
     }
 
+    /// Wait until the model is ready, doing the context's model housekeeping
+    /// meanwhile: a synchronous load, as a Rust game's init does. Blocks the
+    /// caller for at most `timeout`.
+    ///
+    /// - Throws: the load's failure, or ``StickShiftError/Code-swift.struct/timeout``
+    ///   if it is still loading after `timeout`.
+    public func wait(timeout: Duration = .seconds(60)) throws {
+        let (seconds, attoseconds) = timeout.components
+        let nanoseconds = max(0, seconds).multipliedReportingOverflow(by: 1_000_000_000)
+        let total =
+            nanoseconds.overflow
+            ? UInt64.max : UInt64(nanoseconds.partialValue) &+ UInt64(max(0, attoseconds) / 1_000_000_000)
+        try check(stickshift_model_wait(context.raw, StickShiftModel(id: id), total))
+    }
+
     deinit {
-        stickshift_model_destroy(context.raw, StickShiftModel(id: id))
+        let id = id
+        destroyResource(of: context) { stickshift_model_destroy($0, StickShiftModel(id: id)) }
     }
 }
 
@@ -123,6 +139,23 @@ extension Context {
             }
             throw error
         }
+        return Model(context: self, id: handle.id)
+    }
+}
+
+extension Context {
+    /// Start loading a glTF model (`.gltf` or `.glb`) and return it at once,
+    /// still ``ResourceState/pending``: ``Model/wait(timeout:)`` blocks until it
+    /// is ready, which is how a game's synchronous ``Game/initialize(_:)``
+    /// loads, as a Rust game's init does. Draws of a pending model draw nothing.
+    ///
+    /// The file is read on an engine worker thread, so a file that cannot be
+    /// read or parsed fails the model later: its ``Model/wait(timeout:)``
+    /// throws ``StickShiftError/Code-swift.struct/io`` or
+    /// ``StickShiftError/Code-swift.struct/parse``.
+    public func startLoadingModel(contentsOf url: URL) throws -> Model {
+        var handle = StickShiftModel()
+        try check(stickshift_model_load_file(raw, url.path, nil, &handle))
         return Model(context: self, id: handle.id)
     }
 }

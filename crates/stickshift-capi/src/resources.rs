@@ -149,7 +149,8 @@ pub(crate) fn state(inner: &Inner, id: u64) -> StickShiftResourceState {
                 Some(ModelState::Failed) => STICKSHIFT_RESOURCE_STATE_FAILED,
             }
         }
-        None => false,
+        // An engine's sounds are not the context's resources.
+        Some(Kind::Sound) | None => false,
     };
     if live {
         STICKSHIFT_RESOURCE_STATE_READY

@@ -2,8 +2,9 @@
 //
 // This software is released under the Apache-2.0 License.
 
-//! macOS: the Graphics menu as an `NSMenu` in the menu bar, and settings
-//! persistence in `NSUserDefaults`.
+//! macOS: the Graphics menu as an `NSMenu` in the menu bar, for the winit
+//! runner (feature `windowed`). Settings persistence is Foundation only and
+//! lives apart from AppKit, in `platform::defaults`.
 //!
 //! # How a click gets back into the engine loop
 //!
@@ -35,7 +36,7 @@ use objc2_app_kit::{
     NSApplication, NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags, NSMenu,
     NSMenuItem,
 };
-use objc2_foundation::{MainThreadMarker, NSString, NSUserDefaults};
+use objc2_foundation::{MainThreadMarker, NSString};
 use winit::event_loop::EventLoopProxy;
 
 use crate::app::EngineEvent;
@@ -212,39 +213,6 @@ impl SettingsMenu {
                     item.setTitle(&NSString::from_str(command.label(fullscreen)));
                 }
             }
-        }
-    }
-}
-
-/// `NSUserDefaults` keys for the four settings, in
-/// [`GraphicsSettings::to_codes`] order.
-const DEFAULTS_KEYS: [&str; 4] = [
-    "StickShiftEngine.graphics.shadows",
-    "StickShiftEngine.graphics.shadowDistance",
-    "StickShiftEngine.graphics.drawDistance",
-    "StickShiftEngine.graphics.renderScale",
-];
-
-/// Read the settings saved by a previous launch, or `None` if none were saved.
-///
-/// Stored values are small integer codes (see [`GraphicsSettings::to_codes`]);
-/// an unknown or missing code decodes to that setting's default.
-pub(crate) fn load_settings() -> Option<GraphicsSettings> {
-    // SAFETY: `NSUserDefaults` is thread-safe; reading integers by key.
-    let codes = unsafe {
-        let defaults = NSUserDefaults::standardUserDefaults();
-        DEFAULTS_KEYS.map(|key| defaults.integerForKey(&NSString::from_str(key)) as i64)
-    };
-    (codes != [0; 4]).then(|| GraphicsSettings::from_codes(codes))
-}
-
-/// Save `settings` for the next launch.
-pub(crate) fn save_settings(settings: &GraphicsSettings) {
-    // SAFETY: `NSUserDefaults` is thread-safe; writing integers by key.
-    unsafe {
-        let defaults = NSUserDefaults::standardUserDefaults();
-        for (key, code) in DEFAULTS_KEYS.iter().zip(settings.to_codes()) {
-            defaults.setInteger_forKey(code as isize, &NSString::from_str(key));
         }
     }
 }

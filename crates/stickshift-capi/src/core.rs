@@ -124,10 +124,81 @@ pub(crate) unsafe fn utf8<'a>(ptr: *const c_char, what: &str) -> Result<&'a str,
         .map_err(|_| Error::invalid_argument(format!("{what} is not valid UTF-8")))
 }
 
+/// The `size` a caller set in a size-prefixed struct, read at byte `offset`.
+///
+/// # Safety
+/// `ptr` must be valid for reads of a `u32` at `offset`.
+pub(crate) unsafe fn declared_size<T>(ptr: *const T, offset: usize) -> u32 {
+    ptr.cast::<u8>().add(offset).cast::<u32>().read_unaligned()
+}
+
+/// Read a growable input struct whose `size` is at byte `size_offset`: a size
+/// below the library's (this first layout) is `INVALID_ARGUMENT`.
+///
+/// # Safety
+/// `ptr` must be NULL or valid for reads of its declared `size` bytes, which
+/// cover the size field.
+pub(crate) unsafe fn read_sized<T: Copy>(
+    ptr: *const T,
+    size_offset: usize,
+    what: &str,
+) -> Result<T, Error> {
+    if ptr.is_null() {
+        return Err(Error::null(what));
+    }
+    let size = declared_size(ptr, size_offset);
+    if (size as usize) < std::mem::size_of::<T>() {
+        return Err(Error::invalid_argument(format!(
+            "{what}.size is {size}, below the {} bytes of this layout: set .size = sizeof",
+            std::mem::size_of::<T>()
+        )));
+    }
+    Ok(ptr.read_unaligned())
+}
+
+/// Write a growable output struct, whose `size` is its first field: `value`
+/// goes out with `size` set to the bytes written. A declared size below the
+/// library's is `INVALID_ARGUMENT`, and nothing is written.
+///
+/// # Safety
+/// `out` must be NULL or valid for writes of its declared `size` bytes, which
+/// cover the size field.
+pub(crate) unsafe fn write_sized<T: Copy>(out: *mut T, value: T, what: &str) -> Result<(), Error> {
+    if out.is_null() {
+        return Err(Error::null(what));
+    }
+    let size = declared_size(out.cast_const(), 0);
+    let ours = std::mem::size_of::<T>();
+    if (size as usize) < ours {
+        return Err(Error::invalid_argument(format!(
+            "{what}.size is {size}, below the {ours} bytes of this layout: set .size = sizeof"
+        )));
+    }
+    out.write_unaligned(value);
+    out.cast::<u32>().write_unaligned(ours as u32);
+    Ok(())
+}
+
 /// `STICKSHIFT_API_VERSION` as compiled into the library.
 #[no_mangle]
 pub extern "C" fn stickshift_api_version() -> u32 {
     STICKSHIFT_API_VERSION
+}
+
+/// `STICKSHIFT_API_MINOR` as compiled into the library: its additive level
+/// within `STICKSHIFT_API_VERSION`. A host built against a newer header than
+/// the library it loads sees a smaller value here. Thread-safe.
+#[no_mangle]
+pub extern "C" fn stickshift_api_minor() -> u32 {
+    STICKSHIFT_API_MINOR
+}
+
+/// The fixed simulation step in seconds, exactly as the engine uses it: the
+/// `f32` nearest 1/60 (bits `0x3C888889`). A function, so no compiler rounds
+/// a literal differently. Thread-safe.
+#[no_mangle]
+pub extern "C" fn stickshift_fixed_dt() -> f32 {
+    stickshift_core::FIXED_DT
 }
 
 /// The library's release, e.g. `"0.1.0"`. Static; thread-safe.
@@ -155,6 +226,9 @@ pub extern "C" fn stickshift_result_name(result: StickShiftResult) -> *const c_c
         STICKSHIFT_ERROR_LIMIT_EXCEEDED => c"STICKSHIFT_ERROR_LIMIT_EXCEEDED",
         STICKSHIFT_ERROR_INTERNAL => c"STICKSHIFT_ERROR_INTERNAL",
         STICKSHIFT_ERROR_TIMEOUT => c"STICKSHIFT_ERROR_TIMEOUT",
+        STICKSHIFT_ABSENT => c"STICKSHIFT_ABSENT",
+        STICKSHIFT_ERROR_WRONG_THREAD => c"STICKSHIFT_ERROR_WRONG_THREAD",
+        STICKSHIFT_ERROR_ABORTED => c"STICKSHIFT_ERROR_ABORTED",
         _ => c"STICKSHIFT_UNKNOWN_RESULT",
     };
     name.as_ptr()
@@ -216,7 +290,9 @@ mod tests {
         assert_eq!(name(STICKSHIFT_OK), "STICKSHIFT_OK");
         assert_eq!(name(STICKSHIFT_ERROR_BUSY), "STICKSHIFT_ERROR_BUSY");
         assert_eq!(name(12345), "STICKSHIFT_UNKNOWN_RESULT");
-        for code in -10..=2 {
+        assert_eq!(name(-14), "STICKSHIFT_UNKNOWN_RESULT");
+        assert_eq!(name(4), "STICKSHIFT_UNKNOWN_RESULT");
+        for code in -13..=3 {
             assert_ne!(
                 name(code),
                 "STICKSHIFT_UNKNOWN_RESULT",

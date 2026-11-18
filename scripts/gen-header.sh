@@ -26,8 +26,19 @@ fi
 generated="$(mktemp)"
 trap 'rm -f "$generated"' EXIT
 cbindgen --quiet --config "$crate/cbindgen.toml" --crate stickshift-capi --output "$generated" "$crate"
-# Parenthesise negative constants so `x - STICKSHIFT_ERROR_BUSY` stays one expression.
-sed -E -i.bak 's/^(#define [A-Z0-9_]+) (-[0-9]+)$/\1 (\2)/' "$generated" && rm -f "$generated.bak"
+# Parenthesise negative constants (integer and decimal) so `x - STICKSHIFT_ERROR_BUSY`
+# stays one expression.
+sed -E -i.bak 's/^(#define [A-Z0-9_]+) (-[0-9]+(\.[0-9]+)?)$/\1 (\2)/' "$generated" && rm -f "$generated.bak"
+# cbindgen drops a constant's type, and an unsuffixed decimal is a double in C and in Swift,
+# which then cannot pass it as a float: give each `f32` constant its `f` suffix.
+for name in $(grep -rhoE 'pub const [A-Z0-9_]+: f32' "$crate/src" | awk '{print $3}' | tr -d ':'); do
+    sed -E -i.bak "s/^(#define $name) (\(?-?[0-9]+\.[0-9]+)(\)?)$/\1 \2f\3/" "$generated"
+    rm -f "$generated.bak"
+    if ! grep -qE "^#define $name \(?-?[0-9]+\.[0-9]+f\)?$" "$generated"; then
+        echo "gen-header.sh: could not give the f32 constant $name its f suffix" >&2
+        exit 1
+    fi
+done
 
 if [[ "${1:-}" == "--check" ]]; then
     if ! diff -u "$header" "$generated"; then

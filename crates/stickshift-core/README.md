@@ -9,10 +9,11 @@ Part of the [Stick Shift Engine](../../README.md) workspace. Apache-2.0.
 
 `stickshift-core` sits at the top of the engine stack. It owns the event loop and
 frame cadence and drives a game through a narrow, backend-agnostic seam. It
-depends on `stickshift-ecs`, `stickshift-render-api`, `stickshift-perf`, `stickshift-math`, and
-`winit` — but **never** on `metal` or the concrete renderer. All rendering goes
-through the `stickshift-render-api` traits (ARCHITECTURE §2), so the engine loop is
-provably insulated from the Metal backend.
+depends on `stickshift-ecs`, `stickshift-scene`, `stickshift-camera`, `stickshift-audio`,
+`stickshift-render-api`, `stickshift-perf` and `stickshift-math` (plus `winit` with the
+default `windowed` feature) — but **never** on `metal` or the concrete renderer. All
+rendering goes through the `stickshift-render-api` traits (ARCHITECTURE §2), so the
+engine loop is provably insulated from the Metal backend.
 
 Game concepts (car, road, score, obstacle, lane) never enter this crate. A unit
 test (`boundary_tests::no_game_specific_symbols`) scans every source file for
@@ -103,13 +104,43 @@ step per frame); the windowed driver measures a real monotonic `Instant` delta
   **`run_with_config`** takes a `RunConfig` as well. By default the
   windowed runner installs a native **Graphics** menu in the macOS menu bar (the
   `settings_menu` model rendered by `platform::macos` with `objc2`: an
-  `NSMenu`, and clicks posted back through winit's `EventLoopProxy`). It also
-  restores and saves the settings in `NSUserDefaults`.
+  `NSMenu`, and clicks posted back through winit's `EventLoopProxy`). Through its
+  `Session` it also restores and saves the settings in `NSUserDefaults`.
   `native_settings_menu: false` / `persist_graphics_settings: false` opt out, for
   games with their own UI. `quit_on_escape: false` hands Escape to the game, which
   quits with `EngineCtx::request_exit`. The headless driver never touches either. macOS-only bits
   (window creation, event translation) are kept in small free functions to ease
   a future `#[cfg]` platform split.
+
+## `Session`: the platform-free half of the windowed runner
+
+What a window adds to the loop — the real frame clock (whose first frame, and
+first after a menu choice or `reset_clock`, banks exactly one step), the drawable
+sized for the view and the render scale, the settings restored at start-up and
+saved on every change, the Graphics menu's choices, Escape, focus loss and
+resizes — needs no window system. It lives in `session::Session`, which owns the
+`Loop` and takes the platform's events as plain `HostEvent`s
+(`resume(view)`, `frame(clock)`, `event(e)`, `reset_clock()`). What only the
+platform can do comes back as `Requests`: `EXIT`, `TOGGLE_FULLSCREEN`,
+`MENU_SYNC`.
+
+The winit runner is an adapter over it: winit's window events become
+`HostEvent`s and the requests become `event_loop.exit()`, a full-screen toggle and
+the AppKit menu's refresh. A host that owns its own view and display link (the C
+API, and Swift over it) drives the same `Session`, so every host shares one
+implementation of the clock and the settings side effects. The Graphics menu's
+model (`settings_menu`: layout, labels, checks, tags) is public for such a host to
+build its native menu from.
+
+## Features
+
+- **`windowed`** (default): the winit runner (`run`, `run_with_backend`,
+  `run_with_config`) and its AppKit Graphics menu (`platform::macos`).
+- Without it (`default-features = false`) the crate has no `winit` and no AppKit:
+  it builds for macOS and for `aarch64-apple-ios`, and a host drives `Session`
+  itself. Settings persistence (`platform::defaults`, `NSUserDefaults`) is
+  Foundation only, so it stays on every Apple target either way. Saved settings
+  use the same `StickShiftEngine.graphics.*` keys for every host.
 
 ## The render backend
 

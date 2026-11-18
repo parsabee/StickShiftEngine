@@ -2,9 +2,10 @@
 //
 // This software is released under the Apache-2.0 License.
 
-import AppKit
-import StickShift
 import Testing
+import simd
+
+@testable import StickShift
 
 /// On the Metal backend; each test skips without a device (and fails instead
 /// with `STICKSHIFT_REQUIRE_GPU=1`).
@@ -65,16 +66,46 @@ struct MetalTests {
         #expect(readback?.bytes?.count == 64 * 48 * 4)
     }
 
-    @Test func aViewHostsAContextSizedInPixels() throws {
-        guard try metalContext() != nil else { return }
-        let view = try StickShiftView(size: NSSize(width: 64, height: 48))
-        let scale = Int(view.metalLayer.contentsScale)
-        #expect(view.context.size == (64 * scale, 48 * scale))
-        view.setFrameSize(NSSize(width: 100, height: 50))
-        #expect(view.context.size == (100 * scale, 50 * scale))
-        // Out of a window, the render loop does not run.
-        view.start()
-        #expect(!view.isRunning)
-        view.stop()
+    /// Record a frame from the triangle test's camera with `record`, and return
+    /// its BGRA pixels.
+    private func pixels(_ context: Context, _ record: (Frame) throws -> Void) async throws -> [UInt8] {
+        var readback: PixelReadback?
+        try context.frame { frame in
+            try frame.setCamera(camera(aspect: 64.0 / 48.0))
+            try record(frame)
+            readback = try frame.readPixels()
+        }
+        return try await readback!.pixels()
+    }
+
+    @Test func aModelDrawsAtWorldTimesLocal() async throws {
+        guard let context = try metalContext() else { return }
+        let cube = try await context.loadModel(contentsOf: texturedCubeFixture)
+        // Values whose products are exact in any grouping, so the matrices
+        // `world × local` and `world × (local × node)` are the same bits.
+        let world = simd_float4x4(translation: [0.25, 0, -1])
+        let local = simd_float4x4(translation: .zero, scale: [0.5, 0.5, 0.5])
+        let red: SIMD4<Float> = [1, 0.25, 0.25, 1]
+
+        let sky = try await pixels(context) { _ in }
+        let placed = try await pixels(context) { try $0.draw(cube, world: world, local: local) }
+        let byOneMatrix = try await pixels(context) { try $0.draw(cube, transform: StickShiftMath.multiply(world, local)) }
+        let swapped = try await pixels(context) { try $0.draw(cube, transform: StickShiftMath.multiply(local, world)) }
+        #expect(placed != sky)
+        #expect(placed == byOneMatrix, "world applies after local")
+        #expect(placed != swapped)
+
+        let tinted = try await pixels(context) { try $0.draw(cube, world: world, local: local, tint: red) }
+        let tintedByOneMatrix = try await pixels(context) {
+            try $0.draw(cube, transform: StickShiftMath.multiply(world, local), tint: red)
+        }
+        #expect(tinted == tintedByOneMatrix)
+        #expect(tinted != placed)
+
+        // The cube's one part is textured.
+        let textured = try await pixels(context) { try $0.draw(cube, world: world, local: local, parts: .textured) }
+        let untextured = try await pixels(context) { try $0.draw(cube, world: world, local: local, parts: .untextured) }
+        #expect(textured == placed)
+        #expect(untextured == sky)
     }
 }

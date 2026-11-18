@@ -2,33 +2,63 @@
 //
 // This software is released under the Apache-2.0 License.
 
-//! Native platform UI for the windowed runner: the built-in Graphics
-//! menu and graphics-settings persistence.
+//! Native platform services: graphics-settings persistence, and the windowed
+//! runner's built-in Graphics menu.
 //!
-//! Only the windowed runner ([`app`](crate::app)) uses this; the headless driver
-//! and every test stay away from it, so no test ever touches the menu bar or the
-//! user's stored preferences. The behaviour of the menu (layout, checkmarks,
-//! what an item does) lives in the platform-neutral
-//! [`settings_menu`](crate::settings_menu) model. This module only renders it
-//! natively.
+//! The two have different reach, so they are split:
 //!
-//! macOS is the one implementation today (`NSMenu` in the menu bar plus
-//! `NSUserDefaults`, via `objc2`). Other targets get inert stand-ins, so the
-//! runner compiles unchanged. An iOS host app can render the same model
-//! as a `UIMenu`.
+//! - **Persistence** (`defaults`) is Foundation only (`NSUserDefaults`). Every
+//!   Apple target has it, with or without the `windowed` feature, so a
+//!   [`Session`](crate::session::Session) driven by a host's own view keeps the
+//!   player's settings exactly as the Rust runner does. Other targets store
+//!   nothing.
+//! - **The menu** (`macos`) is AppKit (`NSMenu` in the menu bar, via `objc2`), and
+//!   only the winit runner ([`app`](crate::app), feature `windowed`) installs it.
+//!   A host with its own menu bar builds its native menu from the same
+//!   platform-neutral [`settings_menu`](crate::settings_menu) model instead.
+//!
+//! The headless driver uses neither, and no test touches the menu bar or the
+//! user's stored preferences: the persistence tests use a throwaway defaults
+//! suite of their own.
 
-#[cfg(target_os = "macos")]
+#[cfg(target_vendor = "apple")]
+mod defaults;
+
+#[cfg(target_vendor = "apple")]
+pub(crate) use defaults::{clear_settings, load_settings, save_settings};
+
+#[cfg(not(target_vendor = "apple"))]
+pub(crate) use no_defaults::{clear_settings, load_settings, save_settings};
+
+#[cfg(all(feature = "windowed", target_os = "macos"))]
 mod macos;
 
-#[cfg(target_os = "macos")]
-pub(crate) use macos::{load_settings, save_settings, SettingsMenu};
+#[cfg(all(feature = "windowed", target_os = "macos"))]
+pub(crate) use macos::SettingsMenu;
 
-#[cfg(not(target_os = "macos"))]
-pub(crate) use fallback::{load_settings, save_settings, SettingsMenu};
+#[cfg(all(feature = "windowed", not(target_os = "macos")))]
+pub(crate) use no_menu::SettingsMenu;
 
-/// Inert stand-ins for targets without a native implementation.
-#[cfg(not(target_os = "macos"))]
-mod fallback {
+/// Nothing is stored on targets without `NSUserDefaults`.
+#[cfg(not(target_vendor = "apple"))]
+mod no_defaults {
+    use crate::graphics::GraphicsSettings;
+
+    /// Nothing stored on this target.
+    pub(crate) fn load_settings(_suite: Option<&str>) -> Option<GraphicsSettings> {
+        None
+    }
+
+    /// Nothing stored on this target.
+    pub(crate) fn save_settings(_suite: Option<&str>, _settings: &GraphicsSettings) {}
+
+    /// Nothing stored on this target.
+    pub(crate) fn clear_settings(_suite: Option<&str>) {}
+}
+
+/// No native menu on targets other than macOS.
+#[cfg(all(feature = "windowed", not(target_os = "macos")))]
+mod no_menu {
     use winit::event_loop::EventLoopProxy;
 
     use crate::app::EngineEvent;
@@ -46,12 +76,4 @@ mod fallback {
         /// Nothing to refresh.
         pub(crate) fn sync(&self, _settings: &GraphicsSettings, _fullscreen: bool) {}
     }
-
-    /// Nothing stored on this target.
-    pub(crate) fn load_settings() -> Option<GraphicsSettings> {
-        None
-    }
-
-    /// Nothing stored on this target.
-    pub(crate) fn save_settings(_settings: &GraphicsSettings) {}
 }

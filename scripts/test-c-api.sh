@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Build libstickshift, then compile the C smoke test and the C sample against stickshift.h and
-# run them. On macOS they render through Metal; elsewhere (or with --null) they use the
-# null backend.
+# Build libstickshift, then compile the C smoke test, the C engine and engine-services tests
+# and the C samples (offscreen rendering, and a small game on the engine) against stickshift.h
+# and run them. On macOS the smoke test and the sample
+# render through Metal; elsewhere (or with --null) they use the null backend. The engine
+# tests always use the null backend.
 #
 #   ./scripts/test-c-api.sh [--null]
 set -euo pipefail
@@ -32,7 +34,13 @@ cflags=(-std=c11 -Wall -Wextra -pedantic -Werror -I crates/stickshift-capi/inclu
 # shellcheck disable=SC2086 # the native library list is meant to split into words
 "$cc" "${cflags[@]}" crates/stickshift-capi/tests/c/smoke.c "$lib" $native_libs -o "$out/smoke"
 # shellcheck disable=SC2086
+"$cc" "${cflags[@]}" crates/stickshift-capi/tests/c/engine.c "$lib" $native_libs -o "$out/engine"
+# shellcheck disable=SC2086
+"$cc" "${cflags[@]}" crates/stickshift-capi/tests/c/services.c "$lib" $native_libs -o "$out/services"
+# shellcheck disable=SC2086
 "$cc" "${cflags[@]}" examples/c/offscreen.c "$lib" $native_libs -o "$out/offscreen"
+# shellcheck disable=SC2086
+"$cc" "${cflags[@]}" examples/c/engine.c "$lib" $native_libs -o "$out/engine-example"
 
 # The dynamic library must carry an @rpath install name (crates/stickshift-capi/build.rs).
 if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -46,6 +54,9 @@ fi
 
 fixture="crates/stickshift-assets/tests/fixtures/cube.gltf"
 "$out/smoke" $null_flag "$fixture"
+"$out/engine"
+"$out/services"
 "$out/offscreen" "$fixture" "$out/offscreen.ppm" $null_flag
 [[ -s "$out/offscreen.ppm" ]] || { echo "the sample wrote no image" >&2; exit 1; }
-echo "C API: smoke test and sample passed"
+"$out/engine-example"
+echo "C API: smoke test, engine tests and samples passed"

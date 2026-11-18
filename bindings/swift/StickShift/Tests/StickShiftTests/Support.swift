@@ -4,6 +4,7 @@
 
 import Foundation
 import StickShift
+import simd
 
 /// The workspace root, from this file's path.
 let workspace = URL(fileURLWithPath: #filePath)
@@ -14,8 +15,19 @@ let workspace = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()  // bindings
     .deletingLastPathComponent()
 
-/// The committed glTF cube the asset tests use.
+/// The committed glTF cube the asset tests use: one untextured part.
 let cubeFixture = workspace.appendingPathComponent("crates/stickshift-assets/tests/fixtures/cube.gltf")
+
+/// The same cube with a base-colour texture: one textured part.
+let texturedCubeFixture = workspace.appendingPathComponent(
+    "crates/stickshift-assets/tests/fixtures/textured_cube.gltf"
+)
+
+/// A matrix's 16 elements as bit patterns, column by column, so a comparison
+/// tells `-0` from `+0` and catches a last-bit difference.
+func bits(_ m: simd_float4x4) -> [UInt32] {
+    (0..<4).flatMap { c in (0..<4).map { r in m[c][r].bitPattern } }
+}
 
 /// One triangle facing +Z, on the `positionNormalColor` layout, in `color`.
 func triangle(_ color: SIMD3<Float> = [0.9, 0.2, 0.1]) -> (vertices: [Float], indices: [UInt32]) {

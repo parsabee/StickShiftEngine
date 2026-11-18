@@ -21,7 +21,9 @@ let package = Package(
     name: "StickShift",
     platforms: [.macOS(.v14)],
     products: [
-        .library(name: "StickShift", targets: ["StickShift"])
+        .library(name: "StickShift", targets: ["StickShift"]),
+        // The macOS host: the view, the window and the menus around an engine.
+        .library(name: "StickShiftAppKit", targets: ["StickShiftAppKit"]),
     ],
     targets: [
         // The C API, straight from `crates/stickshift-capi/include/stickshift.h`.
@@ -31,8 +33,15 @@ let package = Package(
             dependencies: ["CStickShift"],
             linkerSettings: [
                 .unsafeFlags(["\(libraryDirectory)/libstickshift.a"]),
-                // What `libstickshift.a` itself links against.
+                // What `libstickshift.a` itself links against: rustc's
+                // `--print native-static-libs`, less the libraries every link
+                // gets (System, c, m). `scripts/test-swift.sh` checks the two
+                // lists match. The audio frameworks are the engine's sound
+                // (kira over cpal); AppKit comes from the Metal renderer.
                 .linkedFramework("AppKit"),
+                .linkedFramework("AudioToolbox"),
+                .linkedFramework("CoreAudio"),
+                .linkedFramework("CoreFoundation"),
                 .linkedFramework("CoreGraphics"),
                 .linkedFramework("Foundation"),
                 .linkedFramework("Metal"),
@@ -42,5 +51,8 @@ let package = Package(
             ]
         ),
         .testTarget(name: "StickShiftTests", dependencies: ["StickShift"]),
+        // AppKit lives here, never in `StickShift`, whose sources stay free of it.
+        .target(name: "StickShiftAppKit", dependencies: ["StickShift", "CStickShift"]),
+        .testTarget(name: "StickShiftAppKitTests", dependencies: ["StickShiftAppKit", "StickShift", "CStickShift"]),
     ]
 )

@@ -1947,9 +1947,12 @@ version = "0.1.0"
 dependencies = [
  "stickshift-assets",
  "stickshift-camera",
+ "stickshift-core",
+ "stickshift-ecs",
  "stickshift-math",
  "stickshift-render",
  "stickshift-render-api",
+ "stickshift-scene",
 ]
 
 [[package]]
@@ -1974,6 +1977,7 @@ name = "stickshift-ecs"
 version = "0.1.0"
 dependencies = [
  "hecs",
+ "stickshift-ecs",
  "stickshift-math",
 ]
 

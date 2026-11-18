@@ -21,6 +21,9 @@
 //! [`hecs`] is re-exported ([`crate::hecs`]) so downstream crates depend on a
 //! single, version-pinned copy without adding their own dependency.
 //!
+//! The `dynamic` feature adds `stickshift_ecs::dynamic`: components registered
+//! at run time by hosts that cannot define Rust types (the C API).
+//!
 //! # Example
 //!
 //! ```rust
@@ -48,6 +51,9 @@ use stickshift_math::Transform;
 /// this path (`stickshift_ecs::hecs::World`) so the whole workspace shares one pinned
 /// version.
 pub use hecs;
+
+#[cfg(feature = "dynamic")]
+pub mod dynamic;
 
 /// A component that stores an entity's spatial transform.
 ///
@@ -646,7 +652,11 @@ mod tests {
     /// not trip the guard; only the exact concept words do.
     #[test]
     fn test_no_game_specific_symbols() {
-        let src = include_str!("lib.rs");
+        // Every source file of the crate, the feature-gated ones included.
+        let sources = [
+            ("lib.rs", include_str!("lib.rs")),
+            ("dynamic.rs", include_str!("dynamic.rs")),
+        ];
 
         // Game concepts, built from ASCII byte codes so the words never appear
         // literally anywhere in this source file (which is exactly what lets the
@@ -664,17 +674,19 @@ mod tests {
         .map(|bytes| String::from_utf8(bytes.to_vec()).unwrap())
         .collect();
 
-        for token in src.split(|c: char| !c.is_ascii_alphanumeric()) {
-            if token.is_empty() {
-                continue;
-            }
-            let lower = token.to_ascii_lowercase();
-            for bad in &forbidden {
-                assert_ne!(
-                    &lower, bad,
-                    "game-specific identifier `{token}` found in lib.rs: \
-                     stickshift-ecs must stay engine-generic (engine/game boundary)",
-                );
+        for (file, src) in sources {
+            for token in src.split(|c: char| !c.is_ascii_alphanumeric()) {
+                if token.is_empty() {
+                    continue;
+                }
+                let lower = token.to_ascii_lowercase();
+                for bad in &forbidden {
+                    assert_ne!(
+                        &lower, bad,
+                        "game-specific identifier `{token}` found in {file}: \
+                         stickshift-ecs must stay engine-generic (engine/game boundary)",
+                    );
+                }
             }
         }
     }

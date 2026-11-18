@@ -2,7 +2,8 @@
 
 Stick Shift Engine is a lean, **rasterization-only** Metal graphics engine for Apple Silicon, written in
 Rust and usable from other languages through a C API (and, from v0.2, a Swift package). The host
-application owns the window or view, the run loop and input; the engine renders.
+application owns the window or view and drives the loop, one tick per display refresh; the
+engine runs the game's updates and renders, through the C API too.
 
 Open work is tracked as [GitHub issues](https://github.com/parsabee/StickShiftEngine/issues). Release
 history is in [CHANGELOG.md](../CHANGELOG.md).

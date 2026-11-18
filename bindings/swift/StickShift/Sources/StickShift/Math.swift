@@ -9,6 +9,29 @@ import simd
 // looks down -Z, matrices are column-major (the same memory layout as
 // `simd_float4x4`), clip-space depth is Metal's 0...1, and angles are radians.
 
+/// The engine's own matrix and quaternion arithmetic, for results that match
+/// the Rust engine bit for bit.
+///
+/// `simd`'s `simd_float4x4 * simd_float4x4` fuses each multiply with the add
+/// after it, so its products can differ in the last bit from the engine's,
+/// which round every multiply and every add. A game that must match the engine
+/// exactly (a port of a Rust game, a replay) multiplies through these instead.
+public enum StickShiftMath {
+    /// `a × b`: the transform that applies `b` first, then `a`, multiplied
+    /// exactly as the engine multiplies.
+    public static func multiply(_ a: simd_float4x4, _ b: simd_float4x4) -> simd_float4x4 {
+        simd_float4x4(stickshift_mat4_mul(StickShiftMat4(a), StickShiftMat4(b)))
+    }
+
+    /// A rotation of `angle` radians about `axis`, computed exactly as the
+    /// engine computes it. `axis` need not be normalised; a zero axis gives the
+    /// identity.
+    public static func rotation(axis: SIMD3<Float>, angle: Float) -> simd_quatf {
+        let q = stickshift_quat_from_axis_angle(StickShiftVec3(axis), angle)
+        return simd_quatf(ix: q.x, iy: q.y, iz: q.z, r: q.w)
+    }
+}
+
 extension simd_float4x4 {
     /// The matrix a `StickShiftMat4` holds (both are column-major).
     init(_ m: StickShiftMat4) {

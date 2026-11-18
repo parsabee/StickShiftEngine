@@ -80,6 +80,36 @@ public struct Frame {
             == STICKSHIFT_OK
     }
 
+    /// Draw the `parts` of `model`, in node order, each at
+    /// `world × (local × node)`, where `node` is the part's node matrix from the
+    /// glTF file, with its base colour multiplied by `tint`.
+    ///
+    /// A game that fits a model to its world (a scale, a turn, a lift) passes
+    /// the fit as `local` and the entity's transform as `world`. The products
+    /// are taken in that grouping, which can differ in the last bit from
+    /// passing `world × local` to ``draw(_:transform:tint:)``.
+    /// Drawing a model's ``ModelParts/textured`` and ``ModelParts/untextured``
+    /// parts in two calls lets other draws go between them.
+    ///
+    /// - Returns: `false` if the model is not ready, so nothing was drawn.
+    @discardableResult
+    public func draw(
+        _ model: Model,
+        world: simd_float4x4,
+        local: simd_float4x4 = matrix_identity_float4x4,
+        parts: ModelParts = .all,
+        tint: SIMD4<Float> = .one
+    ) throws -> Bool {
+        var draw = StickShiftModelDraw(
+            world: StickShiftMat4(world),
+            local: StickShiftMat4(local),
+            tint: StickShiftColor(tint),
+            parts: parts.c
+        )
+        return try check(stickshift_frame_draw_model_ex(raw, StickShiftModel(id: model.id), &draw))
+            == STICKSHIFT_OK
+    }
+
     /// Draw a 2D quad over the 3D scene. Quads composite in record order.
     @discardableResult
     public func draw(_ quad: Quad) throws -> Bool {
@@ -161,9 +191,13 @@ public struct Camera: Sendable, Equatable {
         near: Float = 0.1,
         far: Float = 300
     ) -> Camera {
+        // Multiplied as the engine multiplies, not with simd's fused `*`, so
+        // the camera matches one the Rust engine builds bit for bit.
         Camera(
-            viewProjection: .perspective(fovY: fovY, aspect: aspect, near: near, far: far)
-                * .lookAt(eye: eye, target: target, up: up),
+            viewProjection: StickShiftMath.multiply(
+                .perspective(fovY: fovY, aspect: aspect, near: near, far: far),
+                .lookAt(eye: eye, target: target, up: up)
+            ),
             position: eye
         )
     }
@@ -218,6 +252,18 @@ public struct SunSky: Sendable, Equatable {
         self.skyFill = skyFill
         self.skyZenithColor = skyZenithColor
         self.skyHorizonColor = skyHorizonColor
+    }
+
+    init(_ c: StickShiftSunSky) {
+        self.init(
+            elevation: c.sun_elevation_deg,
+            azimuth: c.sun_azimuth_deg,
+            sunColor: SIMD3(c.sun_color),
+            sunIntensity: c.sun_intensity,
+            skyFill: c.sky_fill,
+            skyZenithColor: SIMD3(c.sky_zenith_color),
+            skyHorizonColor: SIMD3(c.sky_horizon_color)
+        )
     }
 
     var c: StickShiftSunSky {
@@ -319,6 +365,27 @@ public struct Light: Sendable, Equatable {
             light.outer_angle_deg = outer
         }
         return light
+    }
+}
+
+/// Which parts of a ``Model`` a draw records: see
+/// ``Frame/draw(_:world:local:parts:tint:)``.
+public enum ModelParts: Sendable {
+    /// Every part.
+    case all
+    /// The parts with a base-colour texture
+    /// (``VertexLayout/positionNormalUV``).
+    case textured
+    /// The parts without one (``VertexLayout/positionNormalColor``), coloured
+    /// by their vertices.
+    case untextured
+
+    var c: StickShiftModelParts {
+        switch self {
+        case .all: StickShiftModelParts(STICKSHIFT_MODEL_PARTS_ALL)
+        case .textured: StickShiftModelParts(STICKSHIFT_MODEL_PARTS_TEXTURED)
+        case .untextured: StickShiftModelParts(STICKSHIFT_MODEL_PARTS_UNTEXTURED)
+        }
     }
 }
 

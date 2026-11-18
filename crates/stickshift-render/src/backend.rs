@@ -2392,6 +2392,13 @@ impl MetalRenderer {
         })
     }
 
+    /// Wait, at most `timeout`, until a frame slot is free, so the next
+    /// [`try_begin_frame`](Self::try_begin_frame) does not skip for frames in
+    /// flight. Returns whether one is. Takes no slot.
+    pub fn wait_for_frame_slot(&self, timeout: Duration) -> bool {
+        self.frame_semaphore.wait_available(timeout)
+    }
+
     /// Frames submitted to the GPU that have not finished yet (`0..=`
     /// [`MAX_FRAMES_IN_FLIGHT`]), counting an open, unsubmitted frame.
     #[must_use]

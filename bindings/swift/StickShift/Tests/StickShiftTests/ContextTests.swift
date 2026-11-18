@@ -16,6 +16,7 @@ struct ContextTests {
     @Test func aNullContextHasItsSizeAndNamesItsBackend() throws {
         let context = try nullContext()
         #expect(context.size == (64, 48))
+        #expect(context.scale == 1)
         #expect(context.deviceName.contains("null"))
         let events = try context.pollEvents()
         #expect(events.contains { $0.kind == .contextReady })

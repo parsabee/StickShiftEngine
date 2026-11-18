@@ -7,11 +7,11 @@
 //! `stickshift-core` owns the engine loop and defines the seam every game plugs into.
 //! It sits at the top of the engine stack: it depends on `stickshift-ecs`,
 //! `stickshift-scene`, `stickshift-camera`, `stickshift-audio`, `stickshift-render-api`,
-//! `stickshift-perf`, `stickshift-math`, and `winit`, but **never** on `metal` or the
-//! concrete renderer — all rendering goes through the `stickshift-render-api` traits
-//! (ARCHITECTURE §2). Game concepts (vehicles, tracks,
-//! tallies, …) never enter this crate; a test enforces that (see the crate's
-//! no-game-symbols guard).
+//! `stickshift-perf` and `stickshift-math` (plus `winit` with the `windowed`
+//! feature), but **never** on `metal` or the concrete renderer — all rendering goes
+//! through the `stickshift-render-api` traits (ARCHITECTURE §2). Game concepts
+//! (vehicles, tracks, tallies, …) never enter this crate; a test enforces that (see
+//! the crate's no-game-symbols guard).
 //!
 //! # The boundary (ARCHITECTURE §3)
 //!
@@ -44,6 +44,21 @@
 //!   window exists; that is how this crate draws through Metal without
 //!   depending on it. [`run`] itself draws into a [`NullRenderer`](stickshift_render_api::NullRenderer).
 //!
+//! What a window adds to the loop (the real clock, the drawable sized for the
+//! render scale, settings restored and saved, the Graphics menu's choices,
+//! Escape, focus loss and resizes) is platform-free, and lives in
+//! [`session::Session`]. The winit runner is an adapter over it.
+//!
+//! # Features
+//!
+//! - **`windowed`** (default): the winit runner ([`run`], [`run_with_backend`],
+//!   [`run_with_config`]) and its AppKit Graphics menu. A host that owns its own
+//!   view and display link (the C API, and Swift over it, on macOS or iOS)
+//!   builds this crate with `default-features = false` and drives a [`Session`]
+//!   itself, so neither `winit` nor AppKit reaches it. Settings persistence
+//!   (`NSUserDefaults`, Foundation only) stays on every Apple target either
+//!   way.
+//!
 //! # Fixed timestep
 //!
 //! Simulation is decoupled from display rate. Each frame the driver banks the
@@ -74,7 +89,12 @@
 //! ```
 
 #![deny(missing_docs)]
+// The docs link the winit runner (`run`, `RunConfig`, `app`) from across the
+// crate. Without `windowed` those items do not exist, so the links cannot
+// resolve; they are checked in the default build, where they do.
+#![cfg_attr(not(feature = "windowed"), allow(rustdoc::broken_intra_doc_links))]
 
+#[cfg(feature = "windowed")]
 pub mod app;
 pub mod context;
 pub mod driver;
@@ -83,11 +103,11 @@ pub mod graphics;
 pub mod headless;
 pub mod input;
 mod platform;
-// The Graphics menu model is only driven by the macOS menu bar.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-mod settings_menu;
+pub mod session;
+pub mod settings_menu;
 pub mod timestep;
 
+#[cfg(feature = "windowed")]
 pub use app::{run, run_with_backend, run_with_config, BackendFactory, RunConfig};
 pub use context::{EngineCtx, Renderer};
 pub use game::Game;
@@ -95,11 +115,13 @@ pub use graphics::{
     DrawDistance, GraphicsSettings, GraphicsState, RenderScale, ShadowDistance, ShadowQuality,
 };
 pub use input::{InputState, Key, MouseButton};
+pub use session::{Clock, HostEvent, Requests, Session, SettingsStore, View};
+pub use settings_menu::MenuCommand;
 // Re-exported for the same reason `Scene` is: these are the types a game names
 // when it uses `EngineCtx::audio`, so it should not have to add a second
 // dependency to spell them.
 pub use stickshift_audio::{Audio, SoundHandle, Volume};
-pub use stickshift_scene::{Scene, SpawnCtx, StreamingConfig};
+pub use stickshift_scene::{Scene, SpawnCtx, StreamingConfig, StreamingConfigError};
 pub use timestep::{Accumulator, FIXED_DT, FIXED_DT_DURATION, MAX_STEPS_PER_FRAME};
 
 #[cfg(test)]
@@ -131,9 +153,11 @@ mod boundary_tests {
             ("graphics.rs", include_str!("graphics.rs")),
             ("settings_menu.rs", include_str!("settings_menu.rs")),
             ("platform/mod.rs", include_str!("platform/mod.rs")),
+            ("platform/defaults.rs", include_str!("platform/defaults.rs")),
             ("platform/macos.rs", include_str!("platform/macos.rs")),
             ("headless.rs", include_str!("headless.rs")),
             ("input.rs", include_str!("input.rs")),
+            ("session.rs", include_str!("session.rs")),
             ("timestep.rs", include_str!("timestep.rs")),
         ];
 

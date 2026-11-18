@@ -4,10 +4,12 @@
  *   smoke [--null] <model.gltf>
  *
  * Exercises the whole lifecycle through the header (context, mesh, borrowed
- * texture data, a model loaded off-thread with a completion callback, a frame
- * with a read-back, events, stats) and checks the pixels: something was drawn
- * on Metal, zeros on the null backend. Exits 0 on success, 1 on failure, and 0
- * with a message when Metal is requested but no device exists.
+ * texture data, a model loaded off-thread with a completion callback and drawn
+ * whole and by part, a frame with a read-back, events, stats, the context's sticky
+ * camera, sun, scale, safe area and last-frame record, the math helpers) and checks
+ * the pixels: something was drawn on Metal, zeros on the null backend. Exits 0 on
+ * success, 1 on failure, and 0 with a message when Metal is requested but no device
+ * exists.
  *
  * Run by scripts/test-c-api.sh (and CI).
  *
@@ -63,11 +65,83 @@ static StickShiftData copied(const void *ptr, size_t len) {
     return data;
 }
 
+static int near(float a, float b) {
+    float d = a - b;
+    return d < 1e-6f && d > -1e-6f;
+}
+
+static int near3(StickShiftVec3 a, StickShiftVec3 b) {
+    return near(a.x, b.x) && near(a.y, b.y) && near(a.z, b.z);
+}
+
+/* The glam helpers (pure, no context). The values chosen are exact in f32, so they compare with ==;
+ * the bit-for-bit checks against glam are the Rust tests in src/math.rs. */
+static int check_math(void) {
+    StickShiftVec3 a = {1, 2, 3}, b = {4, 5, 6}, zero = {0, 0, 0};
+    StickShiftVec3 x = {1, 0, 0}, y = {0, 1, 0}, ahead = {0, 0, -1};
+    REQUIRE(stickshift_vec3_dot(a, b) == 32.0f);
+    StickShiftVec3 z = stickshift_vec3_cross(x, y);
+    REQUIRE(z.x == 0.0f && z.y == 0.0f && z.z == 1.0f);
+    StickShiftVec3 three_four = {3, 4, 0};
+    REQUIRE(stickshift_vec3_length(three_four) == 5.0f);
+    StickShiftVec3 n = stickshift_vec3_normalize_or_zero(zero);
+    REQUIRE(n.x == 0.0f && n.y == 0.0f && n.z == 0.0f);
+    StickShiftVec3 back = {0, 0, -3};
+    n = stickshift_vec3_normalize_or_zero(back);
+    REQUIRE(n.x == 0.0f && n.y == 0.0f && n.z == -1.0f);
+    StickShiftVec3 far = {2, 4, 8};
+    StickShiftVec3 mid = stickshift_vec3_lerp(zero, far, 0.5f);
+    REQUIRE(mid.x == 1.0f && mid.y == 2.0f && mid.z == 4.0f);
+    /* lerp is a * (1 - t) + b * t, so t = 1 gives b exactly; a + (b - a) * t would give 0 here. */
+    StickShiftVec3 huge = {1e8f, 1e8f, 1e8f}, unit = {1, 1, 1};
+    StickShiftVec3 end = stickshift_vec3_lerp(huge, unit, 1.0f);
+    REQUIRE(end.x == 1.0f && end.y == 1.0f && end.z == 1.0f);
+
+    StickShiftQuat identity = stickshift_quat_from_rotation_y(0.0f);
+    REQUIRE(identity.x == 0.0f && identity.y == 0.0f && identity.z == 0.0f && identity.w == 1.0f);
+    identity = stickshift_quat_from_rotation_x(0.0f);
+    REQUIRE(identity.w == 1.0f);
+    identity = stickshift_quat_from_rotation_z(0.0f);
+    REQUIRE(identity.w == 1.0f);
+    /* The demo's building facing (a quarter turn about +Y) turns the travel axis -Z to +X. */
+    StickShiftQuat facing = stickshift_quat_from_rotation_y(-1.57079632679f);
+    REQUIRE(near3(stickshift_quat_mul_vec3(facing, ahead), x));
+    StickShiftQuat same = stickshift_quat_mul(identity, facing);
+    REQUIRE(same.x == facing.x && same.y == facing.y && same.z == facing.z && same.w == facing.w);
+    /* Two quarter turns, one way and back, are no turn. */
+    StickShiftQuat undo = stickshift_quat_from_rotation_y(1.57079632679f);
+    REQUIRE(near3(stickshift_quat_mul_vec3(stickshift_quat_mul(undo, facing), ahead), ahead));
+
+    StickShiftVec3 t = {1, 2, 3}, s = {2, 2, 2}, ones = {1, 1, 1};
+    StickShiftQuat none = {0, 0, 0, 1};
+    StickShiftMat4 m = stickshift_mat4_from_trs(t, none, s);
+    StickShiftVec3 p = stickshift_mat4_transform_point3(m, ones);
+    REQUIRE(p.x == 3.0f && p.y == 4.0f && p.z == 5.0f);
+    StickShiftVec3 v = stickshift_mat4_transform_vector3(m, ones);
+    REQUIRE(v.x == 2.0f && v.y == 2.0f && v.z == 2.0f);
+
+    /* A transform's matrix is from_trs of its fields, bit for bit. */
+    REQUIRE(sizeof(StickShiftTransform) == 10 * sizeof(float));
+    StickShiftTransform turned = {t, facing, s};
+    StickShiftMat4 from_transform = stickshift_transform_to_mat4(turned);
+    StickShiftMat4 from_trs = stickshift_mat4_from_trs(t, facing, s);
+    REQUIRE(memcmp(&from_transform, &from_trs, sizeof from_trs) == 0);
+    /* Scale first, then rotation: -Z doubled, then turned to +X. */
+    StickShiftVec3 two_ahead = {0, 0, -2}, two_x = {2, 0, 0};
+    REQUIRE(near3(stickshift_mat4_transform_vector3(from_transform, ahead),
+                  stickshift_quat_mul_vec3(facing, two_ahead)));
+    REQUIRE(near3(stickshift_mat4_transform_vector3(from_transform, ahead), two_x));
+    return 0;
+}
+
 int main(int argc, char **argv) {
     int use_null = argc > 1 && strcmp(argv[1], "--null") == 0;
     const char *model_path = argc > 1 + use_null ? argv[1 + use_null] : NULL;
     REQUIRE(model_path != NULL);
     REQUIRE(stickshift_api_version() == STICKSHIFT_API_VERSION);
+    if (check_math() != 0) {
+        return 1;
+    }
 
     StickShiftContextDesc desc = {STICKSHIFT_API_VERSION, use_null ? STICKSHIFT_BACKEND_NULL : STICKSHIFT_BACKEND_METAL,
                              NULL, WIDTH, HEIGHT, 1.0f};
@@ -120,11 +194,37 @@ int main(int argc, char **argv) {
     CHECK(stickshift_context_flush(ctx), STICKSHIFT_OK);
     REQUIRE(model_events == 1);
     CHECK(model_result, STICKSHIFT_OK);
+    /* Waiting on a model that has loaded returns at once. */
+    CHECK(stickshift_model_wait(ctx, model, 0), STICKSHIFT_OK);
+    StickShiftModel no_model = {12345};
+    CHECK(stickshift_model_wait(ctx, no_model, 0), STICKSHIFT_ERROR_INVALID_HANDLE);
+
+    /* The sticky state can be set and read outside a frame. */
+    float ui_scale = 0.0f;
+    CHECK(stickshift_context_get_scale(ctx, &ui_scale), STICKSHIFT_OK);
+    REQUIRE(ui_scale == 1.0f);
+    float insets[4] = {4, 0, 2, 0}, read_insets[4] = {0};
+    CHECK(stickshift_context_set_safe_area(ctx, insets), STICKSHIFT_OK);
+    CHECK(stickshift_context_get_safe_area(ctx, read_insets), STICKSHIFT_OK);
+    REQUIRE(memcmp(insets, read_insets, sizeof insets) == 0);
+    insets[1] = -1.0f;
+    CHECK(stickshift_context_set_safe_area(ctx, insets), STICKSHIFT_ERROR_INVALID_ARGUMENT);
+    StickShiftSunSky sun;
+    stickshift_sun_sky_default(&sun);
+    sun.sun_azimuth_deg = 75.0f;
+    CHECK(stickshift_context_set_sun_sky(ctx, &sun), STICKSHIFT_OK);
+    StickShiftSunSky read_sun;
+    CHECK(stickshift_context_get_sun_sky(ctx, &read_sun), STICKSHIFT_OK);
+    REQUIRE(read_sun.sun_azimuth_deg == 75.0f);
+    /* A null context resizes; a Metal offscreen one keeps its size. */
+    CHECK(stickshift_context_resize(ctx, WIDTH, HEIGHT, 1.0f),
+          use_null ? STICKSHIFT_OK : STICKSHIFT_ERROR_UNSUPPORTED);
     StickShiftVec3 lo, hi;
     CHECK(stickshift_model_get_bounds(ctx, model, &lo, &hi), STICKSHIFT_OK);
     REQUIRE(hi.x > lo.x);
 
-    /* One frame: the triangle, the model, two lights, a HUD bar, and a read-back. */
+    /* One frame: the triangle, the model (whole, then by part), two lights, a HUD bar, and a
+     * read-back. */
     StickShiftFrame *frame = NULL;
     StickShiftFrame *second = NULL;
     CHECK(stickshift_frame_acquire(ctx, &frame), STICKSHIFT_OK);
@@ -137,6 +237,10 @@ int main(int argc, char **argv) {
         stickshift_mat4_mul(stickshift_mat4_perspective(0.9f, (float)WIDTH / HEIGHT, 0.1f, 50.0f),
                        stickshift_mat4_look_at(eye, target, up));
     camera.position = eye;
+    CHECK(stickshift_context_set_camera(ctx, &camera), STICKSHIFT_OK);
+    StickShiftCamera read_camera;
+    CHECK(stickshift_context_get_camera(ctx, &read_camera), STICKSHIFT_OK);
+    REQUIRE(memcmp(&read_camera, &camera, sizeof camera) == 0);
     CHECK(stickshift_frame_set_camera(frame, &camera), STICKSHIFT_OK);
 
     StickShiftLight lamp = {STICKSHIFT_LIGHT_POINT, {0.5f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f},
@@ -156,6 +260,16 @@ int main(int argc, char **argv) {
     StickShiftQuat spin = stickshift_quat_from_axis_angle(up, 0.6f);
     StickShiftMat4 world = stickshift_mat4_from_trs(beside, spin, scale);
     CHECK(stickshift_frame_draw_model(frame, model, &world, NULL), STICKSHIFT_OK);
+    /* The model again, at world x (local x node) with an identity local matrix: every part,
+     * then its textured parts, then its untextured ones, which add up to every part. */
+    StickShiftModelDraw by_part = {world, identity, {1, 1, 1, 1}, STICKSHIFT_MODEL_PARTS_ALL};
+    CHECK(stickshift_frame_draw_model_ex(frame, model, &by_part), STICKSHIFT_OK);
+    by_part.parts = STICKSHIFT_MODEL_PARTS_TEXTURED;
+    CHECK(stickshift_frame_draw_model_ex(frame, model, &by_part), STICKSHIFT_OK);
+    by_part.parts = STICKSHIFT_MODEL_PARTS_UNTEXTURED;
+    CHECK(stickshift_frame_draw_model_ex(frame, model, &by_part), STICKSHIFT_OK);
+    by_part.parts = 7;
+    CHECK(stickshift_frame_draw_model_ex(frame, model, &by_part), STICKSHIFT_ERROR_INVALID_ARGUMENT);
     StickShiftQuad bar = {2, 2, 20, 4, 0, 0, 1, 1, {1, 1, 1, 0.8f}, STICKSHIFT_FILL_SOLID, {0}};
     CHECK(stickshift_frame_draw_quad(frame, &bar), STICKSHIFT_OK);
 
@@ -165,6 +279,19 @@ int main(int argc, char **argv) {
     uint64_t number = 0;
     CHECK(stickshift_frame_submit(frame, NULL, &number), STICKSHIFT_OK);
     REQUIRE(number == 1);
+
+    /* What the frame recorded: the triangle and the model's parts, the HUD bar, two
+     * lights, the camera and the sun. */
+    StickShiftFrameRecord record;
+    memset(&record, 0, sizeof record);
+    record.size = sizeof record;
+    CHECK(stickshift_context_get_last_frame(ctx, &record), STICKSHIFT_OK);
+    REQUIRE(record.submitted == 1 && record.frame_number == 1);
+    REQUIRE(record.draw_count >= 4 && (record.draw_count - 1) % 3 == 0);
+    REQUIRE(record.draws[0].source == mesh.id && record.draws[1].source == model.id);
+    REQUIRE(record.quad_count == 1 && record.quads[0].width == 20.0f);
+    REQUIRE(record.light_count == 2 && record.sun.sun_azimuth_deg == 75.0f);
+    REQUIRE(memcmp(&record.camera, &camera, sizeof camera) == 0);
 
     CHECK(stickshift_context_flush(ctx), STICKSHIFT_OK);
     int completed = 0, read_back = 0;
@@ -196,7 +323,9 @@ int main(int argc, char **argv) {
     StickShiftStats stats;
     CHECK(stickshift_context_get_stats(ctx, &stats), STICKSHIFT_OK);
     REQUIRE(stats.frames_submitted == 1 && stats.frames_completed == 1);
-    REQUIRE(stats.draws_submitted >= 2 && stats.draws_skipped == 0);
+    /* The triangle, then each of the model's parts three times: whole, all by part, and split. */
+    REQUIRE(stats.draws_submitted >= 4 && (stats.draws_submitted - 1) % 3 == 0);
+    REQUIRE(stats.draws_skipped == 0);
     REQUIRE(stats.meshes == 1 && stats.textures == 1 && stats.models == 1);
 
     CHECK(stickshift_model_destroy(ctx, model), STICKSHIFT_OK);

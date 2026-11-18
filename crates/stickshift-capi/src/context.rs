@@ -8,7 +8,7 @@
 use std::cell::UnsafeCell;
 use std::collections::VecDeque;
 use std::ffi::{c_char, CString};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use stickshift_math::glam::{Mat4, Vec3};
@@ -16,8 +16,9 @@ use stickshift_render_api::{RenderSettings, ShadowQuality, SunSky};
 
 use crate::backend::{Backend, NullBackend, PendingReadback};
 use crate::core::{call, call_or, input, output, Error};
+use crate::engine::StickShiftEngine;
 use crate::fonts::FontEntry;
-use crate::frame::Recording;
+use crate::frame::{LastFrame, Recording};
 use crate::handles::{ContextTag, Kind, Slots, MAX_CONTEXTS};
 use crate::models::{Loader, ModelEntry};
 use crate::resources::{MeshEntry, TextureEntry};
@@ -44,11 +45,16 @@ pub struct StickShiftContext {
     /// The one frame object, handed out by `stickshift_frame_acquire`. Boxed so its
     /// address is stable for the context's lifetime.
     frame: Box<StickShiftFrame>,
+    /// The engine attached to this context, or NULL. Dereferenced only on
+    /// [`engine_thread`](Self::engine_thread).
+    pub(crate) engine: AtomicPtr<StickShiftEngine>,
+    /// The attached engine's thread ([`crate::engine::current_thread`]), or 0.
+    pub(crate) engine_thread: AtomicU64,
 }
 
 /// The frame being recorded on a context. See `docs/C_API.md`.
 pub struct StickShiftFrame {
-    ctx: *const StickShiftContext,
+    pub(crate) ctx: *const StickShiftContext,
 }
 
 /// An event owned by the context until it is delivered.
@@ -171,6 +177,12 @@ pub(crate) struct Inner {
     pub(crate) camera: (Mat4, Vec3),
     /// Sticky sun and sky.
     pub(crate) sun: SunSky,
+    /// Drawable pixels per point, as last given at create or resize.
+    pub(crate) scale: f32,
+    /// Safe-area insets in drawable pixels: top, right, bottom, left.
+    pub(crate) safe_area: [f32; 4],
+    /// What the last frame to reach submit recorded.
+    pub(crate) last_frame: LastFrame,
     /// Submitted frames not yet reported complete, oldest first.
     pub(crate) pending_frames: VecDeque<(u64, Option<StickShiftCompletion>)>,
     pub(crate) pending_reads: Vec<PendingRead>,
@@ -196,7 +208,7 @@ impl Inner {
 
     /// Housekeeping: finish model loads, report finished frames, and copy out
     /// finished read-backs.
-    fn pump(&mut self) {
+    pub(crate) fn pump(&mut self) {
         crate::models::pump(self);
 
         let completed = self.backend.completed_frames();
@@ -235,19 +247,54 @@ impl Inner {
         }
     }
 
-    /// Whether nothing is in progress: no loads, no frames or read-backs on the GPU.
-    /// What housekeeping is still waiting for: `(model loads, frames,
-    /// read-backs)`. All zero when the context is idle.
-    fn pending(&self) -> (u32, usize, usize) {
+    /// What is still in progress: `(model loads, frames on the GPU,
+    /// read-backs)`. All zero when the context is idle. The frames count every
+    /// submitted frame the GPU has not finished, the engine's too (which have
+    /// no completion to deliver), not only those with a completion pending.
+    pub(crate) fn pending(&self) -> (u32, usize, usize) {
+        let in_flight = self
+            .backend
+            .submitted_frames()
+            .saturating_sub(self.backend.completed_frames());
         (
             self.loader.as_ref().map_or(0, Loader::in_flight),
-            self.pending_frames.len(),
+            self.pending_frames
+                .len()
+                .max(usize::try_from(in_flight).unwrap_or(usize::MAX)),
             self.pending_reads.len(),
         )
     }
 
     pub(crate) fn surface_size(&self) -> (u32, u32) {
         self.backend.surface_size()
+    }
+
+    /// Resize the drawable (the caller checked the backend can) and record its
+    /// scale. The safe area (in pixels) is left as it is: an engine's
+    /// `CapiRenderer` recomputes it from the view's insets in points.
+    pub(crate) fn resize(&mut self, width: u32, height: u32, scale: f32) {
+        let scale = effective_scale(scale);
+        self.backend.resize(width, height, scale);
+        self.scale = scale;
+    }
+}
+
+/// The scale a context uses for `scale`: 1 unless it is finite and positive.
+pub(crate) fn effective_scale(scale: f32) -> f32 {
+    if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    }
+}
+
+fn check_insets(insets: &[f32; 4]) -> Result<(), Error> {
+    if insets.iter().all(|v| v.is_finite() && *v >= 0.0) {
+        Ok(())
+    } else {
+        Err(Error::invalid_argument(
+            "safe-area insets must be finite and >= 0",
+        ))
     }
 }
 
@@ -302,6 +349,9 @@ pub(crate) unsafe fn with_context<T>(
     body: impl FnOnce(&mut Inner) -> Result<T, Error>,
 ) -> Result<T, Error> {
     let ctx = input(ctx.cast_const(), "ctx")?;
+    // An attached engine's thread only; and inside a game hook, the camera the
+    // game moved reaches the context before the call (the push rule).
+    crate::engine::before_context_call(ctx)?;
     let (result, due) = {
         let mut guard = ctx.enter()?;
         let inner = guard.inner();
@@ -484,6 +534,9 @@ pub unsafe extern "C" fn stickshift_context_create(
             frame_open: false,
             camera: (Mat4::IDENTITY, Vec3::ZERO),
             sun: SunSky::default(),
+            scale: effective_scale(desc.scale),
+            safe_area: [0.0; 4],
+            last_frame: LastFrame::default(),
             pending_frames: VecDeque::new(),
             pending_reads: Vec::new(),
             counters: Counters::default(),
@@ -497,6 +550,8 @@ pub unsafe extern "C" fn stickshift_context_create(
             frame: Box::new(StickShiftFrame {
                 ctx: std::ptr::null(),
             }),
+            engine: AtomicPtr::new(std::ptr::null_mut()),
+            engine_thread: AtomicU64::new(0),
         }));
         // SAFETY: just allocated; the frame points back at its context.
         (*ctx).frame.ctx = ctx;
@@ -507,7 +562,9 @@ pub unsafe extern "C" fn stickshift_context_create(
 
 /// Destroy a context and everything it owns. Waits for submitted frames and a
 /// model parse in progress; undelivered events are dropped and borrowed data is
-/// released. NULL is a no-op.
+/// released. NULL is a no-op. With an engine attached it is
+/// `STICKSHIFT_ERROR_WRONG_STATE` (destroy the engine first), or
+/// `STICKSHIFT_ERROR_WRONG_THREAD` from a thread other than the engine's.
 ///
 /// # Safety
 /// `ctx` must be NULL or a live context; it is invalid after this returns
@@ -520,9 +577,21 @@ pub unsafe extern "C" fn stickshift_context_destroy(
         let Some(context) = ctx.as_ref() else {
             return Ok(STICKSHIFT_OK);
         };
+        let engine = context.engine.load(Ordering::Acquire);
+        if !engine.is_null()
+            && context.engine_thread.load(Ordering::Acquire) != crate::engine::current_thread()
+        {
+            return Err(crate::engine::wrong_thread());
+        }
         if context.dispatching.load(Ordering::SeqCst) > 0 {
             return Err(Error::wrong_state(
                 "stickshift_context_destroy cannot be called from a callback",
+            ));
+        }
+        if !engine.is_null() {
+            return Err(Error::wrong_state(
+                "an engine is attached to this context: destroy the engine first \
+                 (stickshift_engine_destroy)",
             ));
         }
         {
@@ -554,9 +623,9 @@ pub unsafe extern "C" fn stickshift_context_destroy(
     })
 }
 
-/// Resize a layer context's drawable to `width` × `height` pixels with `scale`
-/// pixels per point (`<= 0`: 1). Offscreen contexts keep their size
-/// (`STICKSHIFT_ERROR_UNSUPPORTED`).
+/// Resize a layer or null context's drawable to `width` × `height` pixels with
+/// `scale` pixels per point (`<= 0`: 1). A Metal offscreen context keeps its
+/// size (`STICKSHIFT_ERROR_UNSUPPORTED`).
 ///
 /// # Safety
 /// `ctx` must be NULL or a live context.
@@ -569,19 +638,14 @@ pub unsafe extern "C" fn stickshift_context_resize(
 ) -> StickShiftResult {
     call(|| {
         with_context(ctx, |inner| {
-            if inner.backend.is_offscreen() {
+            if !inner.backend.can_resize() {
                 return Err(Error::new(
                     STICKSHIFT_ERROR_UNSUPPORTED,
-                    "an offscreen context has a fixed size",
+                    "a Metal offscreen context has a fixed size",
                 ));
             }
             check_dimensions(width, height)?;
-            let scale = if scale.is_finite() && scale > 0.0 {
-                scale
-            } else {
-                1.0
-            };
-            inner.backend.resize(width, height, scale);
+            inner.resize(width, height, scale);
             Ok(STICKSHIFT_OK)
         })
     })
@@ -850,6 +914,186 @@ pub unsafe extern "C" fn stickshift_resource_state(
     call_or(STICKSHIFT_RESOURCE_STATE_INVALID, || {
         with_context(ctx, |inner| Ok(crate::resources::state(inner, handle_id)))
             .unwrap_or(STICKSHIFT_RESOURCE_STATE_INVALID)
+    })
+}
+
+/// Set the sticky sun and sky, with or without a frame open: what
+/// `stickshift_frame_set_sun_sky` sets, so a sun set before the first frame lights
+/// it.
+///
+/// # Safety
+/// `ctx` must be NULL or a live context; `sun` NULL or valid.
+#[no_mangle]
+pub unsafe extern "C" fn stickshift_context_set_sun_sky(
+    ctx: *mut StickShiftContext,
+    sun: *const StickShiftSunSky,
+) -> StickShiftResult {
+    call(|| {
+        let sun = SunSky::from(*input(sun, "sun")?);
+        with_context(ctx, |inner| {
+            inner.sun = sun;
+            Ok(STICKSHIFT_OK)
+        })
+    })
+}
+
+/// The sticky sun and sky.
+///
+/// # Safety
+/// `ctx` must be NULL or a live context; `out` NULL or valid.
+#[no_mangle]
+pub unsafe extern "C" fn stickshift_context_get_sun_sky(
+    ctx: *mut StickShiftContext,
+    out: *mut StickShiftSunSky,
+) -> StickShiftResult {
+    call(|| {
+        let out = output(out, "out")?;
+        with_context(ctx, |inner| {
+            *out = inner.sun.into();
+            Ok(STICKSHIFT_OK)
+        })
+    })
+}
+
+/// Set the sticky camera, with or without a frame open: what
+/// `stickshift_frame_set_camera` sets. With an engine attached, each tick sets it
+/// from the engine's camera before the render hook.
+///
+/// # Safety
+/// `ctx` must be NULL or a live context; `camera` NULL or valid.
+#[no_mangle]
+pub unsafe extern "C" fn stickshift_context_set_camera(
+    ctx: *mut StickShiftContext,
+    camera: *const StickShiftCamera,
+) -> StickShiftResult {
+    call(|| {
+        let camera = *input(camera, "camera")?;
+        with_context(ctx, |inner| {
+            inner.camera = (camera.view_projection.into(), camera.position.into());
+            Ok(STICKSHIFT_OK)
+        })
+    })
+}
+
+/// The sticky camera: the view-projection and eye position the next frame
+/// draws with.
+///
+/// # Safety
+/// `ctx` must be NULL or a live context; `out` NULL or valid.
+#[no_mangle]
+pub unsafe extern "C" fn stickshift_context_get_camera(
+    ctx: *mut StickShiftContext,
+    out: *mut StickShiftCamera,
+) -> StickShiftResult {
+    call(|| {
+        let out = output(out, "out")?;
+        with_context(ctx, |inner| {
+            *out = StickShiftCamera {
+                view_projection: inner.camera.0.into(),
+                position: inner.camera.1.into(),
+            };
+            Ok(STICKSHIFT_OK)
+        })
+    })
+}
+
+/// Drawable pixels per point: the UI scale, as last given at create or
+/// resize (1 for a value that is not finite and positive).
+///
+/// # Safety
+/// `ctx` must be NULL or a live context; `out` NULL or valid.
+#[no_mangle]
+pub unsafe extern "C" fn stickshift_context_get_scale(
+    ctx: *mut StickShiftContext,
+    out: *mut f32,
+) -> StickShiftResult {
+    call(|| {
+        let out = output(out, "out")?;
+        with_context(ctx, |inner| {
+            *out = inner.scale;
+            Ok(STICKSHIFT_OK)
+        })
+    })
+}
+
+/// Set the safe-area insets, in drawable pixels: top, right, bottom, left.
+/// Each must be finite and `>= 0`. 0 by default. An attached engine sets them
+/// from the view's insets in points at every resize.
+///
+/// # Safety
+/// `ctx` must be NULL or a live context; `insets_px` NULL or valid for 4 floats.
+#[no_mangle]
+pub unsafe extern "C" fn stickshift_context_set_safe_area(
+    ctx: *mut StickShiftContext,
+    insets_px: *const f32,
+) -> StickShiftResult {
+    call(|| {
+        let insets = input(insets_px.cast::<[f32; 4]>(), "insets_px")?.to_owned();
+        check_insets(&insets)?;
+        with_context(ctx, |inner| {
+            inner.safe_area = insets;
+            Ok(STICKSHIFT_OK)
+        })
+    })
+}
+
+/// The safe-area insets, in drawable pixels: top, right, bottom, left.
+///
+/// # Safety
+/// `ctx` must be NULL or a live context; `out` NULL or valid for 4 floats.
+#[no_mangle]
+pub unsafe extern "C" fn stickshift_context_get_safe_area(
+    ctx: *mut StickShiftContext,
+    out: *mut f32,
+) -> StickShiftResult {
+    call(|| {
+        let out = output(out.cast::<[f32; 4]>(), "out")?;
+        with_context(ctx, |inner| {
+            *out = inner.safe_area;
+            Ok(STICKSHIFT_OK)
+        })
+    })
+}
+
+/// What the last frame to reach submit recorded: its draws and quads still
+/// valid at submit, in record order, its camera, sun, render settings and light
+/// count, and whether it went to the GPU. Before any frame, every count is 0.
+/// The draws and quads are context-owned and valid until the next frame is
+/// opened on `ctx`. Set `out->size = sizeof(StickShiftFrameRecord)`.
+///
+/// # Safety
+/// `ctx` must be NULL or a live context; `out` NULL or valid for its `size`.
+#[no_mangle]
+pub unsafe extern "C" fn stickshift_context_get_last_frame(
+    ctx: *mut StickShiftContext,
+    out: *mut StickShiftFrameRecord,
+) -> StickShiftResult {
+    call(|| {
+        let record = with_context(ctx, |inner| {
+            let last = &inner.last_frame;
+            Ok(StickShiftFrameRecord {
+                size: 0,
+                submitted: u8::from(last.submitted),
+                reserved: [0; 3],
+                frame_number: last.number,
+                draws: last.draws.as_ptr(),
+                draw_count: u32::try_from(last.draws.len()).unwrap_or(u32::MAX),
+                draw_stride: std::mem::size_of::<StickShiftDrawRecord>() as u32,
+                quads: last.quads.as_ptr(),
+                quad_count: u32::try_from(last.quads.len()).unwrap_or(u32::MAX),
+                quad_stride: std::mem::size_of::<StickShiftQuad>() as u32,
+                camera: StickShiftCamera {
+                    view_projection: last.camera.0.into(),
+                    position: last.camera.1.into(),
+                },
+                sun: last.sun.into(),
+                settings: last.settings.into(),
+                light_count: last.light_count,
+                reserved2: 0,
+            })
+        })?;
+        crate::core::write_sized(out, record, "out")?;
+        Ok(STICKSHIFT_OK)
     })
 }
 

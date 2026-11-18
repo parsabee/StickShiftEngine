@@ -7,10 +7,20 @@
 //! This is everything about the menu that is not AppKit: its layout, the labels,
 //! which item is checked or enabled for given settings, what choosing an item
 //! does to the settings, and how an item is encoded in a native menu item's
-//! integer tag. The macOS layer (`platform::macos`) only renders this model into
-//! an `NSMenu` and routes clicks back as [`MenuCommand`]s, so all behaviour here
-//! is unit-tested without a window. An iOS layer (`UIMenu`) can render the same
-//! model.
+//! integer tag. All behaviour here is unit-tested without a window.
+//!
+//! A host renders this model as its native menu and routes each choice back as
+//! a [`MenuCommand`]:
+//!
+//! - The winit runner ([`run`](crate::run), feature `windowed`) builds an
+//!   `NSMenu` from it in the macOS menu bar.
+//! - A host that owns its own view (an AppKit app with its own menu bar, a
+//!   `UIMenu` on iOS) builds its menu from [`submenus`] and [`ACTIONS`], and
+//!   hands each choice to its [`Session`](crate::session::Session) as a
+//!   [`HostEvent::Menu`](crate::session::HostEvent::Menu). The session applies
+//!   it exactly as the winit runner does, and asks the host to refresh the menu
+//!   ([`Requests::MENU_SYNC`](crate::session::Requests::MENU_SYNC)) or to toggle
+//!   full screen.
 //!
 //! ```text
 //! Graphics
@@ -29,11 +39,15 @@ use crate::graphics::{
 };
 
 /// Title of the top-level menu.
-pub(crate) const MENU_TITLE: &str = "Graphics";
+pub const MENU_TITLE: &str = "Graphics";
 
 /// One choosable item of the Graphics menu.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MenuCommand {
+///
+/// A new setting adds items, so a match on it needs a wildcard arm. Its
+/// [`tag`](Self::tag) values are stable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum MenuCommand {
     /// Set the shadow quality.
     Shadows(ShadowQuality),
     /// Set the shadow range.
@@ -50,15 +64,15 @@ pub(crate) enum MenuCommand {
 }
 
 /// A submenu of radio-style choices.
-pub(crate) struct Submenu {
+pub struct Submenu {
     /// The submenu's title.
-    pub(crate) title: &'static str,
+    pub title: &'static str,
     /// Its items, in order.
-    pub(crate) items: Vec<MenuCommand>,
+    pub items: Vec<MenuCommand>,
 }
 
 /// The four settings submenus, in menu order.
-pub(crate) fn submenus() -> Vec<Submenu> {
+pub fn submenus() -> Vec<Submenu> {
     vec![
         Submenu {
             title: "Shadows",
@@ -82,13 +96,12 @@ pub(crate) fn submenus() -> Vec<Submenu> {
 }
 
 /// The plain items below the submenus (after a separator), in order.
-pub(crate) const ACTIONS: [MenuCommand; 2] =
-    [MenuCommand::ToggleFullScreen, MenuCommand::ResetToDefaults];
+pub const ACTIONS: [MenuCommand; 2] = [MenuCommand::ToggleFullScreen, MenuCommand::ResetToDefaults];
 
 impl MenuCommand {
     /// The item's title. The full-screen toggle's title depends on the window
     /// state, so it takes `fullscreen`.
-    pub(crate) fn label(self, fullscreen: bool) -> &'static str {
+    pub fn label(self, fullscreen: bool) -> &'static str {
         match self {
             Self::Shadows(q) => shadow_quality_label(q),
             Self::ShadowDistance(d) => d.label(),
@@ -102,7 +115,7 @@ impl MenuCommand {
 
     /// Whether the item shows a checkmark for `settings`: exactly one item per
     /// submenu, the current choice. Actions are never checked.
-    pub(crate) fn is_checked(self, settings: &GraphicsSettings) -> bool {
+    pub fn is_checked(self, settings: &GraphicsSettings) -> bool {
         match self {
             Self::Shadows(q) => settings.shadows == q,
             Self::ShadowDistance(d) => settings.shadow_distance == d,
@@ -114,7 +127,7 @@ impl MenuCommand {
 
     /// Whether the item can be chosen for `settings`. The shadow range means
     /// nothing with shadows off, so those items are disabled then.
-    pub(crate) fn is_enabled(self, settings: &GraphicsSettings) -> bool {
+    pub fn is_enabled(self, settings: &GraphicsSettings) -> bool {
         match self {
             Self::ShadowDistance(_) => settings.shadows.casts_shadows(),
             Self::ResetToDefaults => *settings != GraphicsSettings::default(),
@@ -124,7 +137,7 @@ impl MenuCommand {
 
     /// The settings after choosing this item from `settings`, or `None` for an
     /// item that is not a settings change (full screen).
-    pub(crate) fn apply(self, settings: GraphicsSettings) -> Option<GraphicsSettings> {
+    pub fn apply(self, settings: GraphicsSettings) -> Option<GraphicsSettings> {
         let mut s = settings;
         match self {
             Self::Shadows(q) => s.shadows = q,
@@ -140,7 +153,7 @@ impl MenuCommand {
     /// Encode as a native menu item's integer tag: `section * 100 + index`, with
     /// `section` 1–4 for the submenus and 9 for the actions, and `index` from 1.
     /// Zero (a native item's default tag) is never used.
-    pub(crate) fn tag(self) -> isize {
+    pub fn tag(self) -> isize {
         fn at<T: PartialEq>(all: &[T], v: T) -> isize {
             all.iter().position(|x| *x == v).unwrap_or(0) as isize + 1
         }
@@ -155,7 +168,7 @@ impl MenuCommand {
     }
 
     /// Decode [`tag`](Self::tag); `None` for a tag no item uses.
-    pub(crate) fn from_tag(tag: isize) -> Option<Self> {
+    pub fn from_tag(tag: isize) -> Option<Self> {
         let index = usize::try_from(tag % 100 - 1).ok()?;
         match tag / 100 {
             1 => SHADOW_QUALITIES.get(index).copied().map(Self::Shadows),

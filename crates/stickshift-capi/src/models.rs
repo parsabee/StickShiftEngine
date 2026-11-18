@@ -55,6 +55,8 @@ pub(crate) struct ModelEntry {
     /// `(part, node world matrix)` for every node that draws a part.
     pub(crate) instances: Vec<(usize, Mat4)>,
     bounds: (Vec3, Vec3),
+    /// Why the load failed, once it has: what `stickshift_model_wait` returns.
+    failure: Option<Error>,
     /// Set to stop this model's parse; shared with its job until the parse
     /// has finished.
     cancel: Arc<AtomicBool>,
@@ -350,7 +352,10 @@ pub(crate) fn pump(inner: &mut Inner) {
             }
             Err(e) => {
                 entry.state = ModelState::Failed;
-                OwnedEvent::failed(STICKSHIFT_EVENT_RESOURCE_FAILED, result.model, 0, &e)
+                let event =
+                    OwnedEvent::failed(STICKSHIFT_EVENT_RESOURCE_FAILED, result.model, 0, &e);
+                entry.failure = Some(e);
+                event
             }
         };
         inner.emit(event, completion);
@@ -373,6 +378,7 @@ fn start_load(
             parts: Vec::new(),
             instances: Vec::new(),
             bounds: (Vec3::ZERO, Vec3::ZERO),
+            failure: None,
             cancel: Arc::clone(&cancel),
         })
         .map_err(|_| Error::new(STICKSHIFT_ERROR_LIMIT_EXCEEDED, "too many live models"))?;
@@ -510,6 +516,57 @@ pub unsafe extern "C" fn stickshift_model_get_bounds(
             *max = entry.bounds.1.into();
             Ok(STICKSHIFT_OK)
         })
+    })
+}
+
+/// **Wait** until `model` is ready (`STICKSHIFT_OK`) or failed (its failure
+/// code, with the reason in `stickshift_last_error_message`), doing the context's
+/// model housekeeping (finished parses and their GPU upload) and delivering the
+/// events it raises, as `stickshift_poll_events` would. After `timeout_ns`
+/// nanoseconds without either, `STICKSHIFT_ERROR_TIMEOUT`, and the model stays
+/// pending.
+///
+/// For a game whose init loads synchronously, as a Rust game's
+/// `AssetCache::load` does.
+///
+/// # Safety
+/// `ctx` must be NULL or a live context.
+#[no_mangle]
+pub unsafe extern "C" fn stickshift_model_wait(
+    ctx: *mut StickShiftContext,
+    model: StickShiftModel,
+    timeout_ns: u64,
+) -> StickShiftResult {
+    call(|| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_nanos(timeout_ns);
+        loop {
+            let done = with_context(ctx, |inner| {
+                pump(inner);
+                let entry = inner
+                    .models
+                    .get(model.id)
+                    .ok_or_else(|| Error::invalid_handle("model"))?;
+                match entry.state {
+                    ModelState::Ready => Ok(Some(Ok(STICKSHIFT_OK))),
+                    ModelState::Failed => {
+                        Ok(Some(Err(entry.failure.clone().unwrap_or_else(|| {
+                            Error::new(STICKSHIFT_ERROR_INTERNAL, "the model failed to load")
+                        }))))
+                    }
+                    ModelState::Pending => Ok(None),
+                }
+            })?;
+            if let Some(outcome) = done {
+                return outcome;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(Error::new(
+                    STICKSHIFT_ERROR_TIMEOUT,
+                    format!("the model did not load within {timeout_ns} ns"),
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_micros(200));
+        }
     })
 }
 

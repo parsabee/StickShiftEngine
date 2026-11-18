@@ -10,6 +10,15 @@ repository.workspace = true
 homepage.workspace = true
 publish.workspace = true
 
+[features]
+# The winit window and the AppKit Graphics menu: the Rust runner (`run`,
+# `run_with_backend`, `run_with_config`). On by default, so a Rust game gets its
+# window with no feature to name. A host that owns its own view and display link
+# (the C API, and through it Swift) builds this crate without it and drives the
+# platform-free `Session` instead, so neither winit nor AppKit reaches it.
+default = ["windowed"]
+windowed = ["dep:winit", "dep:objc2-app-kit"]
+
 [dependencies]
 stickshift-math.workspace = true
 # The audio layer. `stickshift-audio` is a leaf that owns the `kira`/`cpal`
@@ -22,13 +31,16 @@ stickshift-camera.workspace = true
 stickshift-scene.workspace = true
 stickshift-render-api.workspace = true
 stickshift-perf.workspace = true
-winit.workspace = true
+winit = { workspace = true, optional = true }
 
-# Native platform UI: the built-in Graphics menu (`NSMenu`) and settings
-# persistence (`NSUserDefaults`). Same objc2 versions winit 0.30 already builds,
-# so no new crates enter the build; AppKit's Metal/QuartzCore features stay off,
-# so `metal` stays out of this crate's tree.
-[target.'cfg(target_os = "macos")'.dependencies]
+# Graphics-settings persistence (`NSUserDefaults`), on every Apple target:
+# Foundation only, so it builds for iOS as well as macOS.
+[target.'cfg(target_vendor = "apple")'.dependencies]
 objc2.workspace = true
 objc2-foundation.workspace = true
-objc2-app-kit.workspace = true
+
+# The built-in Graphics menu (`NSMenu`), for the windowed runner only. Same objc2
+# versions winit 0.30 already builds, so no new crates enter the build; AppKit's
+# Metal/QuartzCore features stay off, so `metal` stays out of this crate's tree.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { workspace = true, optional = true }

@@ -215,6 +215,82 @@ fn identity() -> StickShiftMat4 {
     stickshift_mat4_identity()
 }
 
+const WHITE: StickShiftColor = StickShiftColor {
+    r: 1.0,
+    g: 1.0,
+    b: 1.0,
+    a: 1.0,
+};
+
+/// The textured cube fixture rebuilt as a model with both kinds of part: a
+/// textured cube, an untextured one and the textured one again, each under a
+/// node turned -90° about X at scale 40 (the sports car's nodes have the same
+/// turn at scale 100).
+fn mixed_model() -> Vec<u8> {
+    let mut doc = String::from_utf8(TEXTURED_CUBE.to_vec()).unwrap();
+    let node = |mesh, x, y, z| {
+        format!(
+            r#"{{ "mesh": {mesh}, "rotation": [-0.7071068, 0, 0, 0.7071067],
+            "scale": [40, 40, 40], "translation": [{x}, {y}, {z}] }}"#
+        )
+    };
+    for (old, new) in [
+        (
+            r#""scenes": [{ "name": "cube_scene", "nodes": [0] }],"#,
+            r#""scenes": [{ "nodes": [0, 1, 2] }],"#.to_string(),
+        ),
+        (
+            r#""nodes": [{ "name": "cube", "mesh": 0 }],"#,
+            format!(
+                r#""nodes": [{}, {}, {}],"#,
+                node(0, -60.0, 0.0, 0.0),
+                node(1, 0.0, 5.0, 10.0),
+                node(0, 60.0, 15.0, 0.0)
+            ),
+        ),
+        (
+            r#""primitives": [{ "attributes": { "POSITION": 1, "NORMAL": 2, "TEXCOORD_0": 3 }, "indices": 0, "material": 0, "mode": 4 }] }],"#,
+            r#""primitives": [{ "attributes": { "POSITION": 1, "NORMAL": 2, "TEXCOORD_0": 3 }, "indices": 0, "material": 0, "mode": 4 }] },
+                { "primitives": [{ "attributes": { "POSITION": 1, "NORMAL": 2 }, "indices": 0, "mode": 4 }] }],"#
+                .to_string(),
+        ),
+    ] {
+        assert!(doc.contains(old), "the fixture changed: {old}");
+        doc = doc.replace(old, &new);
+    }
+    doc.into_bytes()
+}
+
+/// Load `bytes` as a model and wait until it is ready.
+fn load_model(ctx: &Ctx, bytes: &[u8]) -> StickShiftModel {
+    let mut model = StickShiftModel::default();
+    // SAFETY: a live context; the bytes are copied.
+    let r = unsafe { stickshift_model_load_memory(ctx.0, copied(bytes), null(), &mut model) };
+    assert_eq!(r, STICKSHIFT_OK, "{}", last_error());
+    ctx.flush();
+    assert_eq!(
+        ctx.state(model.id),
+        STICKSHIFT_RESOURCE_STATE_READY,
+        "{:?}",
+        ctx.poll()
+    );
+    model
+}
+
+/// A model draw at `world × (local × node)` of `parts`, untinted.
+fn model_draw(
+    world: StickShiftMat4,
+    local: StickShiftMat4,
+    parts: StickShiftModelParts,
+) -> StickShiftModelDraw {
+    StickShiftModelDraw {
+        world,
+        local,
+        tint: WHITE,
+        parts,
+    }
+}
+
 #[test]
 fn versions_and_result_names() {
     assert_eq!(stickshift_api_version(), STICKSHIFT_API_VERSION);
@@ -767,6 +843,115 @@ fn a_dropped_model_counts_as_one_skipped_draw() {
     }
     let stats = ctx.stats();
     assert_eq!((stats.draws_submitted, stats.draws_skipped), (0, 2));
+}
+
+#[test]
+fn a_model_draw_can_select_its_textured_or_untextured_parts() {
+    let ctx = Ctx::null(8, 8);
+    let model = load_model(&ctx, &mixed_model());
+    // How many 3D draws one frame recording `record` hands to the backend.
+    let drawn = |record: &dyn Fn(*mut StickShiftFrame)| {
+        let before = ctx.stats().draws_submitted;
+        let frame = ctx.acquire();
+        record(frame);
+        // SAFETY: an open frame.
+        let r = unsafe { stickshift_frame_submit(frame, null(), null_mut()) };
+        assert_eq!(r, STICKSHIFT_OK);
+        ctx.stats().draws_submitted - before
+    };
+    let draw_ex = |parts| {
+        move |frame| {
+            let draw = model_draw(identity(), identity(), parts);
+            // SAFETY: an open frame and a valid draw.
+            let r = unsafe { stickshift_frame_draw_model_ex(frame, model, &draw) };
+            assert_eq!(r, STICKSHIFT_OK, "{}", last_error());
+        }
+    };
+    let whole = drawn(&|frame| {
+        // SAFETY: an open frame.
+        let r = unsafe { stickshift_frame_draw_model(frame, model, &identity(), null()) };
+        assert_eq!(r, STICKSHIFT_OK);
+    });
+    let all = drawn(&draw_ex(STICKSHIFT_MODEL_PARTS_ALL));
+    let textured = drawn(&draw_ex(STICKSHIFT_MODEL_PARTS_TEXTURED));
+    let untextured = drawn(&draw_ex(STICKSHIFT_MODEL_PARTS_UNTEXTURED));
+    assert_eq!((whole, all, textured, untextured), (3, 3, 2, 1));
+    assert_eq!(textured + untextured, all);
+
+    // A filter that matches no part draws nothing, and is no error.
+    let cube = load_model(&ctx, CUBE);
+    let none = drawn(&|frame| {
+        let draw = model_draw(identity(), identity(), STICKSHIFT_MODEL_PARTS_TEXTURED);
+        // SAFETY: an open frame and a valid draw.
+        let r = unsafe { stickshift_frame_draw_model_ex(frame, cube, &draw) };
+        assert_eq!(r, STICKSHIFT_OK);
+    });
+    assert_eq!(none, 0);
+
+    let frame = ctx.acquire();
+    // SAFETY: a live context, an open frame and valid pointers.
+    unsafe {
+        let bad = model_draw(identity(), identity(), 3);
+        assert_eq!(
+            stickshift_frame_draw_model_ex(frame, model, &bad),
+            STICKSHIFT_ERROR_INVALID_ARGUMENT
+        );
+        assert!(
+            last_error().contains("STICKSHIFT_MODEL_PARTS_"),
+            "{}",
+            last_error()
+        );
+        assert_eq!(
+            stickshift_frame_draw_model_ex(frame, model, null()),
+            STICKSHIFT_ERROR_INVALID_ARGUMENT
+        );
+        let draw = model_draw(identity(), identity(), STICKSHIFT_MODEL_PARTS_ALL);
+        assert_eq!(
+            stickshift_frame_draw_model_ex(frame, StickShiftModel { id: 12345 }, &draw),
+            STICKSHIFT_ERROR_INVALID_HANDLE
+        );
+        // Each call that loses its model at submit is one skipped draw,
+        // however many parts it recorded.
+        let skipped = ctx.stats().draws_skipped;
+        for parts in [STICKSHIFT_MODEL_PARTS_TEXTURED, STICKSHIFT_MODEL_PARTS_ALL] {
+            let draw = model_draw(identity(), identity(), parts);
+            assert_eq!(
+                stickshift_frame_draw_model_ex(frame, model, &draw),
+                STICKSHIFT_OK
+            );
+        }
+        assert_eq!(stickshift_model_destroy(ctx.0, model), STICKSHIFT_OK);
+        assert_eq!(
+            stickshift_frame_submit(frame, null(), null_mut()),
+            STICKSHIFT_OK
+        );
+        assert_eq!(ctx.stats().draws_skipped, skipped + 2);
+        // No frame is open now.
+        assert_eq!(
+            stickshift_frame_draw_model_ex(frame, cube, &draw),
+            STICKSHIFT_ERROR_WRONG_STATE
+        );
+    }
+
+    // A model that is still loading (it stays pending until housekeeping
+    // uploads it) is not drawn, and counts as skipped.
+    let mut pending = StickShiftModel::default();
+    // SAFETY: a live context; the bytes are copied.
+    let r = unsafe { stickshift_model_load_memory(ctx.0, copied(CUBE), null(), &mut pending) };
+    assert_eq!(r, STICKSHIFT_OK);
+    assert_eq!(ctx.state(pending.id), STICKSHIFT_RESOURCE_STATE_PENDING);
+    let skipped = ctx.stats().draws_skipped;
+    let frame = ctx.acquire();
+    // SAFETY: an open frame and a valid draw.
+    unsafe {
+        let draw = model_draw(identity(), identity(), STICKSHIFT_MODEL_PARTS_ALL);
+        assert_eq!(
+            stickshift_frame_draw_model_ex(frame, pending, &draw),
+            STICKSHIFT_NOT_READY
+        );
+        assert_eq!(stickshift_frame_discard(frame), STICKSHIFT_OK);
+    }
+    assert_eq!(ctx.stats().draws_skipped, skipped + 1);
 }
 
 #[test]
@@ -1329,9 +1514,22 @@ fn settings_round_trip_and_are_validated() {
             stickshift_context_set_settings(ctx.0, &settings),
             STICKSHIFT_ERROR_INVALID_ARGUMENT
         );
+        // A null context resizes (a Metal offscreen one keeps its size), and
+        // keeps the scale it is given.
+        assert_eq!(stickshift_context_resize(ctx.0, 16, 12, 2.0), STICKSHIFT_OK);
+        let (mut width, mut height, mut scale) = (0, 0, 0.0);
         assert_eq!(
-            stickshift_context_resize(ctx.0, 16, 16, 1.0),
-            STICKSHIFT_ERROR_UNSUPPORTED
+            stickshift_context_get_size(ctx.0, &mut width, &mut height),
+            STICKSHIFT_OK
+        );
+        assert_eq!(
+            stickshift_context_get_scale(ctx.0, &mut scale),
+            STICKSHIFT_OK
+        );
+        assert_eq!((width, height, scale), (16, 12, 2.0));
+        assert_eq!(
+            stickshift_context_resize(ctx.0, 0, 12, 2.0),
+            STICKSHIFT_ERROR_INVALID_ARGUMENT
         );
     }
 }
@@ -1374,7 +1572,6 @@ fn events_that_do_not_fit_stay_queued() {
     );
 }
 
-/// The C API and the Rust API render the same pixels for the same scene.
 #[cfg(target_os = "macos")]
 #[test]
 fn lights_and_emission_are_validated_and_lights_are_per_frame() {
@@ -1506,12 +1703,69 @@ fn lights_and_emission_are_validated_and_lights_are_per_frame() {
     refused(frame, &point, STICKSHIFT_ERROR_WRONG_STATE);
 }
 
-#[test]
-fn the_c_api_renders_what_the_rust_api_renders() {
+/// An offscreen Rust-API Metal renderer, or `None` without a Metal device, in
+/// which case `test` is reported as skipped. Under `STICKSHIFT_REQUIRE_GPU=1`
+/// (CI) a missing device fails the test instead, so a runner without a GPU
+/// cannot pass it unrun.
+#[cfg(target_os = "macos")]
+fn rust_renderer(width: u32, height: u32, test: &str) -> Option<stickshift_render::MetalRenderer> {
     use std::io::Write;
 
+    let renderer = stickshift_render::MetalRenderer::new_offscreen(width, height);
+    if renderer.is_none() {
+        let required = std::env::var("STICKSHIFT_REQUIRE_GPU")
+            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+        assert!(
+            !required,
+            "no Metal device, and STICKSHIFT_REQUIRE_GPU is set"
+        );
+        // Visible past the harness's capture.
+        let _ = writeln!(std::io::stderr(), "SKIPPED {test}: no Metal device");
+    }
+    renderer
+}
+
+/// Record a frame on `ctx` with `record`, read it back and return its BGRA8
+/// pixels (`ctx` must be an offscreen context of `width` × `height`).
+#[cfg(target_os = "macos")]
+fn render_pixels(
+    ctx: &Ctx,
+    width: u32,
+    height: u32,
+    record: impl FnOnce(*mut StickShiftFrame),
+) -> Vec<u8> {
+    let mut pixels = vec![0u8; (width * height * 4) as usize];
+    let frame = ctx.acquire();
+    record(frame);
+    // SAFETY: an open frame; `pixels` outlives the flush.
+    unsafe {
+        assert_eq!(
+            stickshift_frame_read_pixels_async(
+                frame,
+                pixels.as_mut_ptr().cast(),
+                pixels.len(),
+                null()
+            ),
+            STICKSHIFT_OK
+        );
+        assert_eq!(
+            stickshift_frame_submit(frame, null(), null_mut()),
+            STICKSHIFT_OK
+        );
+    }
+    ctx.flush();
+    assert!(ctx
+        .poll()
+        .iter()
+        .any(|e| e.kind == STICKSHIFT_EVENT_READBACK_COMPLETE));
+    pixels
+}
+
+/// The C API and the Rust API render the same pixels for the same scene.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_c_api_renders_what_the_rust_api_renders() {
     use stickshift_math::glam::{Mat4, Vec3};
-    use stickshift_render::MetalRenderer;
     use stickshift_render_api::{
         FrameRecorder, Light, MaterialParams, MeshData, PipelineDescriptor, PipelineKind,
         RenderDevice, SunSky,
@@ -1519,19 +1773,7 @@ fn the_c_api_renders_what_the_rust_api_renders() {
 
     const W: u32 = 64;
     const H: u32 = 48;
-    let Some(mut rust) = MetalRenderer::new_offscreen(W, H) else {
-        // Visible past the harness's capture; a failure under STICKSHIFT_REQUIRE_GPU=1
-        // (CI), so a runner without a GPU cannot pass this test unrun.
-        let required = std::env::var("STICKSHIFT_REQUIRE_GPU")
-            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
-        assert!(
-            !required,
-            "no Metal device, and STICKSHIFT_REQUIRE_GPU is set"
-        );
-        let _ = writeln!(
-            std::io::stderr(),
-            "SKIPPED the_c_api_renders_what_the_rust_api_renders: no Metal device"
-        );
+    let Some(mut rust) = rust_renderer(W, H, "the_c_api_renders_what_the_rust_api_renders") else {
         return;
     };
     let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 2.0), Vec3::ZERO, Vec3::Y);
@@ -1692,6 +1934,192 @@ fn the_c_api_renders_what_the_rust_api_renders() {
             }
         }
     }
+}
+
+/// `stickshift_frame_draw_model_ex` renders what the Rust API renders when it
+/// draws the same parts itself: a model's textured parts, another draw, then
+/// the model's untextured parts, each at `world × (local × node)`. With the
+/// identity as `local` and every part, it renders what
+/// `stickshift_frame_draw_model` renders.
+#[cfg(target_os = "macos")]
+#[test]
+fn model_draws_with_a_local_matrix_render_what_the_rust_api_renders() {
+    use stickshift_math::glam::{Mat4, Quat, Vec3};
+    use stickshift_render_api::{
+        ColorSpace, FrameRecorder, MaterialParams, MeshData, PipelineDescriptor, PipelineKind,
+        RenderDevice, SunSky, TextureData,
+    };
+
+    const W: u32 = 96;
+    const H: u32 = 64;
+    let Some(mut rust) = rust_renderer(
+        W,
+        H,
+        "model_draws_with_a_local_matrix_render_what_the_rust_api_renders",
+    ) else {
+        return;
+    };
+    let c = |m: Mat4| StickShiftMat4 {
+        m: m.to_cols_array(),
+    };
+    let doc = mixed_model();
+    let eye = Vec3::new(0.0, 1.0, 3.0);
+    let vp = Mat4::perspective_rh(0.9, W as f32 / H as f32, 0.1, 50.0)
+        * Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
+    // Placed like the demo's car: an entity transform, and a fit that scales
+    // the model down, turns it round and lifts it.
+    let world = Mat4::from_scale_rotation_translation(
+        Vec3::ONE,
+        Quat::from_rotation_y(0.4),
+        Vec3::new(0.1, -0.2, -0.3),
+    );
+    let local = Mat4::from_scale_rotation_translation(
+        Vec3::splat(0.015),
+        Quat::from_rotation_y(std::f32::consts::PI),
+        Vec3::new(0.02, 0.1, -0.05),
+    );
+    // A triangle in front, drawn between the two passes.
+    let (v, i) = triangle([0.2, 0.8, 0.3]);
+    let indices: Vec<u32> = i
+        .chunks_exact(4)
+        .map(|b| u32::from_ne_bytes(b.try_into().unwrap()))
+        .collect();
+    let between = Mat4::from_translation(Vec3::new(0.0, -0.1, 0.6));
+
+    // The Rust API: import the same file, upload its meshes and textures as
+    // the C API does, and draw the parts in node order, textured ones first.
+    let scene = stickshift_assets::import_slice(&doc).expect("the test model imports");
+    let meshes: Vec<_> = scene
+        .meshes
+        .iter()
+        .map(|m| {
+            let kind = PipelineKind::for_layout(&m.layout).expect("a supported layout");
+            let mesh = rust.create_mesh(&MeshData {
+                vertices: &m.vertices,
+                indices: &m.indices,
+                layout: kind.vertex_layout(),
+            });
+            let texture = m.base_color.as_ref().map(|t| {
+                rust.create_texture(&TextureData {
+                    width: t.width,
+                    height: t.height,
+                    rgba8: &t.rgba8,
+                    color_space: ColorSpace::Srgb,
+                })
+            });
+            let material = MaterialParams {
+                base_color: m.base_color_factor,
+                emissive: m.emissive,
+            };
+            (mesh, texture, material)
+        })
+        .collect();
+    let parts: Vec<(usize, Mat4)> = scene
+        .mesh_nodes()
+        .map(|(_, node)| (node.mesh.expect("a mesh node"), node.world))
+        .collect();
+    assert_eq!(parts.len(), 3);
+    let textured_pipeline = rust.create_pipeline(&PipelineDescriptor::new(PipelineKind::Textured));
+    let colour_pipeline = rust.create_pipeline(&PipelineDescriptor::new(PipelineKind::VertexColor));
+    let triangle_mesh = rust.create_mesh(&MeshData {
+        vertices: &v,
+        indices: &indices,
+        layout: PipelineKind::VertexColor.vertex_layout(),
+    });
+    rust.set_view_projection(vp);
+    rust.set_camera_position(eye);
+    rust.set_sun_sky(&SunSky::default());
+    rust.begin_frame();
+    rust.set_pipeline(textured_pipeline);
+    for &(mesh, node) in &parts {
+        let (handle, texture, material) = &meshes[mesh];
+        if let Some(texture) = texture {
+            rust.bind_texture(*texture);
+            rust.draw_mesh_matrix(*handle, world * (local * node), material);
+        }
+    }
+    rust.set_pipeline(colour_pipeline);
+    rust.draw_mesh_matrix(triangle_mesh, between, &MaterialParams::default());
+    for &(mesh, node) in &parts {
+        let (handle, texture, material) = &meshes[mesh];
+        if texture.is_none() {
+            rust.draw_mesh_matrix(*handle, world * (local * node), material);
+        }
+    }
+    rust.submit();
+    let expected = rust.read_pixels().expect("offscreen read-back");
+
+    // The C API.
+    let mut raw = null_mut();
+    // SAFETY: valid pointers.
+    assert_eq!(
+        unsafe { stickshift_context_create(&desc(STICKSHIFT_BACKEND_METAL, W, H), &mut raw) },
+        STICKSHIFT_OK,
+        "{}",
+        last_error()
+    );
+    let ctx = Ctx(raw);
+    let model = load_model(&ctx, &doc);
+    let mut c_triangle = StickShiftMesh::default();
+    // SAFETY: valid pointers; the data is copied.
+    assert_eq!(
+        unsafe {
+            stickshift_mesh_create(
+                ctx.0,
+                &mesh_desc(copied(&v), copied(&i)),
+                null(),
+                &mut c_triangle,
+            )
+        },
+        STICKSHIFT_OK
+    );
+    let camera = StickShiftCamera {
+        view_projection: c(vp),
+        position: StickShiftVec3 {
+            x: eye.x,
+            y: eye.y,
+            z: eye.z,
+        },
+    };
+    // Every recording call below must succeed.
+    let ok = |r: StickShiftResult| assert_eq!(r, STICKSHIFT_OK, "{}", last_error());
+    // SAFETY (each closure): an open frame and valid pointers.
+    let sky = render_pixels(&ctx, W, H, |frame| unsafe {
+        ok(stickshift_frame_set_camera(frame, &camera));
+    });
+    // The model placed by one matrix, for draw_model and its equivalent.
+    let placed = c(world * local);
+    let drawn_before = ctx.stats().draws_submitted;
+    let whole = render_pixels(&ctx, W, H, |frame| unsafe {
+        ok(stickshift_frame_draw_model(frame, model, &placed, null()));
+    });
+    let drawn_whole = ctx.stats().draws_submitted - drawn_before;
+    let all = render_pixels(&ctx, W, H, |frame| unsafe {
+        let draw = model_draw(placed, identity(), STICKSHIFT_MODEL_PARTS_ALL);
+        ok(stickshift_frame_draw_model_ex(frame, model, &draw));
+    });
+    let drawn_all = ctx.stats().draws_submitted - drawn_before - drawn_whole;
+    let split = render_pixels(&ctx, W, H, |frame| unsafe {
+        let textured = model_draw(c(world), c(local), STICKSHIFT_MODEL_PARTS_TEXTURED);
+        ok(stickshift_frame_draw_model_ex(frame, model, &textured));
+        ok(stickshift_frame_draw_mesh(
+            frame,
+            c_triangle,
+            &c(between),
+            null(),
+        ));
+        let untextured = model_draw(c(world), c(local), STICKSHIFT_MODEL_PARTS_UNTEXTURED);
+        ok(stickshift_frame_draw_model_ex(frame, model, &untextured));
+    });
+
+    assert_eq!((drawn_whole, drawn_all), (3, 3));
+    assert_eq!(
+        all, whole,
+        "local = identity, every part: draw_model's pixels"
+    );
+    assert_ne!(whole, sky, "the model was drawn");
+    assert_ne!(split, sky, "the split passes drew something");
+    assert_eq!(split, expected, "the C API drew different pixels");
 }
 
 #[test]

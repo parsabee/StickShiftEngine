@@ -22,15 +22,154 @@
 #define STICKSHIFT_API_VERSION 4
 
 /**
+ * The additive level within [`STICKSHIFT_API_VERSION`]: it grows by one with
+ * each release that only adds to the API. 0 is the surface before the engine
+ * object; 1 adds it. `stickshift_api_minor()` reports the library's.
+ */
+#define STICKSHIFT_API_MINOR 1
+
+/**
  * The most lights one frame can hold; `stickshift_frame_add_light` refuses
  * more with `STICKSHIFT_ERROR_LIMIT_EXCEEDED`.
  */
 #define STICKSHIFT_MAX_LIGHTS 256
 
 /**
+ * The most game components one engine registers, tags and data together.
+ */
+#define STICKSHIFT_MAX_GAME_COMPONENTS 128
+
+/**
+ * The most bytes in one game component value.
+ */
+#define STICKSHIFT_MAX_COMPONENT_SIZE 4096
+
+/**
+ * The most components in one spawn or insert.
+ */
+#define STICKSHIFT_MAX_BUNDLE 32
+
+/**
+ * The most terms in one query.
+ */
+#define STICKSHIFT_MAX_QUERY_TERMS 16
+
+/**
+ * The most query snapshots one engine holds unreleased at once.
+ */
+#define STICKSHIFT_MAX_LIVE_QUERIES 16
+
+/**
+ * The engine's transform component; its value is a `StickShiftTransform`.
+ */
+#define STICKSHIFT_COMPONENT_TRANSFORM 1
+
+/**
+ * The engine's render component; its value is a `StickShiftRenderComponent`.
+ */
+#define STICKSHIFT_COMPONENT_RENDER 2
+
+/**
+ * The engine's static-entity tag; no value.
+ */
+#define STICKSHIFT_COMPONENT_STATIC_TAG 3
+
+/**
+ * The engine's dynamic-entity tag; no value.
+ */
+#define STICKSHIFT_COMPONENT_DYNAMIC_TAG 4
+
+/**
+ * The id of the first game component registered; ids 5..255 are reserved for
+ * engine components.
+ */
+#define STICKSHIFT_FIRST_GAME_COMPONENT 256
+
+/**
+ * The fixed simulation step in integer nanoseconds: `1_000_000_000 / 60`.
+ * `STICKSHIFT_CLOCK_FIXED_STEP` banks exactly this much per tick.
+ */
+#define STICKSHIFT_FIXED_DT_NS 16666666
+
+/**
+ * The most update hooks one tick runs; time past them is dropped.
+ */
+#define STICKSHIFT_MAX_STEPS_PER_FRAME 5
+
+/**
+ * Restore the player's graphics settings at create, and save them on every
+ * change.
+ */
+#define STICKSHIFT_ENGINE_PERSIST_SETTINGS (1 << 0)
+
+/**
+ * An Escape key-down event returns `STICKSHIFT_REQUEST_EXIT` (and still
+ * presses the key).
+ */
+#define STICKSHIFT_ENGINE_QUIT_ON_ESCAPE (1 << 1)
+
+/**
+ * After init, run no update or render while a model of the context is still
+ * loading: such a tick returns `STICKSHIFT_NOT_READY`.
+ */
+#define STICKSHIFT_ENGINE_HOLD_UNTIL_LOADED (1 << 2)
+
+/**
+ * Close the view and stop ticking: the view was closed, Escape was pressed
+ * with `STICKSHIFT_ENGINE_QUIT_ON_ESCAPE`, or the game asked to exit.
+ */
+#define STICKSHIFT_REQUEST_EXIT (1 << 0)
+
+/**
+ * Enter or leave full screen: the menu's full-screen item was chosen.
+ */
+#define STICKSHIFT_REQUEST_TOGGLE_FULLSCREEN (1 << 1)
+
+/**
+ * The settings or the full-screen state may have changed: refresh the
+ * native Graphics menu.
+ */
+#define STICKSHIFT_REQUEST_MENU_SYNC (1 << 2)
+
+/**
+ * `STICKSHIFT_HOST_KEY_DOWN`: the platform marked the press an auto-repeat.
+ */
+#define STICKSHIFT_HOST_EVENT_REPEAT (1 << 0)
+
+/**
+ * `StickShiftInputState::keys`: the key is held.
+ */
+#define STICKSHIFT_KEY_STATE_DOWN (1 << 0)
+
+/**
+ * `StickShiftInputState::keys`: the key went down since the last update.
+ */
+#define STICKSHIFT_KEY_STATE_JUST_PRESSED (1 << 1)
+
+/**
+ * `StickShiftInputState::keys`: the key went up since the last update.
+ */
+#define STICKSHIFT_KEY_STATE_JUST_RELEASED (1 << 2)
+
+/**
+ * A volume of 0 dB: the level the sound was recorded at.
+ */
+#define STICKSHIFT_VOLUME_UNCHANGED_DB 0.0f
+
+/**
+ * -60 dB: at and below it a sound is inaudible.
+ */
+#define STICKSHIFT_VOLUME_SILENT_DB (-60.0f)
+
+/**
  * An opaque rendering context. See `docs/C_API.md`.
  */
 typedef struct StickShiftContext StickShiftContext;
+
+/**
+ * An engine: the game loop, attached to one context. See `docs/C_API.md`.
+ */
+typedef struct StickShiftEngine StickShiftEngine;
 
 /**
  * The frame being recorded on a context. See `docs/C_API.md`.
@@ -127,9 +266,10 @@ typedef struct StickShiftStats {
    */
   uint64_t draws_submitted;
   /**
-   * Draw calls (`stickshift_frame_draw_mesh`, `_draw_model`, `_draw_quad`,
-   * `_draw_text`) not made because a resource was pending, failed or
-   * destroyed. Counted once per call, however many parts or glyphs it drew.
+   * Draw calls (`stickshift_frame_draw_mesh`, `_draw_model`, `_draw_model_ex`,
+   * `_draw_quad`, `_draw_text`) not made because a resource was pending,
+   * failed or destroyed. Counted once per call, however many parts or glyphs
+   * it drew.
    */
   uint64_t draws_skipped;
   /**
@@ -192,6 +332,154 @@ typedef struct StickShiftEvent {
 typedef uint32_t StickShiftResourceState;
 
 /**
+ * The sun and sky a frame is lit by.
+ */
+typedef struct StickShiftSunSky {
+  /**
+   * Sun height above the horizon, degrees: 0 horizon, 90 overhead.
+   */
+  float sun_elevation_deg;
+  /**
+   * Sun bearing, degrees from -Z (north) toward +X (east).
+   */
+  float sun_azimuth_deg;
+  /**
+   * Linear RGB sunlight colour.
+   */
+  float sun_color[3];
+  /**
+   * Direct-light strength.
+   */
+  float sun_intensity;
+  /**
+   * Ambient fill; keep it well below `sun_intensity`.
+   */
+  float sky_fill;
+  /**
+   * Linear RGB sky colour straight up.
+   */
+  float sky_zenith_color[3];
+  /**
+   * Linear RGB sky colour at the horizon; the fog fades toward it.
+   */
+  float sky_horizon_color[3];
+} StickShiftSunSky;
+
+/**
+ * A 4×4 matrix, **column-major**: `m[0..4]` is the first column. The same
+ * memory layout as Swift's `simd_float4x4`.
+ */
+typedef struct StickShiftMat4 {
+  /**
+   * The 16 elements, column by column.
+   */
+  float m[16];
+} StickShiftMat4;
+
+/**
+ * A 3-component vector.
+ */
+typedef struct StickShiftVec3 {
+  /**
+   * X.
+   */
+  float x;
+  /**
+   * Y (up).
+   */
+  float y;
+  /**
+   * Z.
+   */
+  float z;
+} StickShiftVec3;
+
+/**
+ * The camera a frame is seen from.
+ */
+typedef struct StickShiftCamera {
+  /**
+   * World to clip.
+   */
+  struct StickShiftMat4 view_projection;
+  /**
+   * World-space eye position, for specular highlights.
+   */
+  struct StickShiftVec3 position;
+} StickShiftCamera;
+
+/**
+ * The vertex layout of a mesh, which also selects the pipeline that draws it.
+ */
+typedef uint32_t StickShiftVertexLayout;
+
+/**
+ * A linear RGBA colour, each channel `0..1`.
+ */
+typedef struct StickShiftColor {
+  /**
+   * Red.
+   */
+  float r;
+  /**
+   * Green.
+   */
+  float g;
+  /**
+   * Blue.
+   */
+  float b;
+  /**
+   * Alpha.
+   */
+  float a;
+} StickShiftColor;
+
+/**
+ * One 3D draw of a recorded frame.
+ */
+typedef struct StickShiftDrawRecord {
+  /**
+   * The mesh or model handle id the draw named.
+   */
+  uint64_t source;
+  /**
+   * The mesh draw's texture handle id, or 0 (always 0 for a model part).
+   */
+  uint64_t texture;
+  /**
+   * The model's node-part index, or 0 for a mesh.
+   */
+  uint32_t part;
+  /**
+   * The `STICKSHIFT_VERTEX_LAYOUT_*` value of the drawn mesh.
+   */
+  StickShiftVertexLayout layout;
+  /**
+   * The matrix the backend draws with: for a model part,
+   * `world × (local × node)`.
+   */
+  struct StickShiftMat4 model;
+  /**
+   * The base colour, after the tint.
+   */
+  struct StickShiftColor base_color;
+  /**
+   * Linear RGB emission.
+   */
+  float emissive[3];
+  /**
+   * Reserved.
+   */
+  uint32_t reserved;
+} StickShiftDrawRecord;
+
+/**
+ * How a 2D quad is filled.
+ */
+typedef uint32_t StickShiftFill;
+
+/**
  * A texture owned by a context. `id == 0` is the null handle.
  */
 typedef struct StickShiftTexture {
@@ -200,6 +488,870 @@ typedef struct StickShiftTexture {
    */
   uint64_t id;
 } StickShiftTexture;
+
+/**
+ * A 2D overlay quad, in drawable pixels with the origin at the top-left.
+ */
+typedef struct StickShiftQuad {
+  /**
+   * Left edge.
+   */
+  float x;
+  /**
+   * Top edge.
+   */
+  float y;
+  /**
+   * Width.
+   */
+  float width;
+  /**
+   * Height.
+   */
+  float height;
+  /**
+   * Texture rectangle, left (ignored for `STICKSHIFT_FILL_SOLID`).
+   */
+  float u0;
+  /**
+   * Texture rectangle, top.
+   */
+  float v0;
+  /**
+   * Texture rectangle, right.
+   */
+  float u1;
+  /**
+   * Texture rectangle, bottom.
+   */
+  float v1;
+  /**
+   * Tint; alpha blends.
+   */
+  struct StickShiftColor color;
+  /**
+   * A `STICKSHIFT_FILL_*` value.
+   */
+  StickShiftFill fill;
+  /**
+   * The texture for `STICKSHIFT_FILL_TEXTURE` and `STICKSHIFT_FILL_SDF`.
+   */
+  struct StickShiftTexture texture;
+} StickShiftQuad;
+
+/**
+ * What the last frame to reach submit on a context recorded.
+ */
+typedef struct StickShiftFrameRecord {
+  /**
+   * `sizeof(StickShiftFrameRecord)`.
+   */
+  uint32_t size;
+  /**
+   * 1 if the frame went to the GPU; 0 if it was discarded or had no
+   * drawable.
+   */
+  uint8_t submitted;
+  /**
+   * Reserved.
+   */
+  uint8_t reserved[3];
+  /**
+   * The frame's number, or 0 (before any frame, or not submitted).
+   */
+  uint64_t frame_number;
+  /**
+   * The draws still valid at submit, in record order. Context-owned: valid
+   * until the next frame is opened on the context.
+   */
+  const struct StickShiftDrawRecord *draws;
+  /**
+   * The number of `draws`.
+   */
+  uint32_t draw_count;
+  /**
+   * Bytes from one draw record to the next.
+   */
+  uint32_t draw_stride;
+  /**
+   * The overlay quads still valid at submit, in record order (text as its
+   * glyph quads). Valid as long as `draws`.
+   */
+  const struct StickShiftQuad *quads;
+  /**
+   * The number of `quads`.
+   */
+  uint32_t quad_count;
+  /**
+   * Bytes from one quad to the next.
+   */
+  uint32_t quad_stride;
+  /**
+   * The camera the frame used.
+   */
+  struct StickShiftCamera camera;
+  /**
+   * The sun and sky the frame used.
+   */
+  struct StickShiftSunSky sun;
+  /**
+   * The render settings in effect.
+   */
+  struct StickShiftRenderSettings settings;
+  /**
+   * The frame's point and spot lights.
+   */
+  uint32_t light_count;
+  /**
+   * Reserved.
+   */
+  uint32_t reserved2;
+} StickShiftFrameRecord;
+
+/**
+ * Where an engine's sound goes.
+ */
+typedef uint32_t StickShiftAudioOutput;
+
+/**
+ * What a tick does when the GPU has no free frame slot.
+ */
+typedef uint32_t StickShiftFramePacing;
+
+/**
+ * How to create an engine.
+ */
+typedef struct StickShiftEngineDesc {
+  /**
+   * Must be `STICKSHIFT_API_VERSION`.
+   */
+  uint32_t api_version;
+  /**
+   * `sizeof(StickShiftEngineDesc)`.
+   */
+  uint32_t size;
+  /**
+   * A `STICKSHIFT_AUDIO_*` value.
+   */
+  StickShiftAudioOutput audio;
+  /**
+   * A `STICKSHIFT_FRAME_PACING_*` value.
+   */
+  StickShiftFramePacing pacing;
+  /**
+   * `STICKSHIFT_ENGINE_*` bits; any other bit is invalid.
+   */
+  uint32_t flags;
+  /**
+   * Reserved; must be 0.
+   */
+  uint32_t reserved;
+  /**
+   * With `STICKSHIFT_ENGINE_PERSIST_SETTINGS`: NULL for the standard user
+   * defaults, else the name of a defaults suite (copied). Must be NULL
+   * without the flag.
+   */
+  const char *settings_suite;
+} StickShiftEngineDesc;
+
+/**
+ * The game's init hook: exactly once, before any update. A negative result
+ * fails the engine (`STICKSHIFT_ERROR_ABORTED`).
+ */
+typedef StickShiftResult (*StickShiftGameInitFn)(void *user, struct StickShiftEngine *engine);
+
+/**
+ * The game's update hook: 0 to `STICKSHIFT_MAX_STEPS_PER_FRAME` times a
+ * tick, `dt` always `stickshift_fixed_dt()`.
+ */
+typedef void (*StickShiftGameUpdateFn)(void *user, struct StickShiftEngine *engine, float dt);
+
+/**
+ * The game's render hook: exactly once a tick, after the tick's updates, with
+ * an open frame the engine submits when the hook returns.
+ */
+typedef void (*StickShiftGameRenderFn)(void *user,
+                                       struct StickShiftEngine *engine,
+                                       struct StickShiftFrame *frame);
+
+/**
+ * Shadow range, for [`StickShiftGraphicsSettings`].
+ */
+typedef uint32_t StickShiftShadowDistance;
+
+/**
+ * Draw distance, for [`StickShiftGraphicsSettings`].
+ */
+typedef uint32_t StickShiftDrawDistance;
+
+/**
+ * Render resolution, for [`StickShiftGraphicsSettings`].
+ */
+typedef uint32_t StickShiftRenderScale;
+
+/**
+ * The player-facing graphics settings. A value mirror: frozen, no size field.
+ */
+typedef struct StickShiftGraphicsSettings {
+  /**
+   * A `STICKSHIFT_SHADOW_QUALITY_*` value.
+   */
+  StickShiftShadowQuality shadows;
+  /**
+   * A `STICKSHIFT_SHADOW_DISTANCE_*` value.
+   */
+  StickShiftShadowDistance shadow_distance;
+  /**
+   * A `STICKSHIFT_DRAW_DISTANCE_*` value.
+   */
+  StickShiftDrawDistance draw_distance;
+  /**
+   * A `STICKSHIFT_RENDER_SCALE_*` value.
+   */
+  StickShiftRenderScale render_scale;
+  /**
+   * Reserved for future settings; 0.
+   */
+  uint32_t reserved[4];
+} StickShiftGraphicsSettings;
+
+/**
+ * The game's settings hook: between frames, after a settings change reaches
+ * the renderer and the scene.
+ */
+typedef void (*StickShiftGameSettingsFn)(void *user,
+                                         struct StickShiftEngine *engine,
+                                         const struct StickShiftGraphicsSettings *settings);
+
+/**
+ * Called exactly once, from `stickshift_engine_destroy`.
+ */
+typedef void (*StickShiftGameReleaseFn)(void *user);
+
+/**
+ * A game: its hooks and their user pointer. Copied at create.
+ */
+typedef struct StickShiftGame {
+  /**
+   * `sizeof(StickShiftGame)`.
+   */
+  uint32_t size;
+  /**
+   * Reserved; must be 0.
+   */
+  uint32_t reserved;
+  /**
+   * Passed to every hook; borrowed until `release`.
+   */
+  void *user;
+  /**
+   * Required.
+   */
+  StickShiftGameInitFn init;
+  /**
+   * Required.
+   */
+  StickShiftGameUpdateFn update;
+  /**
+   * Required.
+   */
+  StickShiftGameRenderFn render;
+  /**
+   * Optional: NULL does nothing on a settings change.
+   */
+  StickShiftGameSettingsFn graphics_settings_changed;
+  /**
+   * Optional.
+   */
+  StickShiftGameReleaseFn release;
+} StickShiftGame;
+
+/**
+ * The view an engine draws into, for `stickshift_engine_resume`.
+ */
+typedef struct StickShiftViewDesc {
+  /**
+   * `sizeof(StickShiftViewDesc)`.
+   */
+  uint32_t size;
+  /**
+   * The view's width in physical pixels.
+   */
+  uint32_t width;
+  /**
+   * The view's height in physical pixels.
+   */
+  uint32_t height;
+  /**
+   * Reserved; must be 0.
+   */
+  uint32_t reserved;
+  /**
+   * Physical pixels per point.
+   */
+  double scale_factor;
+  /**
+   * Safe-area insets in points: top, right, bottom, left.
+   */
+  float safe_area[4];
+} StickShiftViewDesc;
+
+/**
+ * Where a tick's elapsed time comes from.
+ */
+typedef uint32_t StickShiftClock;
+
+/**
+ * One tick, for `stickshift_engine_tick`.
+ */
+typedef struct StickShiftTickDesc {
+  /**
+   * `sizeof(StickShiftTickDesc)`.
+   */
+  uint32_t size;
+  /**
+   * A `STICKSHIFT_CLOCK_*` value.
+   */
+  StickShiftClock clock;
+  /**
+   * `STICKSHIFT_CLOCK_ELAPSED` and `_TIMESTAMP`: the elapsed time or the
+   * clock reading, in nanoseconds. Otherwise 0.
+   */
+  uint64_t nanoseconds;
+  /**
+   * Optional: `width * height * 4` bytes of BGRA8, top row first, filled
+   * with this tick's frame before the call returns. Offscreen contexts with
+   * `STICKSHIFT_FRAME_PACING_WAIT` only.
+   */
+  void *readback;
+  /**
+   * The length of `readback` in bytes.
+   */
+  size_t readback_len;
+} StickShiftTickDesc;
+
+/**
+ * What one tick did.
+ */
+typedef struct StickShiftTickResult {
+  /**
+   * `sizeof(StickShiftTickResult)`.
+   */
+  uint32_t size;
+  /**
+   * Update hooks run.
+   */
+  uint32_t steps;
+  /**
+   * 1 if the render hook ran.
+   */
+  uint8_t rendered;
+  /**
+   * 1 if the frame went to the GPU; 0 if it was discarded or had no
+   * drawable.
+   */
+  uint8_t submitted;
+  /**
+   * 1 if the tick's `readback` holds this frame.
+   */
+  uint8_t readback_ready;
+  /**
+   * 1 if `STICKSHIFT_ENGINE_HOLD_UNTIL_LOADED` held this tick.
+   */
+  uint8_t held;
+  /**
+   * `STICKSHIFT_REQUEST_*` bits.
+   */
+  uint32_t requests;
+  /**
+   * The submitted frame's number, or 0.
+   */
+  uint64_t frame;
+  /**
+   * The graphics settings' revision after the tick.
+   */
+  uint64_t graphics_revision;
+} StickShiftTickResult;
+
+/**
+ * A host event's kind. Append-only.
+ */
+typedef uint32_t StickShiftHostEventKind;
+
+/**
+ * One platform event, for `stickshift_engine_push_events`. 64 bytes; arrays
+ * of them cross with an explicit stride, so it can grow.
+ */
+typedef struct StickShiftHostEvent {
+  /**
+   * A `STICKSHIFT_HOST_*` value.
+   */
+  StickShiftHostEventKind kind;
+  /**
+   * The key, mouse button or menu tag.
+   */
+  uint32_t code;
+  /**
+   * `STICKSHIFT_HOST_EVENT_*` bits.
+   */
+  uint32_t flags;
+  /**
+   * `VIEW_RESIZED`, `SCALE_CHANGED`: the view's width in physical pixels.
+   */
+  uint32_t width;
+  /**
+   * `VIEW_RESIZED`, `SCALE_CHANGED`: the view's height in physical pixels.
+   */
+  uint32_t height;
+  /**
+   * Reserved; must be 0.
+   */
+  uint32_t reserved;
+  /**
+   * `VIEW_RESIZED`, `SCALE_CHANGED`: physical pixels per point.
+   */
+  double scale_factor;
+  /**
+   * `CURSOR`: points from the view's left edge.
+   */
+  double x;
+  /**
+   * `CURSOR`: points from the view's top edge.
+   */
+  double y;
+  /**
+   * `SAFE_AREA`: top, right, bottom, left, in points.
+   */
+  float insets[4];
+} StickShiftHostEvent;
+
+/**
+ * An engine's flags and counters.
+ */
+typedef struct StickShiftEngineState {
+  /**
+   * `sizeof(StickShiftEngineState)`.
+   */
+  uint32_t size;
+  /**
+   * 1 once the game's init hook has run.
+   */
+  uint8_t initialized;
+  /**
+   * 1 once `stickshift_engine_resume` has run.
+   */
+  uint8_t hosted;
+  /**
+   * 1 if the init hook failed.
+   */
+  uint8_t failed;
+  /**
+   * 1 if a panic was caught in an engine call: every later call that
+   * takes the engine (`stickshift_engine_*`, `_component_*`, `_world_*`,
+   * `_scene_*`, `_stream_*`, `_camera_*`, `_input_*`, `_audio_*`,
+   * `_graphics_*`) but `stickshift_engine_get_state` and
+   * `stickshift_engine_destroy` is now `STICKSHIFT_ERROR_INTERNAL`; calls
+   * on its context still work. Destroy the engine.
+   */
+  uint8_t poisoned;
+  /**
+   * 1 once the game, the host or an event asked to exit.
+   */
+  uint8_t exit_requested;
+  /**
+   * 1 if the last tick was held by `STICKSHIFT_ENGINE_HOLD_UNTIL_LOADED`.
+   */
+  uint8_t holding;
+  /**
+   * Reserved.
+   */
+  uint8_t reserved[2];
+  /**
+   * Ticks that ran the frame.
+   */
+  uint64_t frames;
+  /**
+   * Update hooks run.
+   */
+  uint64_t updates;
+  /**
+   * Render hooks run.
+   */
+  uint64_t frames_rendered;
+  /**
+   * Frames recorded but not submitted.
+   */
+  uint64_t frames_discarded;
+} StickShiftEngineState;
+
+/**
+ * Frame timing, durations in nanoseconds.
+ */
+typedef struct StickShiftPerf {
+  /**
+   * `sizeof(StickShiftPerf)`.
+   */
+  uint32_t size;
+  /**
+   * The interpolation factor `0..1` in the render hook, else 0.
+   */
+  float alpha;
+  /**
+   * Frames measured.
+   */
+  uint64_t frame_count;
+  /**
+   * Frames per second over the last frame.
+   */
+  double current_fps;
+  /**
+   * Frames per second over the window.
+   */
+  double avg_fps;
+  /**
+   * Mean frame time.
+   */
+  uint64_t avg_frame_ns;
+  /**
+   * Shortest frame time.
+   */
+  uint64_t min_frame_ns;
+  /**
+   * Longest frame time.
+   */
+  uint64_t max_frame_ns;
+  /**
+   * Mean CPU time per frame.
+   */
+  uint64_t avg_cpu_ns;
+  /**
+   * Mean GPU time per frame, where the backend measures it.
+   */
+  uint64_t avg_gpu_ns;
+  /**
+   * Mean time in the render hook.
+   */
+  uint64_t avg_render_ns;
+} StickShiftPerf;
+
+/**
+ * A sound an engine loaded. Valid until the engine is destroyed (sounds are
+ * never unloaded). `id == 0` is the null handle.
+ */
+typedef struct StickShiftSound {
+  /**
+   * The handle's identity; meaningful only to the engine that issued it.
+   */
+  uint64_t id;
+} StickShiftSound;
+
+/**
+ * The engine's audio counters: what the game asked for, counted in silent
+ * mode too.
+ */
+typedef struct StickShiftAudioStats {
+  /**
+   * `sizeof(StickShiftAudioStats)`.
+   */
+  uint32_t size;
+  /**
+   * Distinct sounds loaded (one per path).
+   */
+  uint32_t sound_count;
+  /**
+   * Sounds actually decoded: 0 in silent mode.
+   */
+  uint32_t decode_count;
+  /**
+   * Loops that began playing.
+   */
+  uint32_t loop_starts;
+  /**
+   * One-shots asked for.
+   */
+  uint32_t one_shots_played;
+  /**
+   * The master volume in dB.
+   */
+  float master_volume_db;
+  /**
+   * The sound on the loop channel, or the null handle.
+   */
+  struct StickShiftSound looping;
+  /**
+   * 1 if the engine plays to no device.
+   */
+  uint8_t is_silent;
+  /**
+   * Reserved.
+   */
+  uint8_t reserved[7];
+} StickShiftAudioStats;
+
+/**
+ * The engine camera, as `stickshift_camera_get` reads it. The matrices are
+ * computed when it is read.
+ */
+typedef struct StickShiftCameraState {
+  /**
+   * `sizeof(StickShiftCameraState)`.
+   */
+  uint32_t size;
+  /**
+   * Reserved.
+   */
+  uint32_t reserved;
+  /**
+   * The eye's world position.
+   */
+  struct StickShiftVec3 position;
+  /**
+   * The point looked at.
+   */
+  struct StickShiftVec3 target;
+  /**
+   * The world up axis the view is oriented by.
+   */
+  struct StickShiftVec3 up;
+  /**
+   * The vertical field of view in radians (45° by default).
+   */
+  float fov_y;
+  /**
+   * Width over height (4/3 until a view or the game sets it).
+   */
+  float aspect_ratio;
+  /**
+   * The near clip distance.
+   */
+  float near_plane;
+  /**
+   * The far clip distance.
+   */
+  float far_plane;
+  /**
+   * World to view.
+   */
+  struct StickShiftMat4 view;
+  /**
+   * View to clip.
+   */
+  struct StickShiftMat4 projection;
+  /**
+   * World to clip: `projection × view`.
+   */
+  struct StickShiftMat4 view_projection;
+  /**
+   * The unit direction from the eye to the target (`-Z` if they meet).
+   */
+  struct StickShiftVec3 forward;
+  /**
+   * The unit direction to the eye's right.
+   */
+  struct StickShiftVec3 right;
+} StickShiftCameraState;
+
+/**
+ * A chase camera: the inputs of the engine's chase controller, applied by
+ * `stickshift_camera_follow`. A frozen value type, with no `size` field;
+ * `stickshift_chase_init` fills in the defaults.
+ */
+typedef struct StickShiftChase {
+  /**
+   * How far behind the target the camera trails, along its facing.
+   */
+  float distance;
+  /**
+   * How far above the target the camera sits, along `up`.
+   */
+  float height;
+  /**
+   * How far above the target the camera aims.
+   */
+  float look_at_height;
+  /**
+   * The world up axis, as given: it is normalized when used, and a zero or
+   * non-finite axis means `+Y`. `{0, 1, 0}` by default.
+   */
+  struct StickShiftVec3 up;
+  /**
+   * Seconds for the camera to close half the gap to its pose; `0` (the
+   * default) snaps, and a negative value counts as `0`.
+   */
+  float half_life;
+} StickShiftChase;
+
+/**
+ * The graphics settings, with what is queued and how often they changed.
+ */
+typedef struct StickShiftGraphicsState {
+  /**
+   * `sizeof(StickShiftGraphicsState)`.
+   */
+  uint32_t size;
+  /**
+   * 1 if `pending` holds a request not yet applied.
+   */
+  uint8_t has_pending;
+  /**
+   * 1 if `base_spawn_ahead` is set (after init).
+   */
+  uint8_t has_base_spawn_ahead;
+  /**
+   * Reserved.
+   */
+  uint8_t reserved[2];
+  /**
+   * The settings in effect.
+   */
+  struct StickShiftGraphicsSettings current;
+  /**
+   * The request the next frame applies, if `has_pending`.
+   */
+  struct StickShiftGraphicsSettings pending;
+  /**
+   * The streaming reach the game set up in init, which the draw distance
+   * scales.
+   */
+  float base_spawn_ahead;
+  /**
+   * Reserved.
+   */
+  uint32_t reserved2;
+  /**
+   * How many changes have been applied since create (a restore is not
+   * one).
+   */
+  uint64_t revision;
+} StickShiftGraphicsState;
+
+/**
+ * A section of the Graphics menu, and the setting it chooses: the hundreds of
+ * a menu tag, for `stickshift_graphics_label`.
+ */
+typedef uint32_t StickShiftGraphicsSection;
+
+/**
+ * One item of the Graphics menu.
+ */
+typedef struct StickShiftMenuItem {
+  /**
+   * The item's tag, `section * 100 + index` (never 0): the `code` of the
+   * `STICKSHIFT_HOST_MENU` event that chooses it.
+   */
+  int32_t tag;
+  /**
+   * The item's title. Engine-owned, as the menu is.
+   */
+  const char *label;
+  /**
+   * 1 if the item shows a checkmark: the current choice of its section.
+   */
+  uint8_t checked;
+  /**
+   * 1 if the item can be chosen.
+   */
+  uint8_t enabled;
+  /**
+   * Reserved.
+   */
+  uint8_t reserved[2];
+} StickShiftMenuItem;
+
+/**
+ * A group of the Graphics menu: a submenu of choices, or the actions shown
+ * after a separator.
+ */
+typedef struct StickShiftMenuGroup {
+  /**
+   * The submenu's title, or NULL for the actions after a separator.
+   */
+  const char *title;
+  /**
+   * The group's items, `item_stride` bytes apart.
+   */
+  const struct StickShiftMenuItem *items;
+  /**
+   * The number of `items`.
+   */
+  uint32_t item_count;
+  /**
+   * Bytes from one item to the next.
+   */
+  uint32_t item_stride;
+} StickShiftMenuGroup;
+
+/**
+ * The engine's Graphics menu, as data for a host to build its native menu
+ * from. Engine-owned: valid until the next `stickshift_engine_get_menu` or
+ * the engine's destroy.
+ */
+typedef struct StickShiftMenu {
+  /**
+   * `sizeof(StickShiftMenu)`.
+   */
+  uint32_t size;
+  /**
+   * The number of `groups`.
+   */
+  uint32_t group_count;
+  /**
+   * The menu's title.
+   */
+  const char *title;
+  /**
+   * The groups, in menu order, `group_stride` bytes apart.
+   */
+  const struct StickShiftMenuGroup *groups;
+  /**
+   * Bytes from one group to the next.
+   */
+  uint32_t group_stride;
+  /**
+   * Reserved.
+   */
+  uint32_t reserved;
+  /**
+   * The settings revision the checkmarks show.
+   */
+  uint64_t revision;
+} StickShiftMenu;
+
+/**
+ * The keyboard and mouse as the game sees them. Edges last until the end of
+ * the next update, so a tap between two frames reaches the next update.
+ */
+typedef struct StickShiftInputState {
+  /**
+   * `sizeof(StickShiftInputState)`.
+   */
+  uint32_t size;
+  /**
+   * Per `STICKSHIFT_KEY_*` value: `STICKSHIFT_KEY_STATE_*` bits. 0 past the
+   * last key.
+   */
+  uint8_t keys[32];
+  /**
+   * Per `STICKSHIFT_MOUSE_*` value: 1 while the button is held.
+   */
+  uint8_t mouse_buttons[8];
+  /**
+   * 1 once the host has reported a cursor position.
+   */
+  uint8_t has_cursor;
+  /**
+   * Reserved.
+   */
+  uint8_t reserved[3];
+  /**
+   * The cursor, in points from the view's left edge.
+   */
+  double cursor_x;
+  /**
+   * The cursor, in points from the view's top edge.
+   */
+  double cursor_y;
+} StickShiftInputState;
 
 /**
  * One glyph of an SDF font, in em units.
@@ -305,83 +1457,6 @@ typedef struct StickShiftFont {
 } StickShiftFont;
 
 /**
- * A 4×4 matrix, **column-major**: `m[0..4]` is the first column. The same
- * memory layout as Swift's `simd_float4x4`.
- */
-typedef struct StickShiftMat4 {
-  /**
-   * The 16 elements, column by column.
-   */
-  float m[16];
-} StickShiftMat4;
-
-/**
- * A 3-component vector.
- */
-typedef struct StickShiftVec3 {
-  /**
-   * X.
-   */
-  float x;
-  /**
-   * Y (up).
-   */
-  float y;
-  /**
-   * Z.
-   */
-  float z;
-} StickShiftVec3;
-
-/**
- * The camera a frame is seen from.
- */
-typedef struct StickShiftCamera {
-  /**
-   * World to clip.
-   */
-  struct StickShiftMat4 view_projection;
-  /**
-   * World-space eye position, for specular highlights.
-   */
-  struct StickShiftVec3 position;
-} StickShiftCamera;
-
-/**
- * The sun and sky a frame is lit by.
- */
-typedef struct StickShiftSunSky {
-  /**
-   * Sun height above the horizon, degrees: 0 horizon, 90 overhead.
-   */
-  float sun_elevation_deg;
-  /**
-   * Sun bearing, degrees from -Z (north) toward +X (east).
-   */
-  float sun_azimuth_deg;
-  /**
-   * Linear RGB sunlight colour.
-   */
-  float sun_color[3];
-  /**
-   * Direct-light strength.
-   */
-  float sun_intensity;
-  /**
-   * Ambient fill; keep it well below `sun_intensity`.
-   */
-  float sky_fill;
-  /**
-   * Linear RGB sky colour straight up.
-   */
-  float sky_zenith_color[3];
-  /**
-   * Linear RGB sky colour at the horizon; the fog fades toward it.
-   */
-  float sky_horizon_color[3];
-} StickShiftSunSky;
-
-/**
  * What shape of light a [`StickShiftLight`] is.
  */
 typedef uint32_t StickShiftLightKind;
@@ -442,28 +1517,6 @@ typedef struct StickShiftMesh {
 } StickShiftMesh;
 
 /**
- * A linear RGBA colour, each channel `0..1`.
- */
-typedef struct StickShiftColor {
-  /**
-   * Red.
-   */
-  float r;
-  /**
-   * Green.
-   */
-  float g;
-  /**
-   * Blue.
-   */
-  float b;
-  /**
-   * Alpha.
-   */
-  float a;
-} StickShiftColor;
-
-/**
  * A mesh draw's material.
  */
 typedef struct StickShiftMaterial {
@@ -494,59 +1547,40 @@ typedef struct StickShiftModel {
 } StickShiftModel;
 
 /**
- * How a 2D quad is filled.
+ * Which parts of a model `stickshift_frame_draw_model_ex` records.
  */
-typedef uint32_t StickShiftFill;
+typedef uint32_t StickShiftModelParts;
 
 /**
- * A 2D overlay quad, in drawable pixels with the origin at the top-left.
+ * A model draw for `stickshift_frame_draw_model_ex`: where the model goes and
+ * which of its parts to record.
+ *
+ * Each selected part is drawn at `world × (local × node)`, where `node` is the
+ * part's node matrix from the glTF file, multiplied in that grouping. Float
+ * products are not associative, so this can differ in the last bit from
+ * passing `world × local` as the world matrix of `stickshift_frame_draw_model`.
  */
-typedef struct StickShiftQuad {
+typedef struct StickShiftModelDraw {
   /**
-   * Left edge.
+   * Model to world, applied last.
    */
-  float x;
+  struct StickShiftMat4 world;
   /**
-   * Top edge.
+   * Applied to each node matrix first, for example the transform that fits
+   * a model to a game's scale. The identity places the model by `world`
+   * alone.
    */
-  float y;
+  struct StickShiftMat4 local;
   /**
-   * Width.
+   * Multiplies each part's base colour, not its emission. `{1, 1, 1, 1}`
+   * leaves the model's colours as they are.
    */
-  float width;
+  struct StickShiftColor tint;
   /**
-   * Height.
+   * A `STICKSHIFT_MODEL_PARTS_*` value.
    */
-  float height;
-  /**
-   * Texture rectangle, left (ignored for `STICKSHIFT_FILL_SOLID`).
-   */
-  float u0;
-  /**
-   * Texture rectangle, top.
-   */
-  float v0;
-  /**
-   * Texture rectangle, right.
-   */
-  float u1;
-  /**
-   * Texture rectangle, bottom.
-   */
-  float v1;
-  /**
-   * Tint; alpha blends.
-   */
-  struct StickShiftColor color;
-  /**
-   * A `STICKSHIFT_FILL_*` value.
-   */
-  StickShiftFill fill;
-  /**
-   * The texture for `STICKSHIFT_FILL_TEXTURE` and `STICKSHIFT_FILL_SDF`.
-   */
-  struct StickShiftTexture texture;
-} StickShiftQuad;
+  StickShiftModelParts parts;
+} StickShiftModelDraw;
 
 /**
  * A rotation quaternion.
@@ -569,6 +1603,26 @@ typedef struct StickShiftQuat {
    */
   float w;
 } StickShiftQuat;
+
+/**
+ * A translation, rotation and scale: `stickshift_math::Transform`, field for
+ * field. Its matrix applies scale first, then rotation, then translation
+ * (`stickshift_transform_to_mat4`). A frozen value type, with no `size` field.
+ */
+typedef struct StickShiftTransform {
+  /**
+   * Position (translation).
+   */
+  struct StickShiftVec3 position;
+  /**
+   * Rotation, a unit quaternion; `{0, 0, 0, 1}` for none.
+   */
+  struct StickShiftQuat rotation;
+  /**
+   * Scale along each axis; `{1, 1, 1}` for none.
+   */
+  struct StickShiftVec3 scale;
+} StickShiftTransform;
 
 /**
  * Called exactly once when the engine no longer needs borrowed [`StickShiftData`].
@@ -599,11 +1653,6 @@ typedef struct StickShiftData {
    */
   void *user;
 } StickShiftData;
-
-/**
- * The vertex layout of a mesh, which also selects the pipeline that draws it.
- */
-typedef uint32_t StickShiftVertexLayout;
 
 /**
  * How to create a mesh.
@@ -655,6 +1704,211 @@ typedef struct StickShiftTextureDesc {
    */
   uint32_t flags;
 } StickShiftTextureDesc;
+
+/**
+ * A scene's streaming configuration: stickshift-scene's `StreamingConfig`,
+ * field for field. A frozen value type, with no `size` field.
+ */
+typedef struct StickShiftStreamingConfig {
+  /**
+   * The travel axis; `(0, 0, -1)` by default.
+   */
+  struct StickShiftVec3 axis;
+  /**
+   * Distance between spawn slots along the axis; 6 by default.
+   */
+  float spawn_interval;
+  /**
+   * How far ahead of the focus slots are filled; 60 by default.
+   */
+  float spawn_ahead;
+  /**
+   * How far behind the focus streamed entities are despawned; 12 by default.
+   */
+  float despawn_behind;
+  /**
+   * How far the focus may travel before a floating-origin rebase; 1000 by
+   * default.
+   */
+  float rebase_threshold;
+} StickShiftStreamingConfig;
+
+/**
+ * Called once for each new slot of a `stickshift_scene_stream` pass, from
+ * inside the scene's own pass: `position` is the slot's world position.
+ * World calls spawn into the scene; `stickshift_stream_track` reports an
+ * entity for despawning behind.
+ */
+typedef void (*StickShiftSpawnFn)(void *user,
+                                  struct StickShiftEngine *engine,
+                                  int64_t slot,
+                                  struct StickShiftVec3 position);
+
+/**
+ * An entity of an engine's world: hecs `Entity::to_bits`, `generation << 32 |
+ * id`. 0 is the null entity (hecs never issues generation 0). Ids are reused
+ * last-freed first with a bumped generation, so a stale entity reads as
+ * absent, never as another entity. Unlike resource handles, an entity is not
+ * tagged with its context: it is valid only in the engine that issued it.
+ */
+typedef struct StickShiftEntity {
+  /**
+   * The hecs bits; 0 for none.
+   */
+  uint64_t bits;
+} StickShiftEntity;
+
+/**
+ * A game component to register, or what one is.
+ */
+typedef struct StickShiftComponentDesc {
+  /**
+   * UTF-8 and unique per engine; copied when registering. Returned names
+   * are library-owned and valid for the engine's life.
+   */
+  const char *name;
+  /**
+   * The bytes of one value: 0 makes a tag (no value), up to
+   * `STICKSHIFT_MAX_COMPONENT_SIZE`.
+   */
+  uint32_t size;
+  /**
+   * A power of two up to 16: where the value sits in query rows. Values are
+   * always copied, never borrowed.
+   */
+  uint32_t align;
+} StickShiftComponentDesc;
+
+/**
+ * A component: an engine component (`STICKSHIFT_COMPONENT_*`, 1..255) or a
+ * game component from `stickshift_component_register` (from
+ * `STICKSHIFT_FIRST_GAME_COMPONENT`).
+ */
+typedef struct StickShiftComponent {
+  /**
+   * The component's id.
+   */
+  uint32_t id;
+} StickShiftComponent;
+
+/**
+ * One component of a spawn or insert bundle.
+ */
+typedef struct StickShiftComponentValue {
+  /**
+   * The component.
+   */
+  struct StickShiftComponent component;
+  /**
+   * `size` bytes, read during the call; NULL for a tag.
+   */
+  const void *data;
+  /**
+   * The component's registered size (`sizeof` the C struct for an engine
+   * component); 0 for a tag.
+   */
+  uint32_t size;
+} StickShiftComponentValue;
+
+/**
+ * How a query term uses its component.
+ */
+typedef uint32_t StickShiftQueryAccess;
+
+/**
+ * One term of a query.
+ */
+typedef struct StickShiftQueryTerm {
+  /**
+   * The component.
+   */
+  struct StickShiftComponent component;
+  /**
+   * A `STICKSHIFT_QUERY_*` value.
+   */
+  StickShiftQueryAccess access;
+} StickShiftQueryTerm;
+
+/**
+ * A query's snapshot: the matching entities in the world's query order, with
+ * their values copied into rows. Engine-owned; valid until
+ * `stickshift_world_query_release`, until the hook or callback that took it
+ * returns, or (taken between engine calls) until the next tick.
+ */
+typedef struct StickShiftQueryRows {
+  /**
+   * `sizeof(StickShiftQueryRows)`.
+   */
+  uint32_t size;
+  /**
+   * The matching entities.
+   */
+  uint32_t count;
+  /**
+   * `count` entities, in query order.
+   */
+  const struct StickShiftEntity *entities;
+  /**
+   * `count` rows of `stride` bytes, starting 16-byte aligned.
+   */
+  const uint8_t *data;
+  /**
+   * Bytes from one row to the next.
+   */
+  size_t stride;
+  /**
+   * Per term: its value's byte offset in a row (a multiple of the
+   * component's alignment), or `UINT32_MAX` if rows hold no value for it.
+   */
+  const uint32_t *offsets;
+  /**
+   * `count * term_count` flags, row by row: 1 where the entity has the
+   * term's component. An absent optional term's value bytes are zero.
+   */
+  const uint8_t *present;
+  /**
+   * The query's terms.
+   */
+  uint32_t term_count;
+  /**
+   * Reserved.
+   */
+  uint32_t reserved;
+  /**
+   * Pass to `stickshift_world_query_release`; never 0.
+   */
+  uint64_t token;
+} StickShiftQueryRows;
+
+/**
+ * The shape of a `StickShiftRenderComponent`.
+ */
+typedef uint32_t StickShiftRenderShape;
+
+/**
+ * A key, by physical position. Append-only.
+ */
+typedef uint32_t StickShiftKey;
+
+/**
+ * A mouse button. Append-only.
+ */
+typedef uint32_t StickShiftMouseButton;
+
+/**
+ * The value of `STICKSHIFT_COMPONENT_RENDER`: a colour and a built-in shape. A
+ * frozen value type, with no `size` field.
+ */
+typedef struct StickShiftRenderComponent {
+  /**
+   * Linear RGB, `0..1`.
+   */
+  float color[3];
+  /**
+   * A `STICKSHIFT_RENDER_SHAPE_*` value.
+   */
+  StickShiftRenderShape shape;
+} StickShiftRenderComponent;
 
 /**
  * Done.
@@ -728,6 +1982,25 @@ typedef struct StickShiftTextureDesc {
  * load that never completed).
  */
 #define STICKSHIFT_ERROR_TIMEOUT (-11)
+
+/**
+ * Not an error: the entity is gone or lacks the component, and nothing was
+ * done.
+ */
+#define STICKSHIFT_ABSENT 3
+
+/**
+ * An engine call, or a call on a context with an engine attached, from a
+ * thread other than the one that created the engine.
+ */
+#define STICKSHIFT_ERROR_WRONG_THREAD (-12)
+
+/**
+ * The game's init hook failed: the engine is failed, and every later
+ * `stickshift_engine_init`, `_resume` and `_tick` is
+ * `STICKSHIFT_ERROR_WRONG_STATE`. Destroy it.
+ */
+#define STICKSHIFT_ERROR_ABORTED (-13)
 
 /**
  * The Metal renderer (Apple platforms).
@@ -855,6 +2128,305 @@ typedef struct StickShiftTextureDesc {
  */
 #define STICKSHIFT_FILL_SDF 2
 
+/**
+ * Every part.
+ */
+#define STICKSHIFT_MODEL_PARTS_ALL 0
+
+/**
+ * The parts with a base-colour texture: those on the `POS_NORMAL_UV` layout.
+ */
+#define STICKSHIFT_MODEL_PARTS_TEXTURED 1
+
+/**
+ * The parts without one: those on the `POS_NORMAL_COLOR` layout.
+ */
+#define STICKSHIFT_MODEL_PARTS_UNTEXTURED 2
+
+/**
+ * A unit cube built by the engine, coloured with the component's colour.
+ */
+#define STICKSHIFT_RENDER_SHAPE_CUBE 0
+
+/**
+ * A unit-diameter sphere (20 segments, 20 rings) built by the engine.
+ */
+#define STICKSHIFT_RENDER_SHAPE_SPHERE 1
+
+/**
+ * Read only: a custom mesh a Rust caller made. Writing it is
+ * `STICKSHIFT_ERROR_INVALID_ARGUMENT`.
+ */
+#define STICKSHIFT_RENDER_SHAPE_MESH 2
+
+/**
+ * Required, with the value in each row (for a tag, the same as `WITH`).
+ */
+#define STICKSHIFT_QUERY_READ 0
+
+/**
+ * Required, with no value in the row.
+ */
+#define STICKSHIFT_QUERY_WITH 1
+
+/**
+ * Excluded.
+ */
+#define STICKSHIFT_QUERY_WITHOUT 2
+
+/**
+ * Not a filter: the value when the entity has it, and a presence flag.
+ */
+#define STICKSHIFT_QUERY_OPTIONAL 3
+
+/**
+ * Nowhere: every audio call is accepted and counted, nothing plays. Tools and
+ * tests (the default).
+ */
+#define STICKSHIFT_AUDIO_SILENT 0
+
+/**
+ * The default output device, or silent (with one line on stderr) if there is
+ * none.
+ */
+#define STICKSHIFT_AUDIO_DEVICE 1
+
+/**
+ * Wait (at most a second) for a free frame slot before the render hook (the
+ * default). A tick read-back also waits for its frame to finish.
+ */
+#define STICKSHIFT_FRAME_PACING_WAIT 0
+
+/**
+ * Never wait: with no free slot the render hook still runs, into a frame that
+ * is then discarded and counted.
+ */
+#define STICKSHIFT_FRAME_PACING_SKIP 1
+
+/**
+ * Exactly `STICKSHIFT_FIXED_DT_NS`: one update per tick. Tools and tests.
+ */
+#define STICKSHIFT_CLOCK_FIXED_STEP 0
+
+/**
+ * `nanoseconds` passed since the last tick.
+ */
+#define STICKSHIFT_CLOCK_ELAPSED 1
+
+/**
+ * `nanoseconds` is the host's monotonic clock now (`CLOCK_UPTIME_RAW` on
+ * Apple platforms); the tick banks the time since the last timestamp tick,
+ * saturating at 0. The first timestamp tick, and the first after a menu
+ * choice, `stickshift_engine_reset_clock` or a held tick, banks exactly
+ * `STICKSHIFT_FIXED_DT_NS`.
+ */
+#define STICKSHIFT_CLOCK_TIMESTAMP 2
+
+/**
+ * As `STICKSHIFT_CLOCK_TIMESTAMP`, with the engine reading the monotonic clock
+ * itself, after the tick's settings step.
+ */
+#define STICKSHIFT_CLOCK_ENGINE 3
+
+/**
+ * A key went down: `code` is a `STICKSHIFT_KEY_*` value, `flags` may hold
+ * `STICKSHIFT_HOST_EVENT_REPEAT`. A press of a key already held makes no edge.
+ */
+#define STICKSHIFT_HOST_KEY_DOWN 1
+
+/**
+ * A key went up: `code` is a `STICKSHIFT_KEY_*` value.
+ */
+#define STICKSHIFT_HOST_KEY_UP 2
+
+/**
+ * A mouse button went down: `code` is a `STICKSHIFT_MOUSE_*` value.
+ */
+#define STICKSHIFT_HOST_MOUSE_DOWN 3
+
+/**
+ * A mouse button went up.
+ */
+#define STICKSHIFT_HOST_MOUSE_UP 4
+
+/**
+ * The cursor moved to `x`, `y`, in points from the view's top-left.
+ */
+#define STICKSHIFT_HOST_CURSOR 5
+
+/**
+ * The view lost the keyboard: every key and button is released.
+ */
+#define STICKSHIFT_HOST_FOCUS_LOST 6
+
+/**
+ * The view is now `width` × `height` physical pixels at `scale_factor`: the
+ * camera's aspect follows, the drawable is resized, and
+ * `STICKSHIFT_REQUEST_MENU_SYNC` is returned.
+ */
+#define STICKSHIFT_HOST_VIEW_RESIZED 7
+
+/**
+ * The view moved to a display of another pixel density: the drawable is
+ * resized, the aspect is left alone.
+ */
+#define STICKSHIFT_HOST_SCALE_CHANGED 8
+
+/**
+ * The view's safe-area insets changed: `insets`, in points.
+ */
+#define STICKSHIFT_HOST_SAFE_AREA 9
+
+/**
+ * A Graphics menu item was chosen: `code` is its tag.
+ */
+#define STICKSHIFT_HOST_MENU 10
+
+/**
+ * The user asked to close the view: `STICKSHIFT_REQUEST_EXIT`.
+ */
+#define STICKSHIFT_HOST_CLOSE 11
+
+/**
+ * The `W` key.
+ */
+#define STICKSHIFT_KEY_W 0
+
+/**
+ * The `A` key.
+ */
+#define STICKSHIFT_KEY_A 1
+
+/**
+ * The `S` key.
+ */
+#define STICKSHIFT_KEY_S 2
+
+/**
+ * The `D` key.
+ */
+#define STICKSHIFT_KEY_D 3
+
+/**
+ * The `Q` key.
+ */
+#define STICKSHIFT_KEY_Q 4
+
+/**
+ * The `E` key.
+ */
+#define STICKSHIFT_KEY_E 5
+
+/**
+ * The left arrow.
+ */
+#define STICKSHIFT_KEY_LEFT 6
+
+/**
+ * The right arrow.
+ */
+#define STICKSHIFT_KEY_RIGHT 7
+
+/**
+ * The up arrow.
+ */
+#define STICKSHIFT_KEY_UP 8
+
+/**
+ * The down arrow.
+ */
+#define STICKSHIFT_KEY_DOWN 9
+
+/**
+ * The space bar.
+ */
+#define STICKSHIFT_KEY_SPACE 10
+
+/**
+ * The escape key.
+ */
+#define STICKSHIFT_KEY_ESCAPE 11
+
+/**
+ * The left button.
+ */
+#define STICKSHIFT_MOUSE_LEFT 0
+
+/**
+ * The right button.
+ */
+#define STICKSHIFT_MOUSE_RIGHT 1
+
+/**
+ * The middle button.
+ */
+#define STICKSHIFT_MOUSE_MIDDLE 2
+
+/**
+ * Shadows reach as far as the draw distance (the default).
+ */
+#define STICKSHIFT_SHADOW_DISTANCE_MATCH_DRAW_DISTANCE 0
+
+/**
+ * Shadows reach part of the way.
+ */
+#define STICKSHIFT_SHADOW_DISTANCE_MEDIUM 1
+
+/**
+ * Shadows reach only nearby.
+ */
+#define STICKSHIFT_SHADOW_DISTANCE_NEAR 2
+
+/**
+ * The nearest draw distance.
+ */
+#define STICKSHIFT_DRAW_DISTANCE_NEAR 0
+
+/**
+ * A medium draw distance.
+ */
+#define STICKSHIFT_DRAW_DISTANCE_MEDIUM 1
+
+/**
+ * The full draw distance (the default).
+ */
+#define STICKSHIFT_DRAW_DISTANCE_FAR 2
+
+/**
+ * Half the view's points per side, times its pixels per point (the default).
+ */
+#define STICKSHIFT_RENDER_SCALE_HALF 0
+
+/**
+ * Three quarters.
+ */
+#define STICKSHIFT_RENDER_SCALE_THREE_QUARTERS 1
+
+/**
+ * The view's full physical resolution.
+ */
+#define STICKSHIFT_RENDER_SCALE_FULL 2
+
+/**
+ * Shadow quality: a `STICKSHIFT_SHADOW_QUALITY_*` value.
+ */
+#define STICKSHIFT_GRAPHICS_SECTION_SHADOWS 1
+
+/**
+ * Shadow range: a `STICKSHIFT_SHADOW_DISTANCE_*` value.
+ */
+#define STICKSHIFT_GRAPHICS_SECTION_SHADOW_DISTANCE 2
+
+/**
+ * Draw distance: a `STICKSHIFT_DRAW_DISTANCE_*` value.
+ */
+#define STICKSHIFT_GRAPHICS_SECTION_DRAW_DISTANCE 3
+
+/**
+ * Render resolution: a `STICKSHIFT_RENDER_SCALE_*` value.
+ */
+#define STICKSHIFT_GRAPHICS_SECTION_RENDER_SCALE 4
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -874,7 +2446,9 @@ StickShiftResult stickshift_context_create(const struct StickShiftContextDesc *d
 /**
  * Destroy a context and everything it owns. Waits for submitted frames and a
  * model parse in progress; undelivered events are dropped and borrowed data is
- * released. NULL is a no-op.
+ * released. NULL is a no-op. With an engine attached it is
+ * `STICKSHIFT_ERROR_WRONG_STATE` (destroy the engine first), or
+ * `STICKSHIFT_ERROR_WRONG_THREAD` from a thread other than the engine's.
  *
  * # Safety
  * `ctx` must be NULL or a live context; it is invalid after this returns
@@ -883,9 +2457,9 @@ StickShiftResult stickshift_context_create(const struct StickShiftContextDesc *d
 StickShiftResult stickshift_context_destroy(struct StickShiftContext *ctx);
 
 /**
- * Resize a layer context's drawable to `width` × `height` pixels with `scale`
- * pixels per point (`<= 0`: 1). Offscreen contexts keep their size
- * (`STICKSHIFT_ERROR_UNSUPPORTED`).
+ * Resize a layer or null context's drawable to `width` × `height` pixels with
+ * `scale` pixels per point (`<= 0`: 1). A Metal offscreen context keeps its
+ * size (`STICKSHIFT_ERROR_UNSUPPORTED`).
  *
  * # Safety
  * `ctx` must be NULL or a live context.
@@ -1007,9 +2581,105 @@ StickShiftResourceState stickshift_resource_state(struct StickShiftContext *ctx,
                                                   uint64_t handle_id);
 
 /**
+ * Set the sticky sun and sky, with or without a frame open: what
+ * `stickshift_frame_set_sun_sky` sets, so a sun set before the first frame lights
+ * it.
+ *
+ * # Safety
+ * `ctx` must be NULL or a live context; `sun` NULL or valid.
+ */
+StickShiftResult stickshift_context_set_sun_sky(struct StickShiftContext *ctx,
+                                                const struct StickShiftSunSky *sun);
+
+/**
+ * The sticky sun and sky.
+ *
+ * # Safety
+ * `ctx` must be NULL or a live context; `out` NULL or valid.
+ */
+StickShiftResult stickshift_context_get_sun_sky(struct StickShiftContext *ctx,
+                                                struct StickShiftSunSky *out);
+
+/**
+ * Set the sticky camera, with or without a frame open: what
+ * `stickshift_frame_set_camera` sets. With an engine attached, each tick sets it
+ * from the engine's camera before the render hook.
+ *
+ * # Safety
+ * `ctx` must be NULL or a live context; `camera` NULL or valid.
+ */
+StickShiftResult stickshift_context_set_camera(struct StickShiftContext *ctx,
+                                               const struct StickShiftCamera *camera);
+
+/**
+ * The sticky camera: the view-projection and eye position the next frame
+ * draws with.
+ *
+ * # Safety
+ * `ctx` must be NULL or a live context; `out` NULL or valid.
+ */
+StickShiftResult stickshift_context_get_camera(struct StickShiftContext *ctx,
+                                               struct StickShiftCamera *out);
+
+/**
+ * Drawable pixels per point: the UI scale, as last given at create or
+ * resize (1 for a value that is not finite and positive).
+ *
+ * # Safety
+ * `ctx` must be NULL or a live context; `out` NULL or valid.
+ */
+StickShiftResult stickshift_context_get_scale(struct StickShiftContext *ctx, float *out);
+
+/**
+ * Set the safe-area insets, in drawable pixels: top, right, bottom, left.
+ * Each must be finite and `>= 0`. 0 by default. An attached engine sets them
+ * from the view's insets in points at every resize.
+ *
+ * # Safety
+ * `ctx` must be NULL or a live context; `insets_px` NULL or valid for 4 floats.
+ */
+StickShiftResult stickshift_context_set_safe_area(struct StickShiftContext *ctx,
+                                                  const float *insets_px);
+
+/**
+ * The safe-area insets, in drawable pixels: top, right, bottom, left.
+ *
+ * # Safety
+ * `ctx` must be NULL or a live context; `out` NULL or valid for 4 floats.
+ */
+StickShiftResult stickshift_context_get_safe_area(struct StickShiftContext *ctx, float *out);
+
+/**
+ * What the last frame to reach submit recorded: its draws and quads still
+ * valid at submit, in record order, its camera, sun, render settings and light
+ * count, and whether it went to the GPU. Before any frame, every count is 0.
+ * The draws and quads are context-owned and valid until the next frame is
+ * opened on `ctx`. Set `out->size = sizeof(StickShiftFrameRecord)`.
+ *
+ * # Safety
+ * `ctx` must be NULL or a live context; `out` NULL or valid for its `size`.
+ */
+StickShiftResult stickshift_context_get_last_frame(struct StickShiftContext *ctx,
+                                                   struct StickShiftFrameRecord *out);
+
+/**
  * `STICKSHIFT_API_VERSION` as compiled into the library.
  */
 uint32_t stickshift_api_version(void);
+
+/**
+ * `STICKSHIFT_API_MINOR` as compiled into the library: its additive level
+ * within `STICKSHIFT_API_VERSION`. A host built against a newer header than
+ * the library it loads sees a smaller value here. Thread-safe.
+ */
+uint32_t stickshift_api_minor(void);
+
+/**
+ * The fixed simulation step in seconds, exactly as the engine uses it: the
+ * `f32` nearest 1/60 (bits `0x3C888889`). A function, so no compiler rounds
+ * a literal differently. Thread-safe.
+ */
+float stickshift_fixed_dt(void);
 
 /**
  * The library's release, e.g. `"0.1.0"`. Static; thread-safe.
@@ -1027,6 +2697,473 @@ const char *stickshift_result_name(StickShiftResult result);
  * this thread, never NULL (empty when there is none). Thread-safe.
  */
 const char *stickshift_last_error_message(void);
+
+/**
+ * Create an engine on `ctx`, which must outlive it. The calling thread
+ * becomes the engine's thread. `game` is copied (its `user` is borrowed until
+ * `release`). No hook runs. `STICKSHIFT_ERROR_WRONG_STATE` if `ctx` already has
+ * an engine or a frame open. On failure nothing is created and `release` is
+ * not called.
+ *
+ * # Safety
+ * `ctx` must be NULL or a live context; `desc`, `game` and `out` NULL or
+ * valid for their declared sizes.
+ */
+StickShiftResult stickshift_engine_create(struct StickShiftContext *ctx,
+                                          const struct StickShiftEngineDesc *desc,
+                                          const struct StickShiftGame *game,
+                                          struct StickShiftEngine **out);
+
+/**
+ * Destroy an engine: call the game's `release` exactly once, detach the
+ * context, and drop the loop (which stops the audio device). NULL is a no-op.
+ * `STICKSHIFT_ERROR_WRONG_STATE` from inside a hook or callback,
+ * `STICKSHIFT_ERROR_WRONG_THREAD` from another thread. Works on a poisoned
+ * engine.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; it is invalid after this returns
+ * `STICKSHIFT_OK`.
+ */
+StickShiftResult stickshift_engine_destroy(struct StickShiftEngine *engine);
+
+/**
+ * The context the engine is attached to, borrowed.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid.
+ */
+StickShiftResult stickshift_engine_get_context(struct StickShiftEngine *engine,
+                                               struct StickShiftContext **out);
+
+/**
+ * Run the game's init once, for an engine with no view (tools, tests): a
+ * queued settings request becomes current, then the init hook runs, then the
+ * streaming reach and the render settings are applied. Idempotent. If the
+ * hook fails, `STICKSHIFT_ERROR_ABORTED`, and the engine is failed.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_engine_init(struct StickShiftEngine *engine);
+
+/**
+ * The view appeared (or reappeared): mark the engine hosted, size the drawable
+ * for the view and the render scale in effect, run the game's init once,
+ * size the drawable again, and record the safe area. The first call also sets
+ * the camera's aspect to the view's. `*out_requests` (optional) gets
+ * `STICKSHIFT_REQUEST_MENU_SYNC`. A Metal offscreen context keeps its size.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `view` NULL or valid for its
+ * declared size; `out_requests` NULL or valid.
+ */
+StickShiftResult stickshift_engine_resume(struct StickShiftEngine *engine,
+                                          const struct StickShiftViewDesc *view,
+                                          uint32_t *out_requests);
+
+/**
+ * One display frame. See `docs/C_API.md`: housekeeping, the load hold, then
+ * the session's frame (a settings change applied, resized for and saved, then
+ * the fixed updates and the render), whose render step opens the context's
+ * frame, runs the render hook and submits it. An engine with no view yet runs
+ * the same frame with nothing to resize. `out` is optional.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `tick` NULL or valid for its
+ * declared size; `tick->readback` NULL or writable for `readback_len` bytes;
+ * `out` NULL or valid for its declared size.
+ */
+StickShiftResult stickshift_engine_tick(struct StickShiftEngine *engine,
+                                        const struct StickShiftTickDesc *tick,
+                                        struct StickShiftTickResult *out);
+
+/**
+ * Apply `count` host events in array order, `stride` bytes apart (at least
+ * `sizeof(StickShiftHostEvent)`, 64). Every event is checked first, and none
+ * is applied if one is invalid. A menu event may run the settings hook inside
+ * this call. `*out_requests` (optional) gets the `STICKSHIFT_REQUEST_*` bits
+ * the events raised.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `events` NULL (with `count` 0) or
+ * valid for `count` events `stride` bytes apart; `out_requests` NULL or valid.
+ */
+StickShiftResult stickshift_engine_push_events(struct StickShiftEngine *engine,
+                                               const struct StickShiftHostEvent *events,
+                                               uint32_t count,
+                                               uint32_t stride,
+                                               uint32_t *out_requests);
+
+/**
+ * The next `STICKSHIFT_CLOCK_TIMESTAMP` or `_ENGINE` tick banks exactly one
+ * fixed step: for an app returning to the foreground, or a modal sheet.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_engine_reset_clock(struct StickShiftEngine *engine);
+
+/**
+ * Ask to stop: every later tick reports `STICKSHIFT_REQUEST_EXIT`. The engine
+ * never quits by itself. In a hook, or between engine calls.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_engine_request_exit(struct StickShiftEngine *engine);
+
+/**
+ * The engine's flags and counters. In a hook, or between engine calls. Set
+ * `out->size = sizeof(StickShiftEngineState)`. This is the one call besides
+ * destroy that a poisoned engine still answers, with `poisoned` set, so a
+ * host can tell a poisoned engine (destroy it) from a failed one.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid for its
+ * declared size.
+ */
+StickShiftResult stickshift_engine_get_state(struct StickShiftEngine *engine,
+                                             struct StickShiftEngineState *out);
+
+/**
+ * Frame timing: in a hook, the snapshot the hook's frame started with and,
+ * in the render hook, the interpolation alpha; between engine calls, the
+ * latest snapshot and alpha 0. Set `out->size = sizeof(StickShiftPerf)`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid for its
+ * declared size.
+ */
+StickShiftResult stickshift_engine_get_perf(struct StickShiftEngine *engine,
+                                            struct StickShiftPerf *out);
+
+/**
+ * Load the sound at `path` (a file path, UTF-8): decoded now, once per path;
+ * loading a path again returns the same sound. Paths compare as Rust's `Path`s
+ * do: a repeated `/`, a `.` component inside the path or a trailing `/` does
+ * not make a new sound, while a leading `./` does, and
+ * `stickshift_audio_get_path` returns the spelling the sound was first loaded
+ * by. A file that cannot be read or decoded gives a silent sound (and a line on
+ * stderr), as in Rust, so this fails only for a NULL or non-UTF-8 path. Silent
+ * engines decode nothing. In a hook, or between engine calls.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `path` NULL or a NUL-terminated
+ * string; `out` NULL or valid.
+ */
+StickShiftResult stickshift_audio_load(struct StickShiftEngine *engine,
+                                       const char *path,
+                                       struct StickShiftSound *out);
+
+/**
+ * Play `sound` once at `volume_db` (`STICKSHIFT_VOLUME_UNCHANGED_DB` for its
+ * recorded level), over whatever else plays. Counted even when nothing is
+ * heard (silent mode, a sound that failed to load). In a hook, or between
+ * engine calls.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_audio_play_once(struct StickShiftEngine *engine,
+                                            struct StickShiftSound sound,
+                                            float volume_db);
+
+/**
+ * Loop `sound` at `volume_db` on the single loop channel, replacing what loops
+ * now. A request for the sound already looping does nothing (it neither
+ * restarts nor doubles). In a hook, or between engine calls.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_audio_play_looping(struct StickShiftEngine *engine,
+                                               struct StickShiftSound sound,
+                                               float volume_db);
+
+/**
+ * Stop the loop channel. Nothing looping is fine. In a hook, or between engine
+ * calls.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_audio_stop_looping(struct StickShiftEngine *engine);
+
+/**
+ * Set the level everything plays at, in dB; remembered in silent mode too. In
+ * a hook, or between engine calls.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_audio_set_master_volume(struct StickShiftEngine *engine,
+                                                    float volume_db);
+
+/**
+ * The audio counters: sounds loaded and decoded, loops started, one-shots
+ * asked for, the master volume and what loops now. In a hook, or between
+ * engine calls. Set `out->size = sizeof(StickShiftAudioStats)`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid for its
+ * declared size.
+ */
+StickShiftResult stickshift_audio_get_stats(struct StickShiftEngine *engine,
+                                            struct StickShiftAudioStats *out);
+
+/**
+ * How many one-shots of `sound` the game asked for. In a hook, or between
+ * engine calls.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid.
+ */
+StickShiftResult stickshift_audio_one_shots_of(struct StickShiftEngine *engine,
+                                               struct StickShiftSound sound,
+                                               uint32_t *out);
+
+/**
+ * The path `sound` was loaded by. The string is engine-owned and valid until
+ * the engine is destroyed. In a hook, or between engine calls.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid.
+ */
+StickShiftResult stickshift_audio_get_path(struct StickShiftEngine *engine,
+                                           struct StickShiftSound sound,
+                                           const char **out);
+
+/**
+ * The engine camera: its pose, lens and the matrices it gives now. In a hook,
+ * or between engine calls. Set `out->size = sizeof(StickShiftCameraState)`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid for its
+ * declared size.
+ */
+StickShiftResult stickshift_camera_get(struct StickShiftEngine *engine,
+                                       struct StickShiftCameraState *out);
+
+/**
+ * Put the camera's eye at `position`. In a hook, or between engine calls; in a
+ * hook, the game's next context call pushes the moved camera first.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_camera_set_position(struct StickShiftEngine *engine,
+                                                struct StickShiftVec3 position);
+
+/**
+ * Aim the camera at `target`. As `stickshift_camera_set_position`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_camera_set_target(struct StickShiftEngine *engine,
+                                              struct StickShiftVec3 target);
+
+/**
+ * Orient the camera by the world axis `up`. As
+ * `stickshift_camera_set_position`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_camera_set_up(struct StickShiftEngine *engine,
+                                          struct StickShiftVec3 up);
+
+/**
+ * Set the projection's width over height, stored as given. A view's resize
+ * sets it too. As `stickshift_camera_set_position`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_camera_set_aspect_ratio(struct StickShiftEngine *engine,
+                                                    float aspect_ratio);
+
+/**
+ * Set the vertical field of view in radians, stored as given. As
+ * `stickshift_camera_set_position`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_camera_set_fov_y(struct StickShiftEngine *engine, float fov_y);
+
+/**
+ * Set the near and far clip distances. Planes that are not finite, not
+ * positive, or not `far > near` are ignored and the camera keeps its own, as
+ * in Rust: the call returns `STICKSHIFT_OK` either way. As
+ * `stickshift_camera_set_position`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_camera_set_clip_planes(struct StickShiftEngine *engine,
+                                                   float near_plane,
+                                                   float far_plane);
+
+/**
+ * A chase camera trailing `distance` behind and `height` above its target,
+ * aiming at the target itself, `+Y` up, with no smoothing. NULL is a no-op.
+ * Thread-safe.
+ *
+ * # Safety
+ * `out` must be NULL or valid for writes.
+ */
+void stickshift_chase_init(struct StickShiftChase *out, float distance, float height);
+
+/**
+ * Move the engine camera after a target at `target` facing `forward`, `dt`
+ * seconds after the last follow: the engine's chase controller, built from
+ * `*chase`. With a half-life the camera eases toward its pose behind and above
+ * the target; without one it snaps there. A zero `forward` counts as `-Z`. As
+ * `stickshift_camera_set_position`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `chase` NULL or valid.
+ */
+StickShiftResult stickshift_camera_follow(struct StickShiftEngine *engine,
+                                          const struct StickShiftChase *chase,
+                                          struct StickShiftVec3 target,
+                                          struct StickShiftVec3 forward,
+                                          float dt);
+
+/**
+ * The graphics settings in effect. A request is not visible here until it is
+ * applied. In a hook, or between engine calls.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid.
+ */
+StickShiftResult stickshift_graphics_get_current(struct StickShiftEngine *engine,
+                                                 struct StickShiftGraphicsSettings *out);
+
+/**
+ * Ask for new graphics settings, applied at the start of the next frame (or,
+ * before init, by init without a settings hook). Requests before then collapse
+ * to the last; one equal to the settings in effect changes nothing. In a hook
+ * (the render hook too), or between engine calls.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `settings` NULL or valid.
+ */
+StickShiftResult stickshift_graphics_request(struct StickShiftEngine *engine,
+                                             const struct StickShiftGraphicsSettings *settings);
+
+/**
+ * The settings in effect and queued, the revision (how many changes were
+ * applied; a restore is not one) and the base streaming reach. Between engine
+ * calls only: inside any hook or callback it is `STICKSHIFT_ERROR_WRONG_STATE`,
+ * since a Rust game sees only the settings in effect. Set
+ * `out->size = sizeof(StickShiftGraphicsState)`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid for its
+ * declared size.
+ */
+StickShiftResult stickshift_graphics_get_state(struct StickShiftEngine *engine,
+                                               struct StickShiftGraphicsState *out);
+
+/**
+ * The default settings: high shadows reaching the draw distance, far draw
+ * distance, half resolution. NULL is a no-op. Thread-safe.
+ *
+ * # Safety
+ * `out` must be NULL or valid for writes.
+ */
+void stickshift_graphics_settings_default(struct StickShiftGraphicsSettings *out);
+
+/**
+ * The render settings `settings` give the renderer: what an engine pushes to
+ * its context when they apply. Thread-safe.
+ *
+ * # Safety
+ * `settings` and `out` must be NULL or valid.
+ */
+StickShiftResult stickshift_graphics_settings_render_settings(const struct StickShiftGraphicsSettings *settings,
+                                                              struct StickShiftRenderSettings *out);
+
+/**
+ * `settings` as the four integer codes the engine persists them as (shadows,
+ * shadow distance, draw distance, render scale), each from 1, into `out[0..4]`.
+ * Thread-safe.
+ *
+ * # Safety
+ * `settings` must be NULL or valid; `out` NULL or valid for 4 writes.
+ */
+StickShiftResult stickshift_graphics_settings_to_codes(const struct StickShiftGraphicsSettings *settings,
+                                                       int64_t *out);
+
+/**
+ * The settings four persisted codes (`codes[0..4]`) name: an unknown or
+ * missing code (0) decodes to that setting's default. NULL is a no-op.
+ * Thread-safe.
+ *
+ * # Safety
+ * `codes` must be NULL or valid for 4 reads; `out` NULL or valid.
+ */
+void stickshift_graphics_settings_from_codes(const int64_t *codes,
+                                             struct StickShiftGraphicsSettings *out);
+
+/**
+ * The drawable size and UI scale `render_scale` gives a view of
+ * `physical_width` × `physical_height` pixels at `scale_factor` pixels per
+ * point: each side scaled and rounded in double precision (at least 1), and
+ * the pixels per point scaled too. What a hosted engine resizes its context
+ * to. Thread-safe.
+ *
+ * # Safety
+ * The outputs must be NULL or valid.
+ */
+StickShiftResult stickshift_render_scale_surface_for(StickShiftRenderScale render_scale,
+                                                     uint32_t physical_width,
+                                                     uint32_t physical_height,
+                                                     double scale_factor,
+                                                     uint32_t *out_width,
+                                                     uint32_t *out_height,
+                                                     float *out_pixels_per_point);
+
+/**
+ * The menu's label for `value` of `section` (a
+ * `STICKSHIFT_GRAPHICS_SECTION_*`): "Off", "Match Draw Distance", "Far",
+ * "50%"... A static string, or NULL for an unknown section or value.
+ * Thread-safe.
+ */
+const char *stickshift_graphics_label(StickShiftGraphicsSection section, uint32_t value);
+
+/**
+ * The Graphics menu for the settings in effect, as data: its title, then the
+ * four settings submenus and the actions (full screen, reset) after a
+ * separator, each item with its tag, label, checkmark and enabled state.
+ * `fullscreen` (0 or 1) titles the full-screen item. The menu is engine-owned
+ * and valid until the next call or the engine's destroy. Rebuild or sync the
+ * native menu when a call returns `STICKSHIFT_REQUEST_MENU_SYNC`; send a choice
+ * back as a `STICKSHIFT_HOST_MENU` event with the item's tag. Between engine
+ * calls only. Set `out->size = sizeof(StickShiftMenu)`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid for its
+ * declared size.
+ */
+StickShiftResult stickshift_engine_get_menu(struct StickShiftEngine *engine,
+                                            uint8_t fullscreen,
+                                            struct StickShiftMenu *out);
+
+/**
+ * The keyboard, mouse buttons and cursor as the game sees them: in a hook,
+ * what this hook's `EngineCtx` input shows; between engine calls, the input
+ * as the events so far left it. Set `out->size = sizeof(StickShiftInputState)`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid for its
+ * declared size.
+ */
+StickShiftResult stickshift_input_get(struct StickShiftEngine *engine,
+                                      struct StickShiftInputState *out);
 
 /**
  * Create a font from an SDF atlas texture and a glyph table (copied).
@@ -1136,6 +3273,22 @@ StickShiftResult stickshift_frame_draw_model(struct StickShiftFrame *frame,
                                              const struct StickShiftColor *tint);
 
 /**
+ * Like `stickshift_frame_draw_model`, with a local matrix and a part filter:
+ * record the parts of `model` that `draw->parts` selects, in node order, each
+ * at `draw->world × (draw->local × node)` with its base colour multiplied by
+ * `draw->tint`. Drawing a model's textured parts and its untextured parts in
+ * two calls lets other draws go between them. `STICKSHIFT_NOT_READY` until the
+ * model loads; `STICKSHIFT_ERROR_INVALID_ARGUMENT` for an unknown `parts`
+ * value.
+ *
+ * # Safety
+ * `frame` must be NULL or an open frame; `draw` NULL or valid.
+ */
+StickShiftResult stickshift_frame_draw_model_ex(struct StickShiftFrame *frame,
+                                                struct StickShiftModel model,
+                                                const struct StickShiftModelDraw *draw);
+
+/**
  * Record a 2D overlay quad, composited over the 3D scene in record order.
  *
  * # Safety
@@ -1238,6 +3391,88 @@ struct StickShiftMat4 stickshift_mat4_perspective(float fov_y,
 struct StickShiftQuat stickshift_quat_from_axis_angle(struct StickShiftVec3 axis, float angle);
 
 /**
+ * `a · b`: glam's `Vec3::dot`, `(a.x * b.x + a.y * b.y) + a.z * b.z` with
+ * no fused multiply-add.
+ */
+float stickshift_vec3_dot(struct StickShiftVec3 a, struct StickShiftVec3 b);
+
+/**
+ * `a × b` (right-handed): glam's `Vec3::cross`.
+ */
+struct StickShiftVec3 stickshift_vec3_cross(struct StickShiftVec3 a, struct StickShiftVec3 b);
+
+/**
+ * The length of `v`: glam's `Vec3::length`, the square root of `v · v`.
+ */
+float stickshift_vec3_length(struct StickShiftVec3 v);
+
+/**
+ * `v` times `1 / length(v)`, or `{0, 0, 0}` when that reciprocal is not a
+ * finite positive number (a zero, NaN or infinite `v`, or one so small or
+ * so large that its length underflows or overflows): glam's
+ * `Vec3::normalize_or_zero`.
+ */
+struct StickShiftVec3 stickshift_vec3_normalize_or_zero(struct StickShiftVec3 v);
+
+/**
+ * `a * (1 - t) + b * t`, each multiply and add rounded on its own (no fused
+ * multiply-add): glam's `Vec3::lerp`. `t` is not clamped. This is not
+ * `a + (b - a) * t`, whose last bit differs on many inputs.
+ */
+struct StickShiftVec3 stickshift_vec3_lerp(struct StickShiftVec3 a,
+                                           struct StickShiftVec3 b,
+                                           float t);
+
+/**
+ * A rotation of `angle` radians about +X: glam's `Quat::from_rotation_x`.
+ */
+struct StickShiftQuat stickshift_quat_from_rotation_x(float angle);
+
+/**
+ * A rotation of `angle` radians about +Y: glam's `Quat::from_rotation_y`.
+ */
+struct StickShiftQuat stickshift_quat_from_rotation_y(float angle);
+
+/**
+ * A rotation of `angle` radians about +Z: glam's `Quat::from_rotation_z`.
+ */
+struct StickShiftQuat stickshift_quat_from_rotation_z(float angle);
+
+/**
+ * The Hamilton product `a × b`: the rotation that applies `b` first, then
+ * `a`. glam's `Quat * Quat`; neither input is normalised.
+ */
+struct StickShiftQuat stickshift_quat_mul(struct StickShiftQuat a, struct StickShiftQuat b);
+
+/**
+ * `v` rotated by `q`: glam's `Quat * Vec3`. `q` should be a unit quaternion;
+ * it is not normalised here.
+ */
+struct StickShiftVec3 stickshift_quat_mul_vec3(struct StickShiftQuat q, struct StickShiftVec3 v);
+
+/**
+ * The point `p` transformed by `m`, translation included and with no
+ * perspective divide: glam's `Mat4::transform_point3`.
+ */
+struct StickShiftVec3 stickshift_mat4_transform_point3(struct StickShiftMat4 m,
+                                                       struct StickShiftVec3 p);
+
+/**
+ * The direction `v` transformed by `m`, without translation: glam's
+ * `Mat4::transform_vector3`.
+ */
+struct StickShiftVec3 stickshift_mat4_transform_vector3(struct StickShiftMat4 m,
+                                                        struct StickShiftVec3 v);
+
+/**
+ * The matrix of `t`, translation × rotation × scale:
+ * `stickshift_math::Transform::to_matrix`, the matrix the engine draws a
+ * `TransformComponent` with. The same bits as `stickshift_mat4_from_trs` with
+ * `t`'s fields.
+ */
+struct StickShiftMat4 stickshift_transform_to_mat4(struct StickShiftTransform t);
+
+/**
  * Start loading a `.gltf` or `.glb` file. Returns at once with a pending
  * model; its `RESOURCE_READY` or `RESOURCE_FAILED` event follows.
  *
@@ -1287,6 +3522,24 @@ StickShiftResult stickshift_model_get_bounds(struct StickShiftContext *ctx,
                                              struct StickShiftVec3 *max);
 
 /**
+ * **Wait** until `model` is ready (`STICKSHIFT_OK`) or failed (its failure
+ * code, with the reason in `stickshift_last_error_message`), doing the context's
+ * model housekeeping (finished parses and their GPU upload) and delivering the
+ * events it raises, as `stickshift_poll_events` would. After `timeout_ns`
+ * nanoseconds without either, `STICKSHIFT_ERROR_TIMEOUT`, and the model stays
+ * pending.
+ *
+ * For a game whose init loads synchronously, as a Rust game's
+ * `AssetCache::load` does.
+ *
+ * # Safety
+ * `ctx` must be NULL or a live context.
+ */
+StickShiftResult stickshift_model_wait(struct StickShiftContext *ctx,
+                                       struct StickShiftModel model,
+                                       uint64_t timeout_ns);
+
+/**
  * Upload a mesh. `READY` on return in v0.1.
  *
  * # Safety
@@ -1327,6 +3580,266 @@ StickShiftResult stickshift_texture_create(struct StickShiftContext *ctx,
  */
 StickShiftResult stickshift_texture_destroy(struct StickShiftContext *ctx,
                                             struct StickShiftTexture texture);
+
+/**
+ * The default streaming configuration. Thread-safe; NULL does nothing.
+ *
+ * # Safety
+ * `out` must be NULL or valid.
+ */
+void stickshift_streaming_config_default(struct StickShiftStreamingConfig *out);
+
+/**
+ * The scene's streaming configuration, a copy. After init, the engine has
+ * scaled `spawn_ahead` for the draw distance. Not in a spawn callback.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid.
+ */
+StickShiftResult stickshift_scene_get_config(struct StickShiftEngine *engine,
+                                             struct StickShiftStreamingConfig *out);
+
+/**
+ * Replace the streaming configuration. Once streaming has started, changing
+ * `axis` or `spawn_interval` is `STICKSHIFT_ERROR_WRONG_STATE` and changes
+ * nothing; other values are taken as given. Not in the render hook or a
+ * spawn callback.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `config` NULL or valid.
+ */
+StickShiftResult stickshift_scene_set_config(struct StickShiftEngine *engine,
+                                             const struct StickShiftStreamingConfig *config);
+
+/**
+ * One streaming pass for `focus`: first the streamed entities fallen behind
+ * are despawned, in the order they were tracked, then `spawn` is called once
+ * per new slot, in slot order, from inside the pass. `spawn` may be NULL (the
+ * frontier still advances). A `focus` that is not finite is
+ * `STICKSHIFT_ERROR_INVALID_ARGUMENT`. Not in the render hook or a spawn
+ * callback.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `spawn` NULL or a function that
+ * may be called with `user` during this call.
+ */
+StickShiftResult stickshift_scene_stream(struct StickShiftEngine *engine,
+                                         struct StickShiftVec3 focus,
+                                         StickShiftSpawnFn spawn,
+                                         void *user);
+
+/**
+ * Track `entity` for despawning behind, at the current slot's distance when
+ * it has no transform: `SpawnCtx::spawned`. Only in a spawn callback; the
+ * null entity is `STICKSHIFT_ERROR_INVALID_ARGUMENT`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_stream_track(struct StickShiftEngine *engine,
+                                         struct StickShiftEntity entity);
+
+/**
+ * Rebase the floating origin if `focus` has drifted past the threshold:
+ * every transform component is shifted by the same offset, written to
+ * `*out_offset` (zero when no rebase was due). Anything the game keeps in
+ * world coordinates outside the world (the camera, its own state) is the
+ * game's to shift. A `focus` that is not finite is
+ * `STICKSHIFT_ERROR_INVALID_ARGUMENT`. Not in the render hook or a spawn
+ * callback.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out_offset` NULL or valid.
+ */
+StickShiftResult stickshift_scene_maybe_rebase(struct StickShiftEngine *engine,
+                                               struct StickShiftVec3 focus,
+                                               struct StickShiftVec3 *out_offset);
+
+/**
+ * How many streamed entities the scene tracks for despawning behind. Not in a
+ * spawn callback.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid.
+ */
+StickShiftResult stickshift_scene_streamed_count(struct StickShiftEngine *engine, uint32_t *out);
+
+/**
+ * Register a game component, or get the one already registered under the
+ * same name with the same size and alignment. In any scope; registering
+ * touches no world state. See `StickShiftComponentDesc`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `desc` NULL or valid, with `name`
+ * NULL or NUL-terminated; `out` NULL or valid.
+ */
+StickShiftResult stickshift_component_register(struct StickShiftEngine *engine,
+                                               const struct StickShiftComponentDesc *desc,
+                                               struct StickShiftComponent *out);
+
+/**
+ * What a component is: its name (library-owned, valid for the engine's life),
+ * size and alignment. Engine components included. In any scope.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid.
+ */
+StickShiftResult stickshift_component_get_desc(struct StickShiftEngine *engine,
+                                               struct StickShiftComponent component,
+                                               struct StickShiftComponentDesc *out);
+
+/**
+ * Spawn one entity with the whole bundle (`count` values, in any order) in
+ * one hecs spawn: it lands in the archetype a Rust tuple of the same set of
+ * components does. Not in the render hook. In a spawn callback, it spawns
+ * into the stream pass's world.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `values` NULL or valid for `count`
+ * values whose `data` is valid for `size` bytes; `out` NULL or valid.
+ */
+StickShiftResult stickshift_world_spawn(struct StickShiftEngine *engine,
+                                        const struct StickShiftComponentValue *values,
+                                        uint32_t count,
+                                        struct StickShiftEntity *out);
+
+/**
+ * Despawn an entity: its id is freed with a bumped generation, and its row
+ * is swap-removed. A gone entity is `STICKSHIFT_OK` with `*out_existed = 0`
+ * (`out_existed` is optional). Not in the render hook.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out_existed` NULL or valid.
+ */
+StickShiftResult stickshift_world_despawn(struct StickShiftEngine *engine,
+                                          struct StickShiftEntity entity,
+                                          uint8_t *out_existed);
+
+/**
+ * Whether the entity is alive.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid.
+ */
+StickShiftResult stickshift_world_contains(struct StickShiftEngine *engine,
+                                           struct StickShiftEntity entity,
+                                           uint8_t *out);
+
+/**
+ * Whether the entity has the component; 0 for a gone entity.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid.
+ */
+StickShiftResult stickshift_world_has(struct StickShiftEngine *engine,
+                                      struct StickShiftEntity entity,
+                                      struct StickShiftComponent component,
+                                      uint8_t *out);
+
+/**
+ * Copy a component's value into `out` (`size` bytes, the registered size).
+ * `STICKSHIFT_ABSENT` if the entity is gone or lacks it; then `out` is
+ * unchanged. A tag has no value (`STICKSHIFT_ERROR_INVALID_ARGUMENT`).
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid for `size`
+ * bytes.
+ */
+StickShiftResult stickshift_world_get(struct StickShiftEngine *engine,
+                                      struct StickShiftEntity entity,
+                                      struct StickShiftComponent component,
+                                      void *out,
+                                      uint32_t size);
+
+/**
+ * Overwrite a component's value in place (`size` bytes, the registered
+ * size); the entity does not move. `STICKSHIFT_ABSENT` if the entity is gone
+ * or lacks it. Not in the render hook.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `data` NULL or valid for `size`
+ * bytes.
+ */
+StickShiftResult stickshift_world_set(struct StickShiftEngine *engine,
+                                      struct StickShiftEntity entity,
+                                      struct StickShiftComponent component,
+                                      const void *data,
+                                      uint32_t size);
+
+/**
+ * Add the bundle's components to an entity, replacing values it already has,
+ * in one hecs insert: unless its set of components is unchanged, the entity
+ * moves to the end of its new archetype, as in Rust. `STICKSHIFT_ABSENT` for
+ * a gone entity. Not in the render hook.
+ *
+ * # Safety
+ * As `stickshift_world_spawn`.
+ */
+StickShiftResult stickshift_world_insert(struct StickShiftEngine *engine,
+                                         struct StickShiftEntity entity,
+                                         const struct StickShiftComponentValue *values,
+                                         uint32_t count);
+
+/**
+ * Remove one component from an entity (hecs `remove_one`), which moves it as
+ * in Rust. `STICKSHIFT_ABSENT` if the entity is gone or lacks it. Not in the
+ * render hook.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_world_remove(struct StickShiftEngine *engine,
+                                         struct StickShiftEntity entity,
+                                         struct StickShiftComponent component);
+
+/**
+ * The number of live entities.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `out` NULL or valid.
+ */
+StickShiftResult stickshift_world_len(struct StickShiftEngine *engine, uint32_t *out);
+
+/**
+ * Snapshot the entities matching `terms` in the world's query order
+ * (archetypes in creation order, then rows in order), with their values
+ * copied into engine-owned rows. Nothing stays borrowed, so the caller may
+ * change the world while walking them. At least one term must not be
+ * `STICKSHIFT_QUERY_WITHOUT`. `STICKSHIFT_ERROR_LIMIT_EXCEEDED` past
+ * `STICKSHIFT_MAX_LIVE_QUERIES` live snapshots. Set
+ * `out->size = sizeof(StickShiftQueryRows)`.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `terms` NULL or valid for
+ * `term_count` terms; `out` NULL or valid for its declared size.
+ */
+StickShiftResult stickshift_world_query(struct StickShiftEngine *engine,
+                                        const struct StickShiftQueryTerm *terms,
+                                        uint32_t term_count,
+                                        struct StickShiftQueryRows *out);
+
+/**
+ * Count the entities `stickshift_world_query` would snapshot, without
+ * copying anything.
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine; `terms` NULL or valid for
+ * `term_count` terms; `out` NULL or valid.
+ */
+StickShiftResult stickshift_world_query_count(struct StickShiftEngine *engine,
+                                              const struct StickShiftQueryTerm *terms,
+                                              uint32_t term_count,
+                                              uint32_t *out);
+
+/**
+ * Release a query snapshot; its rows are invalid after this. In any scope.
+ * `STICKSHIFT_ERROR_INVALID_ARGUMENT` for a token that is not live (already
+ * released, or released when its scope ended).
+ *
+ * # Safety
+ * `engine` must be NULL or a live engine.
+ */
+StickShiftResult stickshift_world_query_release(struct StickShiftEngine *engine, uint64_t token);
 
 #ifdef __cplusplus
 }  // extern "C"

@@ -29,7 +29,7 @@ The engine owns the loop. A game is any type implementing
 
 [`EngineCtx`](../crates/stickshift-core/src/context.rs#L89) is the only channel into the engine. It
 is built fresh by the driver for each hook call and dropped immediately after, so a game cannot
-stash it across frames. Its whole surface is: the [`Scene`](../crates/stickshift-scene/src/lib.rs#L120)
+stash it across frames. Its whole surface is: the [`Scene`](../crates/stickshift-scene/src/lib.rs#L144)
 (`scene`/`scene_mut`), the ECS world (`world`/`world_mut`, delegating to the scene), the render
 seam (`renderer`), the [`Camera`](../crates/stickshift-camera/src/camera.rs) (`camera`/`camera_mut`),
 the read-only `InputState` (`input`), the [`Audio`](../crates/stickshift-audio/src/mixer.rs) layer
@@ -49,7 +49,7 @@ the collision test, the difficulty ramp, and the game-side ECS components
 
 **Backend injection.** `stickshift-core` must not depend on `metal`, so it does not construct the
 renderer. The *game binary* does: `main.rs` calls
-[`run_with_backend`](../crates/stickshift-core/src/app.rs#L154) with a factory closure that builds a
+[`run_with_backend`](../crates/stickshift-core/src/app.rs#L158) with a factory closure that builds a
 `stickshift_render::MetalRenderer` and boxes it as `dyn Renderer`
 ([main.rs:144](../games/playable-demo/src/main.rs#L144)). `metal` therefore reaches the process
 through `stickshift-render` and the game binary only, never through `stickshift-core` (ARCHITECTURE §2).
@@ -100,7 +100,7 @@ same frames, on any machine, with or without a GPU.
 ## 3. Scene streaming and the floating-origin rebase
 
 The world is endless, so the demo never builds it — it streams it. The engine half is
-[`Scene::stream`](../crates/stickshift-scene/src/lib.rs#L279): the *game* supplies a **focus point**
+[`Scene::stream`](../crates/stickshift-scene/src/lib.rs#L342): the *game* supplies a **focus point**
 and a **spawn callback**; the scene owns the bookkeeping (which slots ahead are filled, which
 streamed entities have fallen behind).
 
@@ -109,8 +109,8 @@ The demo's focus is the player's position
 [`spawn_slot`](../games/playable-demo/src/game.rs#L370), called from `update` at
 [game.rs:724](../games/playable-demo/src/game.rs#L724). Per slot it spawns a road tile, an
 obstacle on a cadence, two roadside buildings and two guardrail segments — reporting each via
-[`SpawnCtx::spawned`](../crates/stickshift-scene/src/lib.rs#L429) so the scene despawns it once it
-falls behind ([`Scene::despawn`](../crates/stickshift-scene/src/lib.rs#L230)).
+[`SpawnCtx::spawned`](../crates/stickshift-scene/src/lib.rs#L497) so the scene despawns it once it
+falls behind ([`Scene::despawn`](../crates/stickshift-scene/src/lib.rs#L293)).
 
 The loop creates the scene with the **engine-default** `StreamingConfig`
 ([stickshift-scene:88](../crates/stickshift-scene/src/lib.rs#L88)) — axis `-Z`, `spawn_interval` 6,
@@ -133,7 +133,7 @@ the interval is.
 
 ### The rebase, and what the game must carry through it
 
-[`Scene::maybe_rebase`](../crates/stickshift-scene/src/lib.rs#L368) keeps world coordinates out of
+[`Scene::maybe_rebase`](../crates/stickshift-scene/src/lib.rs#L436) keeps world coordinates out of
 float-precision trouble: once the focus is more than `rebase_threshold` from the origin, **every**
 `TransformComponent` is shifted by one offset back toward the origin, and the offset actually
 applied is returned. Relative positions are preserved exactly, so gameplay is unaffected. A game
@@ -452,11 +452,11 @@ Five crates carry a self-scanning **guard test** that embeds the crate's own sou
 
 | Guard test | Crate |
 |---|---|
-| `boundary_tests::no_game_specific_symbols` ([lib.rs:122](../crates/stickshift-core/src/lib.rs#L122)) | `stickshift-core` |
-| `tests::no_game_specific_symbols` ([lib.rs:719](../crates/stickshift-scene/src/lib.rs#L719)) | `stickshift-scene` |
+| `boundary_tests::no_game_specific_symbols` ([lib.rs:140](../crates/stickshift-core/src/lib.rs#L140)) | `stickshift-core` |
+| `tests::no_game_specific_symbols` ([lib.rs:863](../crates/stickshift-scene/src/lib.rs#L863)) | `stickshift-scene` |
 | `guard_tests::no_game_specific_symbols` ([lib.rs:74](../crates/stickshift-assets/src/lib.rs#L74)) | `stickshift-assets` |
 | `guard_tests::no_game_specific_symbols` ([lib.rs](../crates/stickshift-audio/src/lib.rs)) | `stickshift-audio` |
-| `tests::test_no_game_specific_symbols` ([lib.rs:648](../crates/stickshift-ecs/src/lib.rs#L648)) | `stickshift-ecs` |
+| `tests::test_no_game_specific_symbols` ([lib.rs:654](../crates/stickshift-ecs/src/lib.rs#L654)) | `stickshift-ecs` |
 
 The forbidden words are assembled from ASCII byte codes rather than written as literals, so each
 test's own body contains no occurrence of them and can scan every file in its crate — itself
