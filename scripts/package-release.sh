@@ -8,8 +8,8 @@
 #   scripts/package-release.sh <version> <outdir>
 #
 # <version> is the workspace version without the leading `v` (e.g. 0.1.0-alpha.2).
-# Expects an already-built release binary (`cargo build --release -p playable-demo
-# --locked`) at $STICKSHIFT_DEMO_BIN (default: target/release/playable-demo) and the C
+# Expects an already-built release binary (`cargo build --release -p offramp
+# --locked`) at $STICKSHIFT_DEMO_BIN (default: target/release/offramp) and the C
 # library (`cargo build --release -p stickshift-capi --locked`) in $STICKSHIFT_LIB_DIR (default:
 # target/release), both built with the Cargo features in $STICKSHIFT_FEATURES (the release
 # workflow sets `precompiled-shaders`). Produces
@@ -45,7 +45,7 @@ fi
 version=$1
 outdir=$2
 repo=$(cd "$(dirname "$0")/.." && pwd)
-bin=${STICKSHIFT_DEMO_BIN:-$repo/target/release/playable-demo}
+bin=${STICKSHIFT_DEMO_BIN:-$repo/target/release/offramp}
 libdir=${STICKSHIFT_LIB_DIR:-$repo/target/release}
 name="stickshift-engine-${version}-aarch64-apple-darwin"
 tarball="${name}.tar.gz"
@@ -57,7 +57,7 @@ if [[ "$version" != "$ws_version" ]]; then
     exit 1
 fi
 
-[[ -x "$bin" ]] || { echo "error: no release binary at $bin (cargo build --release -p playable-demo --locked)" >&2; exit 1; }
+[[ -x "$bin" ]] || { echo "error: no release binary at $bin (cargo build --release -p offramp --locked)" >&2; exit 1; }
 
 for artefact in "$bin" "$libdir/libstickshift.a" "$libdir/libstickshift.dylib"; do
     [[ -f "$artefact" ]] || { echo "error: $artefact is missing (cargo build --release -p stickshift-capi --locked)" >&2; exit 1; }

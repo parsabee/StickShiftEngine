@@ -1,5 +1,5 @@
 [package]
-name = "playable-demo"
+name = "offramp"
 description = "Playable Demo — Stick Shift Engine's reference example game (an endless runner). Also hosts the headless smoke oracle."
 version.workspace = true
 edition.workspace = true
@@ -11,7 +11,7 @@ homepage.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "playable-demo"
+name = "offramp"
 path = "src/main.rs"
 
 # `image` is a **dev-dependency only** (the `gen_asphalt` example uses it to bake

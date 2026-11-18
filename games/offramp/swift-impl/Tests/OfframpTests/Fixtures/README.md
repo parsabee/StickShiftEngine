@@ -28,7 +28,7 @@ below. The last column names the suites that read each file.
 `probe_stdout.txt` is the probe's standard output, so it also holds the game's own "GAME OVER
 ..." and "replay ..." lines, where the game printed them.
 
-The first ten files come from `playable-demo-goldens`
+The first ten files come from `offramp-goldens`
 ([`games/offramp/rust-impl/goldens`](../../../../rust-impl/goldens)), a workspace crate that
 compiles the demo's modules unchanged, except for `game.rs`: its build script compiles a copy
 with accessors appended, through which the probe reads and sets `CarRunner`'s private state
@@ -38,26 +38,26 @@ demo, regenerate them all:
 
 ```sh
 F=games/offramp/swift-impl/Tests/OfframpTests/Fixtures
-cargo run -q --release -p playable-demo-goldens -- $F
-cargo run -q --release -p playable-demo --example trace -- smoke > $F/trace_smoke.jsonl
-cargo run -q --release -p playable-demo --example trace -- autopilot > $F/trace_autopilot.jsonl
-cargo run -q --release -p playable-demo --example trace -- long --summary > $F/trace_long_summary.jsonl
+cargo run -q --release -p offramp-goldens -- $F
+cargo run -q --release -p offramp --example trace -- smoke > $F/trace_smoke.jsonl
+cargo run -q --release -p offramp --example trace -- autopilot > $F/trace_autopilot.jsonl
+cargo run -q --release -p offramp --example trace -- long --summary > $F/trace_long_summary.jsonl
 ```
 
 To check that the committed files are still what the Rust demo prints, write them somewhere else
 and compare. This exits 1 if any file differs, after `cmp` names each:
 
 ```sh
-cargo run -q --release -p playable-demo-goldens -- /tmp/goldens && ok=1 &&
+cargo run -q --release -p offramp-goldens -- /tmp/goldens && ok=1 &&
 for f in /tmp/goldens/*; do cmp "$f" "$F/$(basename "$f")" || ok=0; done &&
 for mode in smoke autopilot; do
-    cargo run -q --release -p playable-demo --example trace -- $mode | cmp - $F/trace_$mode.jsonl || ok=0
+    cargo run -q --release -p offramp --example trace -- $mode | cmp - $F/trace_$mode.jsonl || ok=0
 done &&
-{ cargo run -q --release -p playable-demo --example trace -- long --summary \
+{ cargo run -q --release -p offramp --example trace -- long --summary \
     | cmp - $F/trace_long_summary.jsonl || ok=0; } && [ $ok = 1 ]
 ```
 
-`playable-demo-goldens golden <dir>` and `playable-demo-goldens probe <dir>` run one half each;
+`offramp-goldens golden <dir>` and `offramp-goldens probe <dir>` run one half each;
 the probe's report goes to stdout.
 
 A trace line is one JSON object per frame: `frame`, `tap` (the key pressed for it, or `null`),

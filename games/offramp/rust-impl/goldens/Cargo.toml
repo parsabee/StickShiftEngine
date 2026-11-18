@@ -1,5 +1,5 @@
 [package]
-name = "playable-demo-goldens"
+name = "offramp-goldens"
 description = "Writes the golden fixtures Offramp (games/offramp) is tested against, from the playable demo's own modules."
 version.workspace = true
 edition.workspace = true
@@ -13,7 +13,7 @@ publish.workspace = true
 # A tool, not a library: nothing to test or document. Its output is checked by
 # comparing it with the committed fixtures (see the README).
 [[bin]]
-name = "playable-demo-goldens"
+name = "offramp-goldens"
 path = "src/main.rs"
 test = false
 doc = false

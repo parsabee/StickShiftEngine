@@ -17,7 +17,7 @@ import simd
 /// The comparison with the Rust demo's own `frame_0000.png`, pixel for pixel
 /// (same GPU, same shader build), runs only when `OFFRAMP_RUST_FRAMES` names a
 /// directory written by
-/// `cargo run --release -p playable-demo --example record_demo -- <dir>`, and is
+/// `cargo run --release -p offramp --example record_demo -- <dir>`, and is
 /// reported as skipped otherwise; `scripts/offramp-parity.sh` compares all 80
 /// frames either way. `OFFRAMP_SAVE_FRAMES` names a directory to write the Swift
 /// frame to, for a look.

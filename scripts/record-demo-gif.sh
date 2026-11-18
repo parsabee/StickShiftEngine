@@ -15,7 +15,7 @@ out="${1:-docs/images/demo.gif}"
 frames="target/record-demo"
 
 rm -rf "$frames"
-cargo run --quiet --release -p playable-demo --example record_demo -- "$frames"
+cargo run --quiet --release -p offramp --example record_demo -- "$frames"
 # 600 px wide at 20 frames per second (the recorder keeps every third 60 Hz frame).
 swift scripts/frames-to-gif.swift "$out" 600 0.05 "$frames"/frame_*.png
 echo "wrote $out ($(stat -f %z "$out") bytes)"

@@ -2,7 +2,7 @@
 //
 // This software is released under the Apache-2.0 License.
 
-//! [`CarRunner`] — the playable-demo [`Game`] implementation.
+//! [`CarRunner`] — the offramp [`Game`] implementation.
 //!
 //! This is the seam the whole demo is built on: [`CarRunner`] implements
 //! [`stickshift_core::Game`] and is driven by the engine loop through
@@ -35,7 +35,7 @@ use crate::config;
 use crate::rng::{building_for_slot, hash_u64, variant_for_slot, Rng};
 use crate::scenery::{guardrail_geometry, terrain_geometry};
 
-/// The playable-demo game state.
+/// The offramp game state.
 ///
 /// The scene (ECS world + streaming) is owned by the engine loop
 /// and reached through [`EngineCtx::scene_mut`]. This struct holds only the
@@ -1376,7 +1376,7 @@ mod tests {
     /// `#[ignore]`d because it needs sound hardware and makes noise. Run it with:
     ///
     /// ```text
-    /// cargo test -p playable-demo -- --ignored the_committed_sounds_decode
+    /// cargo test -p offramp -- --ignored the_committed_sounds_decode
     /// ```
     ///
     /// It plays at -60 dB, so it verifies the path without being audible.

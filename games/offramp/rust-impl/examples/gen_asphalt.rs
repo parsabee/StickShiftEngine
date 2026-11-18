@@ -2,7 +2,7 @@
 //
 // This software is released under the Apache-2.0 License.
 
-//! One-shot generator for the committed **asphalt road** asset the playable-demo
+//! One-shot generator for the committed **asphalt road** asset the offramp
 //! imports.
 //!
 //! The asphalt is a real, free **CC0** photographic texture — Poly Haven
@@ -46,10 +46,10 @@
 //!
 //! Run:
 //! ```sh
-//! cargo run -p playable-demo --example gen_asphalt
+//! cargo run -p offramp --example gen_asphalt
 //! ```
 //! (writes `games/offramp/shared/assets/road.gltf`), or pass an output directory:
-//! `cargo run -p playable-demo --example gen_asphalt -- <out_dir>`.
+//! `cargo run -p offramp --example gen_asphalt -- <out_dir>`.
 
 use std::fmt::Write as _;
 use std::path::Path;

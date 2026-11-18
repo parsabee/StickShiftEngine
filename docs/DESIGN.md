@@ -56,7 +56,7 @@ graph TD
     class SEAM seam;
 ```
 
-The `playable-demo` **binary** is the only thing that both implements `Game` *and* constructs the
+The `offramp` **binary** is the only thing that both implements `Game` *and* constructs the
 Metal backend — it injects the backend into `stickshift-core` through a factory, so `stickshift-core` itself
 never depends on `metal`.
 
@@ -65,7 +65,7 @@ never depends on `metal`.
 ## 2. Crate dependency graph
 
 Acyclic, leaf-first (`stickshift-math` at the bottom). `metal` is reachable **only** through
-`stickshift-render` and the `playable-demo` binary — the CI firewall asserts it never enters `stickshift-core`
+`stickshift-render` and the `offramp` binary — the CI firewall asserts it never enters `stickshift-core`
 or `stickshift-render-api`.
 
 ```mermaid

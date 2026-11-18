@@ -43,7 +43,7 @@ The command line:
 | Option | What it does |
 |---|---|
 | (none) | Play in a window |
-| `--smoke` | The headless smoke oracle. It prints exactly what `cargo run -p playable-demo -- --smoke` prints, and exits 0 |
+| `--smoke` | The headless smoke oracle. It prints exactly what `cargo run -p offramp -- --smoke` prints, and exits 0 |
 | `--print-assets-dir` | Print the asset directory in use and exit |
 | `--record <DIR> [--frames N]` | The Rust `record_demo` example: the autopilot run, offscreen on Metal at 1280×720, written as `frame_0000.png`, `frame_0001.png`, ... (N frames, default 80: every third frame after a 150-frame warm-up) |
 | `--trace <smoke\|autopilot\|long> [--summary]` | Print one JSON line of game state per frame of a headless run ([below](#how-parity-is-checked)) |
@@ -167,7 +167,7 @@ Three layers check that this holds:
    - the camera and its view-projection on every frame;
    - the HUD's quads and the model fits.
 2. **The trace.** `offramp --trace <mode>` and the Rust twin
-   `cargo run -p playable-demo --example trace -- <mode>` print the same JSON line per frame. A
+   `cargo run -p offramp --example trace -- <mode>` print the same JSON line per frame. A
    line holds:
    - the state, the player, the speed, the scores and the fade;
    - the camera, and hashes of its view-projection and of the frame's HUD quads;
@@ -238,7 +238,7 @@ directory. Without it, those two tests are reported as skipped; `scripts/offramp
 compares all 80 frames either way.
 
 ```sh
-cargo run --release -p playable-demo --example record_demo -- /tmp/rust-frames
+cargo run --release -p offramp --example record_demo -- /tmp/rust-frames
 OFFRAMP_RUST_FRAMES=/tmp/rust-frames ./scripts/test-offramp.sh --filter 'RecorderTests|RenderMetalTests'
 ```
 
@@ -258,10 +258,10 @@ read it):
 
 ```sh
 F=games/offramp/swift-impl/Tests/OfframpTests/Fixtures
-cargo run -q --release -p playable-demo-goldens -- $F
-cargo run -q --release -p playable-demo --example trace -- smoke > $F/trace_smoke.jsonl
-cargo run -q --release -p playable-demo --example trace -- autopilot > $F/trace_autopilot.jsonl
-cargo run -q --release -p playable-demo --example trace -- long --summary > $F/trace_long_summary.jsonl
+cargo run -q --release -p offramp-goldens -- $F
+cargo run -q --release -p offramp --example trace -- smoke > $F/trace_smoke.jsonl
+cargo run -q --release -p offramp --example trace -- autopilot > $F/trace_autopilot.jsonl
+cargo run -q --release -p offramp --example trace -- long --summary > $F/trace_long_summary.jsonl
 ```
 
 The Rust long run keeps every draw in its `NullRenderer`, about 1.4 GB.
@@ -270,7 +270,7 @@ The Rust long run keeps every draw in its `NullRenderer`, about 1.4 GB.
 the tests compute to `<dir>`, creating it: `swift_smoke.jsonl` and `swift_autopilot.jsonl`,
 every line, and `swift_long_summary.jsonl`, the long run's summary (every 600th frame, the state
 changes, the rebases and the hash of every line). To diff a whole long run line by line,
-compare `offramp --trace long` with `cargo run --release -p playable-demo --example trace --
+compare `offramp --trace long` with `cargo run --release -p offramp --example trace --
 long`, as `scripts/offramp-parity.sh` does.
 
 `WindowTests` checks the window's title, size and engine options, and runs the game in the

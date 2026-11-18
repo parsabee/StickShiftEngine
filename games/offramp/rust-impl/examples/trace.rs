@@ -17,8 +17,8 @@
 //!   game is in `GameOver`: crashes, replays and four floating-origin rebases.
 //!
 //! ```sh
-//! cargo run -p playable-demo --example trace -- smoke
-//! cargo run --release -p playable-demo --example trace -- long --summary
+//! cargo run -p offramp --example trace -- smoke
+//! cargo run --release -p offramp --example trace -- long --summary
 //! ```
 //!
 //! Each line holds what the game's crate-visible API shows: the state, the

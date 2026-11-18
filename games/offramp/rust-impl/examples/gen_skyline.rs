@@ -21,10 +21,10 @@
 //!
 //! Run:
 //! ```sh
-//! cargo run -p playable-demo --example gen_skyline
+//! cargo run -p offramp --example gen_skyline
 //! ```
 //! (writes `games/offramp/shared/assets/skyline.gltf`), or pass an output
-//! directory: `cargo run -p playable-demo --example gen_skyline -- <out_dir>`.
+//! directory: `cargo run -p offramp --example gen_skyline -- <out_dir>`.
 
 use std::fmt::Write as _;
 use std::path::Path;

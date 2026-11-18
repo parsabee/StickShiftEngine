@@ -98,7 +98,7 @@ struct ArgumentsTests {
 
     @Test func aSingleDashIsAClusterOfShortFlags() {
         // clap reads `-hx` as `-h -x` and acts on `-h` as soon as it reaches it
-        // (checked against `playable-demo` and a clap binary declaring the same
+        // (checked against `offramp` and a clap binary declaring the same
         // options)...
         #expect(parse("-hh") == .success(.help))
         #expect(parse("-hx") == .success(.help))
@@ -131,7 +131,7 @@ struct ArgumentsTests {
     }
 
     @Test func aRefusalPrintsInClapsShape() {
-        // The Rust binary's (`playable-demo --bogus`), with the name changed.
+        // The Rust binary's (`offramp --bogus`), with the name changed.
         #expect(
             UsageError(message: "unexpected argument '--bogus' found").description
                 == "error: unexpected argument '--bogus' found\n\nUsage: offramp [OPTIONS]\n\nFor more information, try '--help'.\n"

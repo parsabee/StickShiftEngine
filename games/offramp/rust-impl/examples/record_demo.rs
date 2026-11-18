@@ -13,7 +13,7 @@
 //! Traffic is seeded, so the same command records the same frames.
 //!
 //! ```sh
-//! cargo run --release -p playable-demo --example record_demo -- <out-dir>
+//! cargo run --release -p offramp --example record_demo -- <out-dir>
 //! ```
 //!
 //! `scripts/record-demo-gif.sh` runs this and assembles `docs/images/demo.gif`.

@@ -195,7 +195,7 @@ const OVERLAY_REFERENCE_HASH: u64 = 0x2b3859048070b2b6;
 /// Committed baseline hash of the **sun-disc reference**'s pixels (FNV-1a 64-bit).
 ///
 /// Guards the sun disc and its glow, which nothing else covers: both other
-/// references deliberately point away from the sun, and the `playable-demo` camera
+/// references deliberately point away from the sun, and the `offramp` camera
 /// cannot frame it. See [`render_reference_sun`] for why an empty frame is the
 /// right isolation here.
 ///
@@ -505,7 +505,7 @@ fn reference_overlay_matches_committed_hash() {
 // ~75 degrees off the default sun, well outside the 18-degree glow, so the disc
 // and glow contribute *exactly* zero to their pixels. That is deliberate for
 // them — it is what makes `OVERLAY_REFERENCE_HASH` a usable canary — but it left
-// the disc itself with no golden coverage at all, and the `playable-demo` camera
+// the disc itself with no golden coverage at all, and the `offramp` camera
 // cannot show it either (it pitches 20.6 degrees down, so its top of frame sits
 // 1.9 degrees above the horizon). This third reference exists solely to put the
 // sun on screen, so the disc, the glow falloff and the azimuth convention are
@@ -519,7 +519,7 @@ fn reference_overlay_matches_committed_hash() {
 /// north (`-Z`), so this frame also witnesses that convention: were the bearing
 /// ever redefined, the sun would leave the frame and this hash would move.
 ///
-/// The colours match the `playable-demo`'s summer-afternoon sun, so this
+/// The colours match the `offramp`'s summer-afternoon sun, so this
 /// reference guards the look the game actually asks for.
 fn reference_sun_sky() -> stickshift_render_api::SunSky {
     stickshift_render_api::SunSky {

@@ -11,7 +11,7 @@
 #
 # - Traces (no GPU): the `--smoke` output and exit status of both binaries, then
 #   the per-frame state trace of each headless run (smoke, autopilot, long) from
-#   `playable-demo`'s `trace` example and `offramp --trace`, byte for byte.
+#   `offramp`'s `trace` example and `offramp --trace`, byte for byte.
 # - Frames (Metal): every frame `record_demo` writes against the same frame from
 #   `offramp --record`, by decoded pixels (scripts/compare-frames.swift). Both
 #   render on this machine's GPU with shaders compiled at run time, so they must
@@ -91,7 +91,7 @@ resolved() {
     cargo tree --quiet -p "$1" -e features -f '{p} {f}' --prefix none \
         | grep -E '^(glam|hecs) v' | sed 's/ (\*)$//' | sort -u
 }
-demo_deps="$(resolved playable-demo)" || { echo "cargo tree -p playable-demo failed" >&2; exit 1; }
+demo_deps="$(resolved offramp)" || { echo "cargo tree -p offramp failed" >&2; exit 1; }
 capi_deps="$(resolved stickshift-capi)" || { echo "cargo tree -p stickshift-capi failed" >&2; exit 1; }
 if [[ -z "$demo_deps" || "$demo_deps" != "$capi_deps" ]]; then
     echo "the Rust demo and libstickshift build glam or hecs differently:" >&2
@@ -99,8 +99,8 @@ if [[ -z "$demo_deps" || "$demo_deps" != "$capi_deps" ]]; then
     exit 1
 fi
 echo "glam and hecs: the same builds on both sides ($(echo "$demo_deps" | wc -l | tr -d ' ') crates)"
-cargo build --quiet ${cargo_profile[@]+"${cargo_profile[@]}"} -p playable-demo \
-    --bin playable-demo --example trace --example record_demo \
+cargo build --quiet ${cargo_profile[@]+"${cargo_profile[@]}"} -p offramp \
+    --bin offramp --example trace --example record_demo \
     || { echo "the Rust demo's build failed" >&2; exit 1; }
 # The Swift package links $STICKSHIFT_LIB_DIR/libstickshift.a, which SwiftPM
 # cannot build; touch a source so it relinks against the library just built.
@@ -154,7 +154,7 @@ if [[ $traces == 1 ]]; then
 
     # --smoke: stdout, stderr and the exit status.
     set +e
-    "$rust_bin/playable-demo" --smoke > "$out/rust_smoke.out" 2> "$out/rust_smoke.err"
+    "$rust_bin/offramp" --smoke > "$out/rust_smoke.out" 2> "$out/rust_smoke.err"
     rust_status=$?
     "$offramp" --smoke > "$out/swift_smoke.out" 2> "$out/swift_smoke.err"
     swift_status=$?

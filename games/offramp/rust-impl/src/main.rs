@@ -2,7 +2,7 @@
 //
 // This software is released under the Apache-2.0 License.
 
-//! `playable-demo` — Stick Shift Engine's first title: a playable endless runner, and the
+//! `offramp` — Stick Shift Engine's first title: a playable endless runner, and the
 //! host for the headless smoke oracle.
 //!
 //! This binary is the *only* place game-specific code lives: it implements
@@ -89,11 +89,11 @@ use game::CarRunner;
 /// Number of frames the smoke oracle simulates before exiting.
 const SMOKE_FRAMES: u32 = 120;
 
-/// Command-line arguments for `playable-demo`.
+/// Command-line arguments for `offramp`.
 #[derive(Parser, Debug)]
 #[command(
-    name = "playable-demo",
-    about = "Stick Shift Engine playable-demo + headless smoke oracle"
+    name = "offramp",
+    about = "Offramp, Stick Shift Engine's playable demo, and its headless smoke oracle"
 )]
 struct Cli {
     /// Run the headless smoke oracle: boot the game and drive a fixed frame loop, then exit 0.
@@ -156,7 +156,7 @@ fn run_windowed(game: &mut CarRunner) {
     stickshift_core::run(game);
 }
 
-/// Boot the `playable-demo` [`Game`](stickshift_core::Game) and drive `frames` frames
+/// Boot the `offramp` [`Game`](stickshift_core::Game) and drive `frames` frames
 /// headlessly, then report success.
 fn run_smoke(frames: u32) {
     use stickshift_core::headless::Headless;

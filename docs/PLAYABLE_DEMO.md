@@ -225,9 +225,9 @@ Three assets are *derived* — a PNG-carrying glTF and a font atlas — and each
 generator under [`examples/`](../games/offramp/rust-impl/examples):
 
 ```sh
-cargo run -p playable-demo --example gen_asphalt   # → assets/road.gltf
-cargo run -p playable-demo --example gen_skyline   # → assets/skyline.gltf
-cargo run -p playable-demo --example gen_font      # → assets/font.bin
+cargo run -p offramp --example gen_asphalt   # → assets/road.gltf
+cargo run -p offramp --example gen_skyline   # → assets/skyline.gltf
+cargo run -p offramp --example gen_font      # → assets/font.bin
 ```
 
 The deliverable is the committed output, not the tool: a normal build never runs these. That is
@@ -408,7 +408,7 @@ The split is the point: adding scenery variety can never perturb the obstacle wo
 seed always produces the same lane sequence and the same obstacle positions whether or not a
 building is drawn beside them.
 
-**The `--smoke` oracle.** `cargo run -p playable-demo -- --smoke` boots the same `Game` under the
+**The `--smoke` oracle.** `cargo run -p offramp -- --smoke` boots the same `Game` under the
 headless driver, runs **120 frames** against a `NullRenderer` with no GPU and no Metal device,
 asserts the driver ran exactly that many frames, prints `smoke: 120 frames OK`, and exits 0
 ([main.rs:161](../games/offramp/rust-impl/src/main.rs#L161)). It taps `Space` on the first frame —
@@ -489,8 +489,8 @@ invariant and the mechanism that enforces it.
 ## 8. Running it
 
 ```sh
-cargo run -p playable-demo            # windowed, Metal backend (macOS)
-cargo run -p playable-demo -- --smoke # headless oracle: 120 frames, prints "smoke: 120 frames OK", exits 0
+cargo run -p offramp            # windowed, Metal backend (macOS)
+cargo run -p offramp -- --smoke # headless oracle: 120 frames, prints "smoke: 120 frames OK", exits 0
 ```
 
 | Key | Action |

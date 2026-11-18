@@ -16,7 +16,7 @@ import simd
 ///   Rust demo: the Swift trace must be the same bytes, line for line, the game's
 ///   own messages included.
 /// - The probe's traces (`smoke_trace.txt`, `record_trace.txt`,
-///   `long_run_events.txt`) and dumps, printed by `playable-demo-goldens`
+///   `long_run_events.txt`) and dumps, printed by `offramp-goldens`
 ///   (`games/offramp/rust-impl/goldens`) from the same Rust modules: the real
 ///   `CarRunner` must reproduce every frame's state,
 ///   player, speed, scores, fade, camera bits, counts and world digest.

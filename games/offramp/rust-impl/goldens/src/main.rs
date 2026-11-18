@@ -9,7 +9,7 @@
 //! hand-written expectations.
 //!
 //! ```sh
-//! cargo run --release -p playable-demo-goldens -- games/offramp/swift-impl/Tests/OfframpTests/Fixtures
+//! cargo run --release -p offramp-goldens -- games/offramp/swift-impl/Tests/OfframpTests/Fixtures
 //! ```
 //!
 //! writes the ten files the trace example does not: eight from the demo's
@@ -54,7 +54,7 @@ mod game {
 mod golden;
 mod probe;
 
-const USAGE: &str = "usage: playable-demo-goldens <dir> | golden <dir> | probe <dir>";
+const USAGE: &str = "usage: offramp-goldens <dir> | golden <dir> | probe <dir>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();

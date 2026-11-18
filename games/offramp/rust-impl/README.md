@@ -1,4 +1,4 @@
-# playable-demo
+# offramp
 
 Stick Shift Engine's first title — a playable **endless runner** — and the host for the
 headless **smoke oracle**.
@@ -18,8 +18,8 @@ see [docs/GETTING_STARTED.md](../../../docs/GETTING_STARTED.md).
 ## Run it
 
 ```sh
-cargo run -p playable-demo             # windowed, Metal backend (macOS)
-cargo run -p playable-demo -- --smoke  # headless oracle: 120 frames, exits 0
+cargo run -p offramp             # windowed, Metal backend (macOS)
+cargo run -p offramp -- --smoke  # headless oracle: 120 frames, exits 0
 ```
 
 The windowed path opens a Metal window. The `--smoke` path boots the same game under
@@ -47,7 +47,7 @@ assets (has a `road.gltf`) wins:
 If none exists the binary prints every path it tried and exits 1. To see which one was chosen:
 
 ```sh
-cargo run -p playable-demo -- --print-assets-dir
+cargo run -p offramp -- --print-assets-dir
 stickshift-demo --print-assets-dir                        # the Homebrew install
 STICKSHIFT_DEMO_ASSETS=/path/to/assets stickshift-demo --smoke
 ```
@@ -110,9 +110,9 @@ a font parser.
 | [`gen_font`](examples/gen_font.rs) | `assets/font.bin` — a self-contained `KFNT` SDF atlas (metrics + distance field) | `assets/font.ttf` |
 
 ```sh
-cargo run -p playable-demo --example gen_asphalt
-cargo run -p playable-demo --example gen_skyline
-cargo run -p playable-demo --example gen_font
+cargo run -p offramp --example gen_asphalt
+cargo run -p offramp --example gen_skyline
+cargo run -p offramp --example gen_font
 ```
 
 One more example records the demo rather than baking an asset.
@@ -131,17 +131,17 @@ same format, and [`scripts/offramp-parity.sh`](../../../scripts/offramp-parity.s
 and `record_demo`'s frames with Offramp's:
 
 ```sh
-cargo run --release -p playable-demo --example trace -- autopilot   # smoke | autopilot | long [--summary]
+cargo run --release -p offramp --example trace -- autopilot   # smoke | autopilot | long [--summary]
 ```
 
-[`goldens`](goldens) (`playable-demo-goldens`) writes the rest of Offramp's golden fixtures,
+[`goldens`](goldens) (`offramp-goldens`) writes the rest of Offramp's golden fixtures,
 from this demo's modules, as its
 [fixtures README](../swift-impl/Tests/OfframpTests/Fixtures/README.md) describes. Its build script
 compiles a copy of `src/game.rs` with accessors appended, so it can read the state `CarRunner`
 keeps private without any change to `src`:
 
 ```sh
-cargo run --release -p playable-demo-goldens -- games/offramp/swift-impl/Tests/OfframpTests/Fixtures
+cargo run --release -p offramp-goldens -- games/offramp/swift-impl/Tests/OfframpTests/Fixtures
 ```
 
 ## Asset licences

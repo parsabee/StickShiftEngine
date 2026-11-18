@@ -89,7 +89,7 @@
 //! it with `new_library_with_data`, so nothing is compiled at runtime; building it
 //! requires the Metal toolchain (full Xcode; see `scripts/preflight.sh --ios`). Release
 //! builds (the Homebrew tarball and `libstickshift`) turn it on; `stickshift-capi` and
-//! `playable-demo` forward a feature of the same name.
+//! `offramp` forward a feature of the same name.
 
 #![deny(missing_docs)]
 

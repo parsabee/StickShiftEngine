@@ -72,7 +72,7 @@ jobs:
       - name: Core without a platform has no winit or AppKit dependency
         run: "! cargo tree -p stickshift-core --no-default-features -e normal | grep -qiE 'winit|objc2-app-kit'"
 
-      # The workspace doc build turns `windowed` back on (playable-demo needs it), so document
+      # The workspace doc build turns `windowed` back on (offramp needs it), so document
       # the no-platform configuration on its own. Its links to the winit runner are allowed to
       # dangle there (lib.rs says why); everything else must resolve.
       - name: Core docs build without a platform
@@ -146,7 +146,7 @@ jobs:
       - name: Smoke oracle (Metal API Validation on)
         env:
           METAL_DEVICE_WRAPPER_TYPE: "1"
-        run: cargo run -p playable-demo -- --smoke
+        run: cargo run -p offramp -- --smoke
 
   # The same renderer with its shaders compiled ahead of time and embedded (the
   # `precompiled-shaders` feature, what release builds ship): it must build with the Metal
@@ -178,7 +178,7 @@ jobs:
           ./scripts/preflight.sh --ios || true
 
       - name: Test the renderer, C API and demo with precompiled shaders
-        run: cargo test -p stickshift-render -p stickshift-capi -p playable-demo --features stickshift-render/precompiled-shaders
+        run: cargo test -p stickshift-render -p stickshift-capi -p offramp --features stickshift-render/precompiled-shaders
 
       # The release library must carry the compiled .metallib, not the shader source: the
       # source's header comment is in a runtime-compiling build and absent from this one.

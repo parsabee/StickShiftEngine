@@ -78,7 +78,7 @@ final class Cubes: Game {
 }
 
 // The app's options: the sound device, the player's graphics settings (kept
-// under this executable's name; set STICKSHIFT_SETTINGS_SUITE=playable-demo to
+// under this executable's name; set STICKSHIFT_SETTINGS_SUITE=offramp to
 // share the Rust demo's), and Escape quitting.
 var options = Engine.Options.app
 options.settingsSuite = ProcessInfo.processInfo.environment["STICKSHIFT_SETTINGS_SUITE"]

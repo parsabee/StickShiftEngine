@@ -32,7 +32,7 @@
 //!
 //! Run:
 //! ```sh
-//! cargo run -p playable-demo --example gen_font
+//! cargo run -p offramp --example gen_font
 //! ```
 
 use std::path::Path;

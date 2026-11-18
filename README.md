@@ -116,7 +116,7 @@ What gets installed:
 
 | Path | Contents |
 |---|---|
-| `$(brew --prefix)/bin/stickshift-demo` | The playable demo (the `playable-demo` binary) |
+| `$(brew --prefix)/bin/stickshift-demo` | The playable demo (the `offramp` binary) |
 | `$(brew --prefix)/lib/libstickshift.a`, `libstickshift.dylib` | The C library, static and dynamic (install name `@rpath/libstickshift.dylib`) |
 | `$(brew --prefix)/include/stickshift/` | `stickshift.h` and the Swift `module.modulemap` |
 | `$(brew --prefix)/lib/pkgconfig/stickshift.pc` | `pkg-config --cflags --libs stickshift` |
@@ -176,11 +176,11 @@ git clone https://github.com/parsabee/StickShiftEngine.git
 cd StickShiftEngine
 
 cargo build --workspace
-cargo run -p playable-demo                               # the demo, windowed (Metal)
+cargo run -p offramp                               # the demo, windowed (Metal)
 cargo test  --workspace
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo run -p playable-demo -- --smoke                    # headless oracle: 120 frames, exits 0
+cargo run -p offramp -- --smoke                    # headless oracle: 120 frames, exits 0
 ./scripts/test-c-api.sh                                  # build libstickshift, compile + run the C programs
 ./scripts/gen-header.sh --check                          # stickshift.h matches the Rust sources (needs cbindgen 0.29.0)
 ```
@@ -190,7 +190,7 @@ Release builds embed shaders compiled ahead of time instead, so nothing is compi
 library starts. To build that way, which needs full Xcode for the Metal compiler:
 
 ```sh
-cargo build --release -p playable-demo --features precompiled-shaders
+cargo build --release -p offramp --features precompiled-shaders
 cargo build --release -p stickshift-capi --features precompiled-shaders
 ```
 
@@ -263,8 +263,8 @@ It is also the **reference example** for building a game on this engine: it touc
 the engine's public API.
 
 ```sh
-cargo run -p playable-demo             # windowed, Metal backend (macOS)
-cargo run -p playable-demo -- --smoke  # headless oracle: 120 frames, prints "smoke: 120 frames OK", exits 0
+cargo run -p offramp             # windowed, Metal backend (macOS)
+cargo run -p offramp -- --smoke  # headless oracle: 120 frames, prints "smoke: 120 frames OK", exits 0
 ```
 
 | Key | Action |
@@ -382,7 +382,7 @@ cargo build --workspace
 cargo test  --workspace
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo run -p playable-demo -- --smoke
+cargo run -p offramp -- --smoke
 RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links" \
   cargo doc --workspace --no-deps
 ```

@@ -92,7 +92,7 @@ struct ExecutableTests {
     @Test func smokeIsTheRustOutputByteForByte() throws {
         let run = try offramp("--smoke")
         #expect(run.status == 0)
-        // Golden: `cargo run -p playable-demo -- --smoke` (spec 02 §5.3).
+        // Golden: `cargo run -p offramp -- --smoke` (spec 02 §5.3).
         let golden = "GAME OVER \u{2014} score 23 \u{2014} best 23. Press Space to replay.\nsmoke: 120 frames OK\n"
         #expect(run.stdout == Data(golden.utf8))
         #expect(run.stderr.isEmpty)
@@ -209,7 +209,7 @@ struct ExecutableTests {
         let run = try offramp("--trace", "smoke")
         #expect(run.status == 0)
         #expect(run.stderr.isEmpty)
-        // `cargo run -p playable-demo --example trace -- smoke`.
+        // `cargo run -p offramp --example trace -- smoke`.
         let rust = try Data(contentsOf: fixturesDirectory.appendingPathComponent("trace_smoke.jsonl"))
         #expect(run.stdout == rust)
     }
