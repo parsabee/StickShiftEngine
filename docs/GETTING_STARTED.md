@@ -54,12 +54,12 @@ additions. Worked example: [games/playable-demo/Cargo.toml](../games/playable-de
 
 One trait, three hooks: [`stickshift_core::Game`](../crates/stickshift-core/src/game.rs#L96). `init` runs
 once; `update` runs 0..N times per frame with `dt` always equal to
-[`FIXED_DT`](../crates/stickshift-core/src/timestep.rs#L50) (1/60 s); `render` runs exactly once per
+[`FIXED_DT`](../crates/stickshift-core/src/timestep.rs#L49) (1/60 s); `render` runs exactly once per
 frame after that frame's updates. Advance state in `update`, record draws in `render`, and don't
 cross the two — that split is what makes the simulation framerate-independent.
 
 Everything the engine offers arrives through the [`EngineCtx`](../crates/stickshift-core/src/context.rs#L89)
-argument: the `Scene` (ECS world + physics + streaming), the ECS world, the render seam, the
+argument: the `Scene` (ECS world + streaming), the ECS world, the render seam, the
 `Camera`, an input snapshot, frame timing. There is nothing else to reach for, and no way to reach
 past it.
 
@@ -355,7 +355,7 @@ camera — which means even *view* behaviour is testable with no display.
 For any of this to be reproducible, keep two rules: never read wall-clock time in `update` (the
 engine's fixed `dt` is the only clock you need), and drive every random choice from a seeded PRNG.
 Worked example: [rng.rs](../games/playable-demo/src/rng.rs), and the test module at
-[game.rs:670](../games/playable-demo/src/game.rs#L670).
+[game.rs:741](../games/playable-demo/src/game.rs#L741).
 
 ---
 
@@ -368,7 +368,7 @@ in their source (listed in [PLAYABLE_DEMO.md §7](PLAYABLE_DEMO.md#7-the-boundar
 In practice this is not a constraint so much as a filing rule:
 
 - Game-named ECS components go in *your* crate. They ride on the same entities as
-  `TransformComponent` / `RenderComponent` / `PhysicsBodyComponent` and compose freely — see
+  `TransformComponent` / `RenderComponent` and compose freely — see
   [components.rs](../games/playable-demo/src/components.rs).
 - Tuning constants go in your crate, ideally all in one module — see
   [config.rs](../games/playable-demo/src/config.rs).

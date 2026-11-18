@@ -11,9 +11,8 @@ To **start your own** game rather than read this one, see
 [ARCHITECTURE.md](ARCHITECTURE.md); for the diagrams see [DESIGN.md](DESIGN.md).
 
 > Scope: the demo as of v0.1.0-alpha.2. Everything described here exists in the
-> code today. Where the demo deliberately *doesn't* use an engine facility (physics contact
-> queries, `EngineCtx::alpha`, a non-default streaming axis), that is called out rather than
-> glossed over.
+> code today. Where the demo deliberately *doesn't* use an engine facility (`EngineCtx::alpha`,
+> a non-default streaming axis), that is called out rather than glossed over.
 
 ---
 
@@ -24,21 +23,21 @@ The engine owns the loop. A game is any type implementing
 
 | Hook | Called | The demo's implementation |
 |---|---|---|
-| `init(&mut EngineCtx)` | exactly once, before the first `update` | [game.rs:472](../games/playable-demo/src/game.rs#L472) |
-| `update(&mut EngineCtx, dt)` | 0..N times per frame, `dt` always `FIXED_DT` | [game.rs:622](../games/playable-demo/src/game.rs#L622) |
-| `render(&mut EngineCtx)` | exactly once per frame, after that frame's updates | [game.rs:743](../games/playable-demo/src/game.rs#L743) → [render.rs:38](../games/playable-demo/src/render.rs#L38) |
+| `init(&mut EngineCtx)` | exactly once, before the first `update` | [game.rs:464](../games/playable-demo/src/game.rs#L464) |
+| `update(&mut EngineCtx, dt)` | 0..N times per frame, `dt` always `FIXED_DT` | [game.rs:614](../games/playable-demo/src/game.rs#L614) |
+| `render(&mut EngineCtx)` | exactly once per frame, after that frame's updates | [game.rs:735](../games/playable-demo/src/game.rs#L735) → [render.rs:38](../games/playable-demo/src/render.rs#L38) |
 
 [`EngineCtx`](../crates/stickshift-core/src/context.rs#L89) is the only channel into the engine. It
 is built fresh by the driver for each hook call and dropped immediately after, so a game cannot
-stash it across frames. Its whole surface is: the [`Scene`](../crates/stickshift-scene/src/lib.rs#L143)
+stash it across frames. Its whole surface is: the [`Scene`](../crates/stickshift-scene/src/lib.rs#L120)
 (`scene`/`scene_mut`), the ECS world (`world`/`world_mut`, delegating to the scene), the render
 seam (`renderer`), the [`Camera`](../crates/stickshift-camera/src/camera.rs) (`camera`/`camera_mut`),
 the read-only `InputState` (`input`), the [`Audio`](../crates/stickshift-audio/src/mixer.rs) layer
 (`audio`), a `PerfSnapshot` (`perf`), and the fixed-timestep interpolation factor (`alpha`). There
 is no accessor for a window, a platform handle, a Metal device, or game state — by design.
 
-**What the engine owns.** The event loop and the clock; the `Scene` (ECS `World` + `PhysicsWorld`
-+ streaming bookkeeping); the `Camera`; input collection; the render backend; the frame cadence.
+**What the engine owns.** The event loop and the clock; the `Scene` (ECS `World` + streaming
+bookkeeping); the `Camera`; input collection; the render backend; the frame cadence.
 The demo's own struct holds none of these — see the field list on
 [`CarRunner`](../games/playable-demo/src/game.rs#L53): it holds lane, travel, score, best, PRNG,
 game state, and the resource *handles* it created in `init`. That is all.
@@ -52,7 +51,7 @@ the collision test, the difficulty ramp, and the game-side ECS components
 renderer. The *game binary* does: `main.rs` calls
 [`run_with_backend`](../crates/stickshift-core/src/app.rs#L154) with a factory closure that builds a
 `stickshift_render::MetalRenderer` and boxes it as `dyn Renderer`
-([main.rs:112](../games/playable-demo/src/main.rs#L112)). `metal` therefore reaches the process
+([main.rs:144](../games/playable-demo/src/main.rs#L144)). `metal` therefore reaches the process
 through `stickshift-render` and the game binary only, never through `stickshift-core` (ARCHITECTURE §2).
 The `stickshift-render` dependency is even `cfg`-gated to macOS in
 [Cargo.toml](../games/playable-demo/Cargo.toml#L35).
@@ -62,15 +61,15 @@ The `stickshift-render` dependency is even `cfg`-gated to macOS in
 ## 2. The fixed-timestep loop
 
 `FIXED_DT` is `1.0 / 60.0` and lives in exactly one place:
-[timestep.rs:50](../crates/stickshift-core/src/timestep.rs#L50). `Game::update` is *always* called
+[timestep.rs:49](../crates/stickshift-core/src/timestep.rs#L49). `Game::update` is *always* called
 with that constant — never a measured wall-clock delta.
 
 Each display frame, the driver banks the real elapsed time in the
-[`Accumulator`](../crates/stickshift-core/src/timestep.rs#L77), which returns the whole number of
+[`Accumulator`](../crates/stickshift-core/src/timestep.rs#L76), which returns the whole number of
 fixed steps to run and keeps the sub-step remainder. Both drivers then run the same
-[`drive_frame`](../crates/stickshift-core/src/driver.rs#L226): `update × k`, then `render` once.
+[`drive_frame`](../crates/stickshift-core/src/driver.rs#L220): `update × k`, then `render` once.
 `k` may be 0 (a display faster than the sim rate) or several (a slow frame catching up), capped
-at [`MAX_STEPS_PER_FRAME = 5`](../crates/stickshift-core/src/timestep.rs#L68) so a stall slows the
+at [`MAX_STEPS_PER_FRAME = 5`](../crates/stickshift-core/src/timestep.rs#L67) so a stall slows the
 simulation instead of wedging the loop.
 
 **Why `update` and `render` are separate hooks.** Because they run at different rates. `update`
@@ -92,7 +91,7 @@ the accumulator and `drive_frame` are shared.
 **Why runs are deterministic.** Under the headless driver, nothing that affects simulation is
 allowed to vary: the timestep is constant, the clock is synthetic, streaming decisions are a pure
 function of the focus position and the `StreamingConfig`
-([stickshift-scene](../crates/stickshift-scene/src/lib.rs#L37)), and every random choice the demo makes
+([stickshift-scene](../crates/stickshift-scene/src/lib.rs#L31)), and every random choice the demo makes
 comes from a seeded PRNG ([§6](#6-determinism-and-testing)). Same seed and same inputs ⇒ the
 same frames, on any machine, with or without a GPU.
 
@@ -101,22 +100,20 @@ same frames, on any machine, with or without a GPU.
 ## 3. Scene streaming and the floating-origin rebase
 
 The world is endless, so the demo never builds it — it streams it. The engine half is
-[`Scene::stream`](../crates/stickshift-scene/src/lib.rs#L431): the *game* supplies a **focus point**
+[`Scene::stream`](../crates/stickshift-scene/src/lib.rs#L279): the *game* supplies a **focus point**
 and a **spawn callback**; the scene owns the bookkeeping (which slots ahead are filled, which
 streamed entities have fallen behind).
 
 The demo's focus is the player's position
-([`player_position`](../games/playable-demo/src/game.rs#L165)) and its callback is
-[`spawn_slot`](../games/playable-demo/src/game.rs#L372), called from `update` at
-[game.rs:738](../games/playable-demo/src/game.rs#L738). Per slot it spawns a road tile, an
+([`player_position`](../games/playable-demo/src/game.rs#L166)) and its callback is
+[`spawn_slot`](../games/playable-demo/src/game.rs#L370), called from `update` at
+[game.rs:724](../games/playable-demo/src/game.rs#L724). Per slot it spawns a road tile, an
 obstacle on a cadence, two roadside buildings and two guardrail segments — reporting each via
-[`SpawnCtx::spawned`](../crates/stickshift-scene/src/lib.rs#L599) so the scene despawns it once it
-falls behind. Despawn is **atomic**: the physics rigid body is removed with the ECS entity, so no
-live `PhysicsBodyComponent` ever holds a freed handle
-([`Scene::despawn`](../crates/stickshift-scene/src/lib.rs#L371)).
+[`SpawnCtx::spawned`](../crates/stickshift-scene/src/lib.rs#L429) so the scene despawns it once it
+falls behind ([`Scene::despawn`](../crates/stickshift-scene/src/lib.rs#L230)).
 
 The loop creates the scene with the **engine-default** `StreamingConfig`
-([stickshift-scene:109](../crates/stickshift-scene/src/lib.rs#L109)) — axis `-Z`, `spawn_interval` 6,
+([stickshift-scene:88](../crates/stickshift-scene/src/lib.rs#L88)) — axis `-Z`, `spawn_interval` 6,
 `spawn_ahead` 60, `despawn_behind` 12, `rebase_threshold` 1000 — and the default axis is already
 the demo's travel direction. The demo keeps the axis, spacing and rebase threshold and, in `init`,
 sets only its reach with `Scene::set_config`: `spawn_ahead` **180** (`config::SPAWN_AHEAD`, three
@@ -130,17 +127,17 @@ authored size so it frames the view exactly as it did at 45), and the renderer's
 clear to 105 view-depth units, ~98% opaque at 165 — dissolves everything short of it into the
 horizon, so nothing is ever seen popping in. Road tiles and the guardrail
 mesh are sized from `ctx.scene().config().spawn_interval` rather than a literal
-([game.rs:522](../games/playable-demo/src/game.rs#L522),
-[game.rs:598](../games/playable-demo/src/game.rs#L598)), so streamed segments abut flush whatever
+([game.rs:514](../games/playable-demo/src/game.rs#L514),
+[game.rs:590](../games/playable-demo/src/game.rs#L590)), so streamed segments abut flush whatever
 the interval is.
 
 ### The rebase, and what the game must carry through it
 
-[`Scene::maybe_rebase`](../crates/stickshift-scene/src/lib.rs#L530) keeps world coordinates out of
+[`Scene::maybe_rebase`](../crates/stickshift-scene/src/lib.rs#L368) keeps world coordinates out of
 float-precision trouble: once the focus is more than `rebase_threshold` from the origin, **every**
-position — every `TransformComponent` and every physics body translation — is shifted by one
-offset back toward the origin, and the offset actually applied is returned. Relative positions are
-preserved exactly, so gameplay is unaffected. It must be called *between* physics steps, never
+`TransformComponent` is shifted by one offset back toward the origin, and the offset actually
+applied is returned. Relative positions are preserved exactly, so gameplay is unaffected. A game
+that runs its own physics shifts its bodies by the same offset, between its physics steps, never
 inside one.
 
 The catch, and the single most important thing to copy from this demo: **anything the game holds
@@ -149,18 +146,18 @@ demo holds two such things.
 
 1. **`travel`**, the monotonic along-axis distance the player's transform is rebuilt from. The
    demo folds the offset into it: `self.travel += offset.dot(axis)`
-   ([game.rs:688](../games/playable-demo/src/game.rs#L688)). Without this the player would be
+   ([game.rs:674](../games/playable-demo/src/game.rs#L674)). Without this the player would be
    rebuilt at its old coordinate in a world that has moved.
 2. **The camera.** The engine owns the `Camera`, but its position and target are world
    coordinates, so a rebase strands it a full threshold away. The demo translates both by the
-   same offset — [game.rs:690–704](../games/playable-demo/src/game.rs#L690), which carries a
+   same offset — [game.rs:676–691](../games/playable-demo/src/game.rs#L676), which carries a
    worked comment on exactly this. Note *why* it translates rather than re-deriving the pose from
    the car: a smoothed follow always trails its desired pose slightly, and snapping to the
    desired pose would erase that lag in one frame — a visible jolt. Shifting preserves the lag
    exactly, so the rebase is invisible.
 
 The demo's ordering within `update` is: **rebase → write the player transform → follow the camera
-→ stream** ([game.rs:677](../games/playable-demo/src/game.rs#L677) onward). Everything downstream
+→ stream** ([game.rs:669](../games/playable-demo/src/game.rs#L669) onward). Everything downstream
 of the rebase therefore sees one consistent coordinate space for the whole step.
 
 A third pattern worth noting: content that should *not* move with the world at all is drawn
@@ -170,10 +167,10 @@ A third pattern worth noting: content that should *not* move with the world at a
 every frame, so neither a stream nor a rebase can slide them.
 
 Two headless tests pin all of this: `a_dodging_run_never_ends_without_an_actual_collision`
-([game.rs:1009](../games/playable-demo/src/game.rs#L1009)) drives far enough to cross the rebase
+([game.rs:1036](../games/playable-demo/src/game.rs#L1036)) drives far enough to cross the rebase
 threshold while steering clear of traffic and asserts the run never ends, and
 `the_camera_stays_with_the_car_across_a_rebase`
-([game.rs:1075](../games/playable-demo/src/game.rs#L1075)) asserts the camera's pose *relative to
+([game.rs:1091](../games/playable-demo/src/game.rs#L1091)) asserts the camera's pose *relative to
 the car* changes no more on a rebase step than on an ordinary one. Both fail if the rebase
 bookkeeping above is dropped.
 
@@ -261,7 +258,7 @@ The seam is two traits in `stickshift-render-api`, bundled for the game as one
 The demo creates everything in `init`: two pipelines (`vertex_main`/`fragment_main` on the
 `[pos,normal,color]` layout, `textured_vertex_main`/`textured_fragment_main` on
 `[pos,normal,uv]`), the imported meshes and textures, the two procedural meshes, and the font
-atlas — [game.rs:494–626](../games/playable-demo/src/game.rs#L494). It keeps only the handles.
+atlas — [game.rs:464–612](../games/playable-demo/src/game.rs#L464). It keeps only the handles.
 
 [`render_frame`](../games/playable-demo/src/render.rs#L38) then records a frame with **no
 allocation of GPU resources and no pipeline thrash**: it first gathers this frame's transforms out
@@ -274,7 +271,7 @@ each pipeline switch and texture bind happens once per group:
 4. the HUD.
 
 Role is read off the entity, not tracked separately: the player is `self.player`, an obstacle is
-any entity with a `PhysicsBodyComponent`, a building carries `BuildingVariant`, a guardrail
+any entity with the demo's `Obstacle` marker, a building carries `BuildingVariant`, a guardrail
 `GuardrailTag`, and whatever is left is a road tile.
 
 ### The sun (a demo decision)
@@ -414,12 +411,12 @@ building is drawn beside them.
 **The `--smoke` oracle.** `cargo run -p playable-demo -- --smoke` boots the same `Game` under the
 headless driver, runs **120 frames** against a `NullRenderer` with no GPU and no Metal device,
 asserts the driver ran exactly that many frames, prints `smoke: 120 frames OK`, and exits 0
-([main.rs:131](../games/playable-demo/src/main.rs#L131)). It taps `Space` on the first frame —
+([main.rs:161](../games/playable-demo/src/main.rs#L161)). It taps `Space` on the first frame —
 without that it would replay 120 frames of a motionless title screen and assert nothing — then
 releases it, so the car runs straight down the middle lane on empty input. It is the workspace's
 continuous oracle: CI runs it on every push with Metal API Validation enabled
 (`.github/workflows/ci.yml`), and two unit tests pin both the run and the exact stdout contract
-line ([main.rs:160](../games/playable-demo/src/main.rs#L160)).
+line ([main.rs:193](../games/playable-demo/src/main.rs#L193)).
 
 **The headless harness.** [`Headless`](../crates/stickshift-core/src/headless.rs#L92) is what makes
 gameplay testable at all. It owns the engine state a `Game` runs against — scene, input, perf,
@@ -430,7 +427,7 @@ game asked to hear** (`audio`). Those last two accessors are why the demo can te
 behaviour with no GPU and no speakers — `the_camera_stays_with_the_car_across_a_rebase` asserts on
 real camera poses, and the two audio tests on real play requests, in a plain `cargo test`.
 
-The demo's own suite ([game.rs:756](../games/playable-demo/src/game.rs#L756) onward) covers, all
+The demo's own suite ([game.rs:741](../games/playable-demo/src/game.rs#L741) onward) covers, all
 headlessly: lane geometry and edge clamping, edge-triggered input (a held key moves exactly one
 lane), the frozen title state and the opening fade retiring on the fixed timestep, the difficulty
 ramp and its cap (including that the cap keeps per-step motion below the AABB overlap window, so
@@ -440,10 +437,8 @@ two long-run rebase tests from [§3](#3-scene-streaming-and-the-floating-origin-
 
 Two things the demo deliberately does *not* do, so you don't go looking for them: collision is a
 game-side AABB test over entity transforms
-([`overlaps`](../games/playable-demo/src/game.rs#L258)), not a physics contact query — the
-obstacles carry static bodies and colliders to exercise streaming's atomic despawn, not to drive
-the player; and player motion is **kinematic**, its transform written directly, never solved
-(ARCHITECTURE §5).
+([`overlaps`](../games/playable-demo/src/game.rs#L258)), since the engine has no physics; and
+player motion is **kinematic**, its transform written directly, never solved (ARCHITECTURE §5).
 
 ---
 
@@ -458,10 +453,10 @@ Five crates carry a self-scanning **guard test** that embeds the crate's own sou
 | Guard test | Crate |
 |---|---|
 | `boundary_tests::no_game_specific_symbols` ([lib.rs:122](../crates/stickshift-core/src/lib.rs#L122)) | `stickshift-core` |
-| `tests::no_game_specific_symbols` ([lib.rs:1102](../crates/stickshift-scene/src/lib.rs#L1102)) | `stickshift-scene` |
+| `tests::no_game_specific_symbols` ([lib.rs:719](../crates/stickshift-scene/src/lib.rs#L719)) | `stickshift-scene` |
 | `guard_tests::no_game_specific_symbols` ([lib.rs:74](../crates/stickshift-assets/src/lib.rs#L74)) | `stickshift-assets` |
 | `guard_tests::no_game_specific_symbols` ([lib.rs](../crates/stickshift-audio/src/lib.rs)) | `stickshift-audio` |
-| `tests::test_no_game_specific_symbols` ([lib.rs:723](../crates/stickshift-ecs/src/lib.rs#L723)) | `stickshift-ecs` |
+| `tests::test_no_game_specific_symbols` ([lib.rs:648](../crates/stickshift-ecs/src/lib.rs#L648)) | `stickshift-ecs` |
 
 The forbidden words are assembled from ASCII byte codes rather than written as literals, so each
 test's own body contains no occurrence of them and can scan every file in its crate — itself
@@ -471,8 +466,8 @@ incidental substring inside a larger identifier does not trip the guard.
 The practical consequence for a game author: **if a concept has a game name, it belongs in your
 crate.** The demo's per-entity variant tags are the clearest illustration —
 [components.rs](../games/playable-demo/src/components.rs) defines `TrafficVariant`,
-`BuildingVariant` and `GuardrailTag` as ordinary hecs components that ride on the *same* entities
-as the engine-generic `TransformComponent` / `RenderComponent` / `PhysicsBodyComponent`. They
+`BuildingVariant`, `GuardrailTag` and `Obstacle` as ordinary hecs components that ride on the *same* entities
+as the engine-generic `TransformComponent` / `RenderComponent`. They
 compose freely; they just cannot be *defined* in `stickshift-ecs`, because the guard would reject them
 there.
 
@@ -504,8 +499,8 @@ cargo run -p playable-demo -- --smoke # headless oracle: 120 frames, prints "smo
 | `Space` | Start the run from the title screen; replay after a crash |
 | `Escape` | Quit |
 
-Controls are handled at [game.rs:241](../games/playable-demo/src/game.rs#L241) (lanes) and
-[game.rs:633](../games/playable-demo/src/game.rs#L633) (`Space`, per state); `Escape` is handled
+Controls are handled at [game.rs:242](../games/playable-demo/src/game.rs#L242) (lanes) and
+[game.rs:619](../games/playable-demo/src/game.rs#L619) (`Space`, per state); `Escape` is handled
 by the engine's windowed entry.
 
 The **Graphics** menu in the macOS menu bar adjusts shadows, shadow distance, draw distance and

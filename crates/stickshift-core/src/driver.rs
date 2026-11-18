@@ -27,13 +27,13 @@ use crate::timestep::{Accumulator, FIXED_DT};
 /// The engine state both drivers own and hand to [`drive_frame`].
 ///
 /// Holds everything platform-neutral: the [`Scene`] (which owns the ECS world and
-/// the physics world), the [`InputState`] snapshot, the [`PerfTracker`], the
+/// the streaming state), the [`InputState`] snapshot, the [`PerfTracker`], the
 /// fixed-timestep [`Accumulator`], and the once-only `init` latch. The render
 /// backend is deliberately *not* in here — each driver owns its renderer
 /// differently (a `NullRenderer` by value in headless, a `Box<dyn Renderer>` in
 /// the windowed app) and passes it into [`drive_frame`] by `&mut dyn Renderer`.
 pub struct Loop {
-    /// The simulation scene (ECS world + physics world + streaming/rebase state)
+    /// The simulation scene (ECS world + streaming/rebase state)
     /// the game mutates. Replaces the bare `World` the loop used to own.
     pub scene: Scene,
     /// The current input snapshot the game reads.
@@ -208,19 +208,13 @@ impl Default for Loop {
 /// previous frame — a synthetic delta in headless, a measured monotonic delta in
 /// the windowed driver. The accumulator turns it into a whole number of
 /// [`FIXED_DT`] steps (clamped against the spiral of death); each step calls
-/// [`Game::update`]`(ctx, FIXED_DT)` and then advances the
-/// [`Scene`]'s physics by one fixed step ([`Scene::step_physics`]), so physics is
-/// integrated exactly once per fixed update in lockstep with the simulation.
-/// After the update steps, a single [`Game::render`] runs with
-/// the leftover interpolation [`alpha`](crate::EngineCtx::alpha).
+/// [`Game::update`]`(ctx, FIXED_DT)`. After the update steps, a single
+/// [`Game::render`] runs with the leftover interpolation
+/// [`alpha`](crate::EngineCtx::alpha).
 ///
-/// Ordering within a fixed step is `update` → `step_physics`: the game applies
-/// intents (forces, spawns, streaming) first, then the solver integrates and syncs
-/// dynamic transforms back into the ECS. A game that also rebases should call
-/// [`Scene::maybe_rebase`] from its `update` *after* driving streaming — the
-/// documented `stream` → `step_physics` → `maybe_rebase` order lives in
-/// `stickshift-scene`; since the loop steps physics right after `update`, a game rebases
-/// at the top of the *next* `update` (i.e. between this step and the next).
+/// The engine has no physics. A game that simulates physics steps it from its
+/// own `update`, once per fixed step, and shifts it by the offset
+/// [`Scene::maybe_rebase`] returns.
 ///
 /// [`init_once`](Loop::init_once) must have run first.
 pub fn drive_frame<G: Game>(
@@ -238,8 +232,7 @@ pub fn drive_frame<G: Game>(
 
     let steps = lp.accumulator.advance(elapsed);
 
-    // Fixed-timestep updates: 0..N, each with the constant FIXED_DT, each
-    // followed by exactly one physics step so the solver stays in lockstep.
+    // Fixed-timestep updates: 0..N, each with the constant FIXED_DT.
     for _ in 0..steps {
         {
             let mut ctx = EngineCtx::new(
@@ -258,9 +251,6 @@ pub fn drive_frame<G: Game>(
         // Snapshot input edges for the next step so a held key fires
         // `is_key_just_pressed` exactly once.
         lp.input.advance_frame();
-        lp.perf.mark_start();
-        lp.scene.step_physics();
-        lp.perf.mark_physics();
     }
 
     // Push the engine camera's view-projection across the render seam BEFORE the
@@ -511,10 +501,10 @@ mod tests {
         assert_eq!(renderer.camera_position(), Some(lp.camera.position()));
     }
 
-    /// The loop times physics (every fixed step) and the game's render into the
-    /// perf tracker, alongside the frame's CPU time.
+    /// The loop times the game's render into the perf tracker, alongside the
+    /// frame's CPU time.
     #[test]
-    fn the_loop_records_physics_and_render_time() {
+    fn the_loop_records_render_time() {
         struct SlowRender;
         impl Game for SlowRender {
             fn init(&mut self, _ctx: &mut EngineCtx) {}
@@ -538,8 +528,7 @@ mod tests {
         }
         let snap = lp.perf.snapshot();
         assert!(snap.avg_render_time >= Duration::from_millis(2), "{snap:?}");
-        assert!(snap.avg_physics_time > Duration::ZERO, "{snap:?}");
-        assert!(snap.avg_cpu_time >= snap.avg_render_time + snap.avg_physics_time);
+        assert!(snap.avg_cpu_time >= snap.avg_render_time);
     }
 
     /// The loop owns the audio layer and hands it to the game through

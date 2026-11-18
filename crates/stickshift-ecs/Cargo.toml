@@ -13,4 +13,3 @@ publish.workspace = true
 [dependencies]
 hecs.workspace = true
 stickshift-math.workspace = true
-rapier3d.workspace = true

@@ -25,7 +25,7 @@ precompiled-shaders = ["stickshift-render/precompiled-shaders"]
 [dependencies]
 stickshift-math.workspace = true
 stickshift-render-api.workspace = true
-# Graphics only: stickshift-assets' default `ecs` feature (hecs + rapier) stays off.
+# Graphics only: stickshift-assets' default `ecs` feature (hecs) stays off.
 # A path dependency rather than `workspace = true` so `default-features = false`
 # takes effect.
 stickshift-assets = { path = "../stickshift-assets", default-features = false }

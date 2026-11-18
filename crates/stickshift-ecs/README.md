@@ -10,8 +10,7 @@ The ECS component vocabulary for Stick Shift Engine — the stable surface that 
 come from `hecs` (re-exported as `stickshift_ecs::hecs`); this crate only defines the
 component *types* the rest of the engine and its games agree on.
 
-It builds on [`stickshift-math`] for spatial types (`Transform`, `glam`) and holds a
-non-owning [`rapier3d`] rigid-body handle for the physics link.
+It builds on [`stickshift-math`] for spatial types (`Transform`, `glam`).
 
 ## The component model (binding surface)
 
@@ -22,12 +21,11 @@ these primitives in the game crate, never by adding types here.
 
 | Component | Kind | Purpose |
 |---|---|---|
-| `TransformComponent` | data | Wraps a `stickshift_math::Transform` (position / rotation / scale). Read by rendering, written by physics. |
-| `PhysicsBodyComponent` | data | Non-owning `RigidBodyHandle` into the physics world. |
+| `TransformComponent` | data | Wraps a `stickshift_math::Transform` (position / rotation / scale). Read by rendering, written by the game. |
 | `RenderComponent` | data | Visual appearance: an RGB `color` plus a `RenderShape`. |
 | `RenderShape` | enum (`#[non_exhaustive]`) | Geometry as a triangle `Mesh { vertices, indices }`. Mesh generators for cube and UV-sphere. |
-| `StaticTag` | tag | Marks fixed geometry — physics does not drive its transform. |
-| `DynamicTag` | tag | Marks physics-controlled entities — transform is updated from the simulation. |
+| `StaticTag` | tag | Marks fixed geometry: its transform does not change. |
+| `DynamicTag` | tag | Marks moving entities: the game changes their transform while they live. |
 
 ### Mesh-shape helpers
 
@@ -38,15 +36,9 @@ the convenience constructors most callers use.
 
 ### Invariants
 
-- **Handle ownership.** `PhysicsBodyComponent` stores a *non-owning* copy of a
-  `RigidBodyHandle`. The rigid body itself is owned by the physics world; the
-  component is only a reference. Keeping the handle valid (not dereferencing a
-  handle whose body was removed) is the caller's responsibility. Safe removal lives in
-  `stickshift-physics` (stale-handle-safe removal) and `stickshift-scene` (atomic despawn).
 - **Static vs dynamic.** `StaticTag` and `DynamicTag` are mutually-exclusive
-  intent markers: a static entity's transform is authored once and never touched
-  by physics; a dynamic entity's transform is overwritten from the simulation
-  each step.
+  intent markers: a static entity's transform is authored once and never changed;
+  a dynamic entity's transform is updated by the game.
 - **`RenderShape` is `#[non_exhaustive]`.** New built-in shape representations
   may be added later, so external `match`es must include a wildcard arm. This
   keeps the A1 boundary from silently hardening into an A2 break.
@@ -54,7 +46,7 @@ the convenience constructors most callers use.
 ## Example
 
 ```rust
-use stickshift_ecs::{TransformComponent, RenderComponent, PhysicsBodyComponent, DynamicTag};
+use stickshift_ecs::{TransformComponent, RenderComponent, DynamicTag};
 use stickshift_ecs::hecs::World;
 use stickshift_math::glam::Vec3;
 
@@ -79,6 +71,5 @@ surface stays engine-generic by construction.
 
 [`hecs`]: https://docs.rs/hecs
 [`stickshift-math`]: ../stickshift-math
-[`rapier3d`]: https://docs.rs/rapier3d
 
 Part of the [Stick Shift Engine](../../README.md) workspace. Apache-2.0.

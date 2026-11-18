@@ -37,8 +37,8 @@ Code that resists unit testing is pinned by goldens captured while its behavior 
   (`crates/stickshift-render/tests/pixel_hash.rs`, `textured_pixel_hash.rs`). A hash only changes with
   a written justification next to the new value, and is re-blessed through the documented
   `BLESS=1` path. The tests skip when no Metal device is present.
-- **Physics:** there is no golden trajectory test yet. Determinism is covered by the fixed
-  timestep and by the deterministic world-streaming tests in `stickshift-scene`.
+- **Determinism** is covered by the fixed timestep and by the deterministic world-streaming
+  tests in `stickshift-scene`.
 
 ### 3.2 Move and change separately
 
@@ -61,7 +61,7 @@ for the same reason.
 These are targets, not CI-enforced: there is no coverage tooling in CI yet.
 
 - **Moved as-is:** keep the existing tests green; add characterization tests where none exist.
-- **Refactored** (renderer, physics, scene, camera, core): put a golden or characterization net in
+- **Refactored** (renderer, scene, camera, core): put a golden or characterization net in
   place *before* the change; aim for at least 80% line coverage of the touched public API.
 - **New** (assets, audio, the C API): test-first, aiming for at least 80% coverage of the logic.
 
@@ -81,8 +81,8 @@ These are targets, not CI-enforced: there is no coverage tooling in CI yet.
 - `#![deny(missing_docs)]` on every engine crate: an undocumented public item is a build failure.
 - Doc examples compile and run under `cargo test`, so docs can't rot.
 - **Invariants live in three places at once:** the doc comment states it, a test enforces it, and
-  ARCHITECTURE or a README explains why. (E.g. "a physics handle is removed from its ECS
-  component atomically with `remove_body`": doc comment, use-after-free test, architecture note.)
+  ARCHITECTURE or a README explains why. (E.g. "a frame's GPU time is recorded before the frame
+  counts as completed": doc comment, test, architecture note.)
 - Every crate has a `README.md`; [ARCHITECTURE.md](ARCHITECTURE.md) records the intentional
   constraints.
 - Docs that link to source lines with `#L<n>` anchors are checked with
@@ -92,6 +92,5 @@ These are targets, not CI-enforced: there is no coverage tooling in CI yet.
 
 - **Renderer (GPU, not unit-testable):** golden pixel hashes plus Metal validation plus Instruments;
   each buffer or frames-in-flight change lands and is validated on its own.
-- **Physics:** the despawn use-after-free test was written *before* the removal API, and stays.
 - **iOS (v0.9):** a physical-device run is required for platform and GPU-performance changes (the
   simulator is not valid for GPU performance); signing is set up before engine changes pile up.

@@ -22,13 +22,13 @@
 //! handle; this module never allocates a GPU resource.
 
 use stickshift_core::EngineCtx;
-use stickshift_ecs::{PhysicsBodyComponent, RenderComponent, TransformComponent};
+use stickshift_ecs::{RenderComponent, TransformComponent};
 use stickshift_math::glam::{Quat, Vec3};
 use stickshift_math::Transform;
 use stickshift_render_api::MaterialParams;
 
 use crate::assets::{pick_model, CarPart};
-use crate::components::{BuildingVariant, GuardrailTag, PlacedModel, TrafficVariant};
+use crate::components::{BuildingVariant, GuardrailTag, Obstacle, PlacedModel, TrafficVariant};
 use crate::config::{
     BACKDROP_DIST, BACKDROP_H, BACKDROP_SCALE, BACKDROP_W, BACKDROP_Y, CHASE_HEIGHT, PLAYER_Y,
 };
@@ -39,7 +39,7 @@ impl CarRunner {
     /// then issue the grouped draws described at the module level.
     pub(crate) fn render_frame(&mut self, ctx: &mut EngineCtx) {
         // Pick each entity's mesh(es) by role: the player is the red car; obstacles
-        // (the streamed entities that carry a physics body) are the white car; every
+        // (the streamed entities with the `Obstacle` marker) are the white car; every
         // other renderable is a road tile. The cars are imported glTF made of
         // several primitives, so a car entity expands into one draw per part, each
         // at the entity's transform composed with the part's baked node transform.
@@ -57,7 +57,7 @@ impl CarRunner {
             .iter()
             .filter(|(e, _)| {
                 Some(*e) != player_entity
-                    && ctx.world().get::<&PhysicsBodyComponent>(*e).is_err()
+                    && ctx.world().get::<&Obstacle>(*e).is_err()
                     && ctx.world().get::<&BuildingVariant>(*e).is_err()
                     && ctx.world().get::<&GuardrailTag>(*e).is_err()
             })
@@ -81,7 +81,7 @@ impl CarRunner {
             .filter_map(|(e, (t, _))| {
                 if Some(e) == player_entity {
                     Some((t.transform, PlacedModel::Player))
-                } else if ctx.world().get::<&PhysicsBodyComponent>(e).is_ok() {
+                } else if ctx.world().get::<&Obstacle>(e).is_ok() {
                     let variant = ctx
                         .world()
                         .get::<&TrafficVariant>(e)

@@ -23,7 +23,7 @@
 //!
 //! The crate is graphics-only: it links `stickshift-render`, `stickshift-render-api`,
 //! `stickshift-assets` (without its ECS feature) and `stickshift-math`, and none of the
-//! windowing, audio, ECS or physics crates. On platforms without Metal only the
+//! windowing, audio or ECS crates. On platforms without Metal only the
 //! null backend exists, so the crate and its tests build everywhere.
 //!
 //! # Safety

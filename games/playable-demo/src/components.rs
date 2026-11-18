@@ -6,11 +6,16 @@
 //!
 //! These types ride alongside the engine-generic components
 //! ([`TransformComponent`](stickshift_ecs::TransformComponent),
-//! [`RenderComponent`](stickshift_ecs::RenderComponent),
-//! [`PhysicsBodyComponent`](stickshift_ecs::PhysicsBodyComponent), …) on the same ECS
+//! [`RenderComponent`](stickshift_ecs::RenderComponent), …) on the same ECS
 //! entities, but they name game concepts (which car model, which building, which
 //! decoration) — which is exactly why they live here in the game crate and not in
 //! `stickshift-ecs`: the engine's no-game-symbol guard would reject them there.
+
+/// A game-side ECS marker for an obstacle: a traffic car the player crashes into.
+/// Collision is the game's own overlap test against the transforms of entities
+/// carrying this marker.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Obstacle;
 
 /// A game-side ECS component tagging an obstacle with which traffic car variant it
 /// draws (index into [`crate::config::TRAFFIC_CAR_ASSETS`]). Assigned once at
@@ -25,8 +30,8 @@ pub(crate) struct TrafficVariant(
 /// A game-side ECS component tagging a streamed roadside building with which prefab
 /// it draws (index into [`crate::config::BUILDING_ASSETS`]). Assigned once at spawn
 /// (deterministic per slot + side) so a building keeps the same prefab for its
-/// whole life. A building is **non-colliding** decoration — it carries no physics
-/// body.
+/// whole life. A building is **non-colliding** decoration — it carries no
+/// [`Obstacle`] marker.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BuildingVariant(
     /// Index into [`crate::config::BUILDING_ASSETS`].

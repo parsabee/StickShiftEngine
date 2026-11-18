@@ -15,7 +15,7 @@ code path across both targets, not two, and it gives direct access to TBDR featu
 We deliberately give up portability to Windows/Linux/Android/Web. For an App Store product
 this is the correct trade. If portability is ever required, the `stickshift-render-api` trait
 seam (below) is the single insertion point for an additional backend (e.g. wgpu) without
-touching ECS, physics, scene, or game code.
+touching ECS, scene, or game code.
 
 ## 2. The render seam (blast-radius firewall)
 
@@ -64,7 +64,7 @@ tree) packed onto the render seam's `MeshData`/`VertexLayout`, with a load-once/
 depends only on `gltf`, `stickshift-math`, `stickshift-render-api`, and (for `spawn_scene`, behind the default
 `ecs` feature) `stickshift-ecs` — the `stickshift-assets → stickshift-ecs` edge stays acyclic (`stickshift-ecs` never
 depends on `stickshift-assets`) and no `metal` enters the tree. The C API uses the crate without the
-`ecs` feature, so no ECS or physics crate reaches `libstickshift`. Imported geometry packs onto `[pos,normal,color]` with a default vertex color so it renders
+`ecs` feature, so no ECS crate reaches `libstickshift`. Imported geometry packs onto `[pos,normal,color]` with a default vertex color so it renders
 through the existing pipeline immediately; parsed UVs are retained on `MeshAsset::uvs` for the
 textured pipeline. `playable-demo` loads every mesh it draws this way: the player and
 traffic are real committed CC0 car models (`assets/*.glb`), and the road, skyline, and scenery come
@@ -142,9 +142,8 @@ stickshift-engine/
 │   ├── stickshift-math          # glam re-export + Transform              (reuse)
 │   ├── stickshift-perf          # profiling / frame timing                (reuse)
 │   ├── stickshift-ecs           # hecs wrapper + components               (reuse)
-│   ├── stickshift-physics       # rapier3d wrapper (+ removal API)        (refactor)
 │   ├── stickshift-camera        # camera + controller math                (refactor)
-│   ├── stickshift-scene         # hecs World + PhysicsWorld + streaming   (refactor)
+│   ├── stickshift-scene         # hecs World + streaming + rebase         (refactor)
 │   ├── stickshift-render-api    # RenderDevice/FrameRecorder traits       (new seam)
 │   ├── stickshift-render        # raw-Metal impl of stickshift-render-api      (refactor)
 │   ├── stickshift-core          # app/lifecycle + platform (#[cfg])       (refactor)
@@ -178,7 +177,7 @@ API today — see [PLAYABLE_DEMO.md](PLAYABLE_DEMO.md); for standing up a new ga
 | Windowing | `winit` (macOS, in the Rust runner) | iOS (v0.9): the host app owns the view and the display link |
 | Math | `glam` | leaf crate |
 | ECS | `hecs` | already integrated in the prototype |
-| Physics | `rapier3d` | behind `stickshift-physics`, with a body/collider removal API |
+| Physics | none | removed in v0.2; a game brings its own (see §5) |
 | Audio | `kira` | behind `stickshift-audio`; see §4b |
 | Assets | `gltf` + `image` | static meshes only for v1 |
 
@@ -186,8 +185,8 @@ API today — see [PLAYABLE_DEMO.md](PLAYABLE_DEMO.md); for standing up a new ga
 
 `stickshift-core` drives simulation on a **fixed timestep decoupled from the display
 rate**. `FIXED_DT = 1/60 s` is the single source of truth (`stickshift-core`'s
-`timestep.rs`); physics (`stickshift-physics`) steps at the same rate so its behavior
-is deterministic. Each display frame:
+`timestep.rs`); a game that runs its own physics steps it from `update` at that rate, so its
+behavior is deterministic. Each display frame:
 
 1. banks the real elapsed time in an `Accumulator`,
 2. calls `Game::update(ctx, FIXED_DT)` a whole number of times (0..N), draining
@@ -231,33 +230,23 @@ behaviour is asserted in plain unit tests with no hardware and nothing to listen
 approach as `NullRenderer` for draws. Which sound is "the music" and which is an effect is game
 policy: the engine takes a handle and a level.
 
-## 5. Physics decision (v1)
+## 5. Physics decision
 
-rapier3d is retained for v1 because it was already integrated and got the runner
-playable fastest. v1 adds the missing **body/collider removal API** (required to despawn
-obstacles in an infinite runner). The car's lateral/lane motion is **kinematic and
-game-owned**, not solver-driven. The `stickshift-physics` wrapper hides rapier, so replacing it
-later would not ripple through the engine; no replacement is planned.
+The engine has **no physics**. v0.1 wrapped `rapier3d` in a `stickshift-physics` crate, and the
+scene owned a `PhysicsWorld` next to its hecs `World`; v0.2 removed both. The demo never needed a
+solver (its car moves kinematically and its collisions are box overlaps), the C API never exposed
+one, and a racing game wants vehicle physics tuned for it rather than a general rigid-body world
+the engine picks. A game that wants physics links a library itself (for example `rapier3d` from
+Rust, or a Swift library over the C API), steps it from `Game::update` at `FIXED_DT`, and keeps
+its bodies next to its entities however it likes.
 
-**Status:** the wrapper has migrated into `crates/stickshift-physics` and the removal
-API has landed — `PhysicsWorld::remove_body` (removes the body and its attached colliders)
-and `remove_collider`. Both uphold a **stale-handle-safety** invariant: after removal every
-query on the freed handle returns `None` / is a no-op and never derefs freed storage
-(rapier's generational handles + tests enforce this). The companion **handle-ownership**
-invariant — a handle in a `PhysicsBodyComponent` is removed from physics atomically with
-clearing the component — is documented here and in the crate; the despawn orchestration that
-upholds it lives in `stickshift-scene` (below). `PhysicsWorld::step` advances at the crate-local `FIXED_DT`, which
-mirrors `stickshift-core`'s `FIXED_DT` (`stickshift-physics` does **not** depend on `stickshift-core`, to
-avoid a dependency cycle; a test pins the value).
-
-**Status:** `crates/stickshift-scene` now owns the hecs `World` + `PhysicsWorld` and adds
-engine-generic **streaming** (spawn-ahead / despawn-behind by focus distance) and **floating-origin
-rebase**. Despawn is **atomic** — the physics body is removed before the ECS entity, upholding the
-handle-ownership invariant above. Rebase shifts ECS transforms and physics bodies together, only
-**between** physics steps (`stream → step_physics → maybe_rebase`), so relative positions are
-preserved and the solver never sees a mid-step discontinuity. `stickshift-core` owns a `Scene` in its
-loop and exposes it via `EngineCtx`; the dependency direction stays acyclic
-(`stickshift-core → stickshift-scene → {stickshift-ecs, stickshift-physics, stickshift-math}`).
+**Scene.** `crates/stickshift-scene` owns the hecs `World` and adds engine-generic **streaming**
+(spawn-ahead / despawn-behind by focus distance) and **floating-origin rebase**. Rebase shifts
+every ECS transform by the same whole multiple of the threshold and returns that offset, so a game
+that keeps positions outside the ECS (a camera, its own physics bodies) shifts them by the same
+vector; done between physics steps, the solver never sees a mid-step discontinuity.
+`stickshift-core` owns a `Scene` in its loop and exposes it via `EngineCtx`; the dependency
+direction stays acyclic (`stickshift-core → stickshift-scene → {stickshift-ecs, stickshift-math}`).
 
 ## 6. Provenance
 
