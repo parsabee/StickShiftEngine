@@ -213,7 +213,7 @@ use crate::lights::{
 use crate::registry::Registry;
 use crate::shadow::{
     fit_shadow_frustum, resolve_shadow_distance, shadow_distance_for_fog, shadow_map_size_for,
-    SHADOW_MAP_SIZE, SHADOW_MAP_SIZE_OFF,
+    ShadowFit, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE_OFF,
 };
 use crate::vertex::{
     normal_matrix, LightUniforms, MaterialUniforms, Uniforms, Vertex, UNIFORM_RING_STRIDE,
@@ -667,6 +667,9 @@ pub struct MetalRenderer {
     // default). Resolved against the fog every frame in `write_light_to_ring`,
     // so it can never push shadows past what the fog leaves visible.
     shadow_distance_override: Option<f32>,
+    // The last frame.s shadow fit, whose orientation the next one carries over so
+    // a moving sun turns the map without rolling it (see `shadow::light_up`).
+    last_shadow_fit: Option<ShadowFit>,
     // Render quality settings, as last pushed through the seam. The
     // shadow tier decides whether the shadow pass runs at all and the map's size;
     // the draw-distance scale is applied to the fog below.
@@ -1381,6 +1384,7 @@ impl MetalRenderer {
             shadow_textured_pipeline_state,
             shadows_enabled: true,
             shadow_distance_override: None,
+            last_shadow_fit: None,
             render_settings: RenderSettings::default(),
             shadow_map_size: SHADOW_MAP_SIZE,
             base_fog: (light.fog_start, light.fog_density),
@@ -1958,7 +1962,9 @@ impl MetalRenderer {
                 self.shadow_distance_override,
             ),
             self.shadow_map_size,
+            self.last_shadow_fit.as_ref(),
         );
+        self.last_shadow_fit = Some(fit);
         self.light.apply_shadow_fit(&fit);
 
         // SAFETY: the ring is `MAX_FRAMES_IN_FLIGHT * UNIFORM_RING_STRIDE` bytes and

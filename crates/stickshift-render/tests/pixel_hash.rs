@@ -599,6 +599,17 @@ fn reference_sun_matches_committed_hash() {
 /// - **The other baselines behave.** The same blessing run reprinted
 ///   `OVERLAY_REFERENCE_HASH` and `SUN_REFERENCE_HASH` unchanged.
 ///
+/// # Re-blessed: the sun's highlights follow its intensity
+///
+/// `0xb5efe2dbd7e0de08` → `0x0ccf8b7def1b32b8`. The sun's specular term is now
+/// scaled by the sun's intensity, like its diffuse light and its disc, instead
+/// of a constant; this scene's sun is the default 0.8, so its highlights dim to
+/// 0.8 of what they were. 302 of 4096 pixels changed, each by exactly one step
+/// and every one darker: the highlights, and nothing else. With the specular
+/// term reverted, this hash passes unchanged, so the shadow map's carried
+/// orientation (the same change set) leaves a still-sun frame alone; the
+/// shadow itself is untouched.
+///
 /// # Re-blessed: shadow distance follows the draw distance (4096² map)
 ///
 /// `0xfeea97900d873f0a` → `0xb5efe2dbd7e0de08`, an intended resampling of the
@@ -628,7 +639,7 @@ fn reference_sun_matches_committed_hash() {
 /// the exact frame this hash was taken of — within tolerances; see there.
 /// Re-blessing rewrites both (`BLESS=1` writes the image file too), and
 /// [`shadow_reference_image_matches_committed_hash`] keeps them in lockstep.
-const SHADOW_REFERENCE_HASH: u64 = 0xb5efe2dbd7e0de08;
+const SHADOW_REFERENCE_HASH: u64 = 0x0ccf8b7def1b32b8;
 
 /// The committed shadow reference frame itself: `WIDTH x HEIGHT` BGRA8 pixels
 /// (16 KiB), byte-identical to the frame [`SHADOW_REFERENCE_HASH`] pins (a GPU-free

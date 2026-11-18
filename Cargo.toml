@@ -56,10 +56,12 @@ glam = "0.29"
 # glTF import: pure-Rust parser, builds on the Command Line Tools (no
 # Metal / no C toolchain beyond std). `default-features` is disabled and only the
 # `import` + `utils` features are enabled so no image/extras baggage is pulled in
-# (image decoding is the separate `image` dependency below).
+# (image decoding is the separate `image` dependency below). `names` keeps the
+# authored names (no extra crates), for `MeshAsset::material_name`.
 gltf = { version = "1.4", default-features = false, features = [
     "import",
     "utils",
+    "names",
     "KHR_materials_emissive_strength",
 ] }
 # Image decoding: decode glTF base-color images (PNG/JPEG) to RGBA8 in

@@ -1001,6 +1001,42 @@ fn an_import_cancelled_at_any_stage_stops_there() {
 }
 
 #[test]
+fn material_names_are_imported_per_primitive() {
+    // The committed fixture's one material is named "tinted".
+    let fixture = import_slice(MATERIAL_COLOR_GLTF).expect("material-color fixture parses");
+    assert_eq!(fixture.meshes[0].material_name.as_deref(), Some("tinted"));
+
+    // Three primitives of one mesh: a named material, an unnamed one, and none
+    // at all. Each primitive keeps its own material's name, in primitive order.
+    let positions = [0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+    let bin = le_bytes(&positions, f32::to_le_bytes);
+    let json = format!(
+        r#"{{
+  "asset": {{"version": "2.0"}},
+  "buffers": [{{"byteLength": {len}}}],
+  "bufferViews": [{{"buffer": 0, "byteOffset": 0, "byteLength": {len}}}],
+  "accessors": [{{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+                  "min": [0,0,0], "max": [1,1,0]}}],
+  "materials": [{{"name": "window"}}, {{}}],
+  "meshes": [{{"primitives": [{{"attributes": {{"POSITION": 0}}, "material": 0}},
+                              {{"attributes": {{"POSITION": 0}}, "material": 1}},
+                              {{"attributes": {{"POSITION": 0}}}}]}}],
+  "nodes": [{{"mesh": 0}}],
+  "scenes": [{{"nodes": [0]}}],
+  "scene": 0
+}}"#,
+        len = bin.len()
+    );
+    let scene = import_slice(&glb(&json, &bin)).expect("imports");
+    let names: Vec<Option<&str>> = scene
+        .meshes
+        .iter()
+        .map(|m| m.material_name.as_deref())
+        .collect();
+    assert_eq!(names, [Some("window"), None, None]);
+}
+
+#[test]
 fn material_emission_is_imported_with_its_strength() {
     // One triangle, its material glowing warm white at strength 4, and a second
     // primitive with no material: glTF's default emits nothing.

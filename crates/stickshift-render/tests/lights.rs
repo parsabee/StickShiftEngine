@@ -589,6 +589,24 @@ fn over_budget_and_invalid_lights_are_counted_not_drawn() {
 /// each other with no tile or slice seams, the headlights' pool on the road,
 /// the tail light's red patch, and every window glowing against its dark wall.
 ///
+/// # Re-blessed: the sun's highlights follow its intensity
+///
+/// `0x4983fc2460d51eef` → `0xd1c676c95af0bc4a`. The sun's specular term was
+/// scaled by a constant, not by the sun's intensity, so this scene's sun, which
+/// is switched off (`sun_intensity: 0.0`), still put highlights on every block
+/// face turned toward it. Now it lights nothing, highlights included. Checked
+/// before accepting it:
+///
+/// - **Only those highlights went.** 983 of 9216 pixels changed, every one of
+///   them darker (by up to 61/255, 15 on average), all on the block faces
+///   turned toward the switched-off sun; nothing got brighter. Looking at both
+///   frames, the lamp pools, the headlight pool, the tail light and every
+///   window are unchanged.
+/// - **Nothing else moved.** With the specular term reverted to the old
+///   constant scale, this hash and every other baseline pass unchanged, so the
+///   shadow map's carried orientation (the same change set) does not touch a
+///   still-sun frame.
+///
 /// # On a paravirtualized GPU
 ///
 /// GitHub's macOS runners expose an "Apple Paravirtual device" that renders
@@ -600,7 +618,7 @@ fn over_budget_and_invalid_lights_are_counted_not_drawn() {
 /// [`NIGHT_STREET_MAX_DIFFERING_PIXELS`] pixels off by more than one step.
 /// `the_night_street_tolerance_is_not_vacuous` proves that rule still fails a
 /// frame missing a single lamp.
-const NIGHT_STREET_REFERENCE_HASH: u64 = 0x4983fc2460d51eef;
+const NIGHT_STREET_REFERENCE_HASH: u64 = 0xd1c676c95af0bc4a;
 
 /// The night street's size: small, so its committed image stays small.
 const NIGHT_WIDTH: u32 = 128;
@@ -807,4 +825,29 @@ fn the_night_street_tolerance_is_not_vacuous() {
         compare_night_street(&all, &one_out).is_err(),
         "a frame missing a lamp passed the tolerance"
     );
+}
+
+#[test]
+fn a_sun_switched_off_lights_nothing_wherever_it_stands() {
+    // The night street's sun is at zero intensity. Every term it contributes,
+    // its highlights included, scales with that intensity, so turning it to
+    // stand anywhere else must leave the frame bit-for-bit as it was. A game
+    // relies on this to swap its sun for a moon (or back) while neither is lit,
+    // with no jump on screen.
+    let Some(mut scene) = Scene::sized(NIGHT_WIDTH, NIGHT_HEIGHT) else {
+        common::no_gpu();
+        return;
+    };
+    let reference = render_night_street(&mut scene, None);
+    for (elevation, azimuth) in [(60.0, 20.0), (5.0, 290.0), (85.0, 120.0)] {
+        scene.r.set_sun_sky(&SunSky {
+            sun_elevation_deg: elevation,
+            sun_azimuth_deg: azimuth,
+            ..night()
+        });
+        assert!(
+            render_night_street(&mut scene, None) == reference,
+            "a switched-off sun at elevation {elevation}°, azimuth {azimuth}° changed the frame"
+        );
+    }
 }

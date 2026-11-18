@@ -57,6 +57,22 @@
 //!    rasterises identically, so it cannot crawl or shimmer as the camera moves.
 //!    `snapping_keeps_every_world_point_on_the_same_subtexel_position` pins this.
 //!
+//! # A moving sun
+//!
+//! The light space's orientation about the light's own axis (its up vector) is
+//! a free choice; any up vector not parallel to the light works. Picking a fresh
+//! one each frame (world `+Y`) is fine for a still sun, but when the sun moves,
+//! a change in its bearing *rolls* the map about the light, fastest when the sun
+//! is high: every shadow edge then rasterises on a slightly turned grid each
+//! frame, and all of them shimmer at once. So each fit carries the previous
+//! frame's orientation over ([`light_up`]), turned by exactly the rotation that
+//! takes the previous light direction to this one. The map turns with the sun
+//! and never rolls (`a_moving_sun_turns_the_map_without_rolling_it`); a sun that
+//! has not moved keeps its up vector exactly, so its fit is bit for bit the one a
+//! fresh fit makes (`a_still_sun_keeps_exactly_the_map_it_always_had`); and a
+//! jump of more than [`CARRY_MAX_TURN_DEG`] (a sun swapped for a moon) starts
+//! afresh, as a first frame does.
+//!
 //! The ortho projection is extended [`SHADOW_CASTER_MARGIN`] toward the sun so a
 //! caster outside the sphere (a tall building beside the road) still lands in
 //! the map with a real depth; the pass also clamps depth instead of clipping, so
@@ -112,7 +128,7 @@
 //! inside the fog, which is already ~55% opaque where it begins; with a shorter
 //! override it is a gentle ramp in clear air.
 
-use stickshift_math::glam::{Mat4, Vec3, Vec4};
+use stickshift_math::glam::{Mat4, Quat, Vec3, Vec4};
 use stickshift_render_api::ShadowQuality;
 
 /// Edge length, in texels, of the square shadow map.
@@ -265,21 +281,61 @@ pub fn visible_slab_corners(view_projection: Mat4, shadow_distance: f32) -> [Vec
     corners
 }
 
-/// A rotation-only view matrix looking along the light's travel `direction`.
+/// A rotation-only view matrix looking along the light's travel `direction`,
+/// with `up` (from [`light_up`]) as its up vector.
 ///
 /// Its origin is the **world origin**, never the camera: that is what gives the
 /// texel snapping in [`fit_shadow_frustum`] a fixed grid to snap to.
 #[must_use]
-pub fn light_view(direction: Vec3) -> Mat4 {
+pub fn light_view(direction: Vec3, up: Vec3) -> Mat4 {
     let forward = direction.try_normalize().unwrap_or(Vec3::NEG_Y);
-    // Any up vector not parallel to the light works; switch away from +Y only
-    // when the sun is (almost) overhead.
-    let up = if forward.y.abs() > 0.99 {
+    Mat4::look_to_rh(Vec3::ZERO, forward, up)
+}
+
+/// The furthest a light may turn in one frame and still carry its map's
+/// orientation across (see [`light_up`]); a bigger jump starts afresh.
+pub const CARRY_MAX_TURN_DEG: f32 = 30.0;
+
+/// The up vector of the light view for a light travelling along `direction`,
+/// carried over from the previous frame's light when there is one: `previous`
+/// is that frame's `(direction, up)`.
+///
+/// Carried over: the previous up vector turned by the same rotation that takes
+/// the previous light direction to this one, the shortest arc between them.
+/// So as the sun moves, the map turns with it but never *rolls* about the
+/// light's own axis. A fresh up vector each frame (world `+Y`) rolls the map
+/// whenever the sun's bearing changes, fastest when the sun is high, and every
+/// shadow edge then rasterises on a slightly turned grid each frame and
+/// shimmers. A light that has not moved keeps its up vector exactly, so a still
+/// sun's map is the very one it has always had, bit for bit.
+///
+/// Without a `previous` (the first frame), or after a turn of more than
+/// [`CARRY_MAX_TURN_DEG`] (a jump, not motion), any up vector not parallel to
+/// the light works: world `+Y`, switching to `+Z` only when the sun is (almost)
+/// overhead.
+#[must_use]
+pub fn light_up(direction: Vec3, previous: Option<(Vec3, Vec3)>) -> Vec3 {
+    let forward = direction.try_normalize().unwrap_or(Vec3::NEG_Y);
+    if let Some((previous_direction, previous_up)) = previous {
+        let previous_forward = previous_direction.try_normalize().unwrap_or(Vec3::NEG_Y);
+        // The turn's axis and angle from the cross product, not `acos` of the dot
+        // (nor `Quat::from_rotation_arc`, which takes a turn this small for none):
+        // a sun crossing the sky turns a fraction of a milliradian per frame.
+        let axis = previous_forward.cross(forward);
+        let sin = axis.length();
+        if sin <= 0.0 {
+            return previous_up;
+        }
+        let angle = sin.atan2(previous_forward.dot(forward));
+        if angle <= CARRY_MAX_TURN_DEG.to_radians() {
+            return Quat::from_axis_angle(axis / sin, angle) * previous_up;
+        }
+    }
+    if forward.y.abs() > 0.99 {
         Vec3::Z
     } else {
         Vec3::Y
-    };
-    Mat4::look_to_rh(Vec3::ZERO, forward, up)
+    }
 }
 
 /// One frame's fitted shadow projection — see the [module docs](self).
@@ -300,6 +356,11 @@ pub struct ShadowFit {
     pub depth_range: f32,
     /// The view depth the fit covers (see [`shadow_distance_for_fog`]).
     pub shadow_distance: f32,
+    /// The direction the light travels, as fitted (unit length).
+    pub direction: Vec3,
+    /// The light view's up vector ([`light_up`]). With
+    /// [`direction`](Self::direction), what the next frame's fit carries over.
+    pub up: Vec3,
 }
 
 /// Fit the sun's orthographic shadow projection to the camera's visible slab.
@@ -307,15 +368,18 @@ pub struct ShadowFit {
 /// `view_projection` is the frame's camera (as pushed through the seam),
 /// `light_direction` the direction the sunlight travels (the
 /// [`SunSky::direction`](stickshift_render_api::SunSky::direction) — the backend passes
-/// the very vector it shades with), `shadow_distance` how deep the slab is, and
-/// `map_size` the shadow map's edge in texels. See the [module docs](self) for the
-/// strategy and its stability guarantee.
+/// the very vector it shades with), `shadow_distance` how deep the slab is,
+/// `map_size` the shadow map's edge in texels, and `previous` the previous
+/// frame's fit (`None` on the first frame), whose orientation this one carries
+/// over (see [`light_up`]). See the [module docs](self) for the strategy and its
+/// stability guarantee.
 #[must_use]
 pub fn fit_shadow_frustum(
     view_projection: Mat4,
     light_direction: Vec3,
     shadow_distance: f32,
     map_size: u32,
+    previous: Option<&ShadowFit>,
 ) -> ShadowFit {
     let corners = visible_slab_corners(view_projection, shadow_distance);
 
@@ -355,7 +419,9 @@ pub fn fit_shadow_frustum(
 
     // Snap the centre to whole texels in the fixed-origin light space. `radius`
     // is `map_size / 2` texels, so the left/bottom edges land on whole texels too.
-    let view = light_view(light_direction);
+    let direction = light_direction.try_normalize().unwrap_or(Vec3::NEG_Y);
+    let up = light_up(direction, previous.map(|fit| (fit.direction, fit.up)));
+    let view = light_view(direction, up);
     let center_ls = view.transform_point3(center);
     let snapped_ls = Vec3::new(
         (center_ls.x / texel).round() * texel,
@@ -384,6 +450,8 @@ pub fn fit_shadow_frustum(
         texel_world_size: texel,
         depth_range: far - near,
         shadow_distance,
+        direction,
+        up,
     }
 }
 
@@ -477,16 +545,17 @@ mod tests {
         // shadows were first tuned at (~4.7 cm texels at 2048²) is ~2.3 cm at
         // 4096², against ~6.9 cm for the full draw distance.
         let vp = chase_camera(Vec3::ZERO, 16.0 / 9.0);
-        let full = fit_shadow_frustum(vp, demo_sun(), DIST, SHADOW_MAP_SIZE);
+        let full = fit_shadow_frustum(vp, demo_sun(), DIST, SHADOW_MAP_SIZE, None);
         let short = fit_shadow_frustum(
             vp,
             demo_sun(),
             resolve_shadow_distance(DIST, Some(55.0)),
             SHADOW_MAP_SIZE,
+            None,
         );
         assert!(full.texel_world_size > 2.5 * short.texel_world_size);
         assert_eq!(
-            fit_shadow_frustum(vp, demo_sun(), 55.0, 2048).texel_world_size,
+            fit_shadow_frustum(vp, demo_sun(), 55.0, 2048, None).texel_world_size,
             2.0 * short.texel_world_size
         );
     }
@@ -509,7 +578,7 @@ mod tests {
     fn fit_encloses_the_whole_visible_slab() {
         for aspect in [1.0, 16.0 / 10.0, 16.0 / 9.0, 2.2] {
             let vp = chase_camera(Vec3::new(3.0, 0.1, -123.4), aspect);
-            let fit = fit_shadow_frustum(vp, demo_sun(), DIST, SHADOW_MAP_SIZE);
+            let fit = fit_shadow_frustum(vp, demo_sun(), DIST, SHADOW_MAP_SIZE, None);
             for c in visible_slab_corners(vp, DIST) {
                 let p = fit.project(c);
                 assert!(
@@ -527,7 +596,7 @@ mod tests {
         // travel direction keeps its texel and only pushes it deeper.
         let vp = chase_camera(Vec3::ZERO, 16.0 / 9.0);
         let sun = demo_sun();
-        let fit = fit_shadow_frustum(vp, sun, DIST, SHADOW_MAP_SIZE);
+        let fit = fit_shadow_frustum(vp, sun, DIST, SHADOW_MAP_SIZE, None);
         let p = Vec3::new(1.0, 0.0, -10.0);
         let a = fit.project(p);
         let b = fit.project(p + sun * 5.0);
@@ -540,7 +609,7 @@ mod tests {
             ..SunSky::default()
         }
         .direction();
-        let refit = fit_shadow_frustum(vp, other, DIST, SHADOW_MAP_SIZE);
+        let refit = fit_shadow_frustum(vp, other, DIST, SHADOW_MAP_SIZE, None);
         assert_ne!(fit.light_view_projection, refit.light_view_projection);
     }
 
@@ -548,10 +617,10 @@ mod tests {
     fn radius_and_texel_size_are_stable_as_the_camera_moves_and_turns() {
         let sun = demo_sun();
         let size = SHADOW_MAP_SIZE;
-        let base = fit_shadow_frustum(chase_camera(Vec3::ZERO, 16.0 / 9.0), sun, DIST, size);
+        let base = fit_shadow_frustum(chase_camera(Vec3::ZERO, 16.0 / 9.0), sun, DIST, size, None);
         for i in 0..200 {
             let car = Vec3::new((i as f32 * 0.37).sin() * 3.0, 0.1, -(i as f32) * 0.731);
-            let fit = fit_shadow_frustum(chase_camera(car, 16.0 / 9.0), sun, DIST, size);
+            let fit = fit_shadow_frustum(chase_camera(car, 16.0 / 9.0), sun, DIST, size, None);
             assert_eq!(fit.radius, base.radius, "radius breathed at step {i}");
             assert_eq!(fit.texel_world_size, base.texel_world_size);
         }
@@ -559,7 +628,7 @@ mod tests {
         for deg in [10.0f32, 45.0, 90.0, 170.0] {
             let rot = Mat4::from_rotation_y(deg.to_radians());
             let vp = chase_camera(Vec3::ZERO, 16.0 / 9.0) * rot;
-            let fit = fit_shadow_frustum(vp, sun, DIST, size);
+            let fit = fit_shadow_frustum(vp, sun, DIST, size, None);
             assert_eq!(fit.radius, base.radius, "radius changed at yaw {deg}");
         }
     }
@@ -603,13 +672,13 @@ mod tests {
             let t = fit.project(p) * size as f32;
             Vec3::new(t.x - t.x.round(), t.y - t.y.round(), 0.0)
         };
-        let base = fit_shadow_frustum(chase_camera(Vec3::ZERO, 16.0 / 9.0), sun, DIST, size);
+        let base = fit_shadow_frustum(chase_camera(Vec3::ZERO, 16.0 / 9.0), sun, DIST, size, None);
         let mut moved = 0;
         for i in 1..120 {
             // Deliberately irrational-ish steps so the centre moves by sub-texel
             // amounts in every direction.
             let car = Vec3::new((i as f32 * 0.113).sin() * 2.9, 0.1, -(i as f32) * 0.0917);
-            let fit = fit_shadow_frustum(chase_camera(car, 16.0 / 9.0), sun, DIST, size);
+            let fit = fit_shadow_frustum(chase_camera(car, 16.0 / 9.0), sun, DIST, size, None);
             if fit.center != base.center {
                 moved += 1;
             }
@@ -632,7 +701,7 @@ mod tests {
         // Control for the test above: the same point's sub-texel position under an
         // un-snapped projection *does* wander, so the snapping is doing the work.
         let sun = demo_sun();
-        let view = light_view(sun);
+        let view = light_view(sun, light_up(sun, None));
         let texel = 0.05;
         let p = Vec3::new(0.0, 0.0, -20.0);
         let sub = |center: Vec3| {
@@ -649,7 +718,7 @@ mod tests {
     #[test]
     fn identity_camera_does_not_produce_nans() {
         // The backend's state before any camera push (the overlay reference).
-        let fit = fit_shadow_frustum(Mat4::IDENTITY, demo_sun(), DIST, SHADOW_MAP_SIZE);
+        let fit = fit_shadow_frustum(Mat4::IDENTITY, demo_sun(), DIST, SHADOW_MAP_SIZE, None);
         assert!(fit
             .light_view_projection
             .to_cols_array()
@@ -660,10 +729,107 @@ mod tests {
 
     #[test]
     fn overhead_sun_has_a_valid_light_view() {
-        let m = light_view(Vec3::NEG_Y);
+        let m = light_view(Vec3::NEG_Y, light_up(Vec3::NEG_Y, None));
         assert!(m.to_cols_array().iter().all(|v| v.is_finite()));
         // Looking straight down: a point below the origin is in front (-Z).
         assert!(m.transform_point3(Vec3::new(0.0, -5.0, 0.0)).z < 0.0);
+    }
+
+    /// A sun sweeping high across the southern sky, one 60 Hz step at a time,
+    /// turning about 0.8° a second: bearing and height both change.
+    fn high_sun_sweep() -> Vec<Vec3> {
+        (0..=600)
+            .map(|step| {
+                let t = step as f32 / 60.0;
+                SunSky {
+                    sun_elevation_deg: 64.0 - 0.3 * t,
+                    sun_azimuth_deg: 180.0 + 1.2 * t,
+                    ..SunSky::default()
+                }
+                .direction()
+            })
+            .collect()
+    }
+
+    /// How far, in radians, the map turned about the light's own axis from one
+    /// light view to the next: the roll that makes shadow edges shimmer.
+    fn roll(from: Mat4, to: Mat4) -> f32 {
+        // A view matrix's rows are its right, up and backward axes in world space.
+        let forward = -to.row(2).truncate();
+        let before = from.row(0).truncate();
+        let before = (before - forward * before.dot(forward)).normalize();
+        let after = to.row(0).truncate();
+        before
+            .cross(after)
+            .dot(forward)
+            .atan2(before.dot(after))
+            .abs()
+    }
+
+    #[test]
+    fn a_moving_sun_turns_the_map_without_rolling_it() {
+        let path = high_sun_sweep();
+        let vp = chase_camera(Vec3::new(0.0, 0.0, -100.0), 16.0 / 9.0);
+
+        // Carrying each fit's orientation into the next: no roll worth the name...
+        let mut previous = fit_shadow_frustum(vp, path[0], DIST, SHADOW_MAP_SIZE, None);
+        let mut carried = 0.0f32;
+        for &sun in &path[1..] {
+            let fit = fit_shadow_frustum(vp, sun, DIST, SHADOW_MAP_SIZE, Some(&previous));
+            carried = carried.max(roll(
+                light_view(previous.direction, previous.up),
+                light_view(fit.direction, fit.up),
+            ));
+            previous = fit;
+        }
+
+        // ...where a fresh world-up every frame rolls the map with the bearing.
+        let fresh = path
+            .windows(2)
+            .map(|pair| {
+                let view = |sun: Vec3| light_view(sun, light_up(sun, None));
+                roll(view(pair[0]), view(pair[1]))
+            })
+            .fold(0.0, f32::max);
+
+        assert!(carried < 1e-5, "carried: rolled {carried} rad in a step");
+        assert!(fresh > 1e-4, "fresh up: rolled {fresh} rad in a step");
+    }
+
+    #[test]
+    fn a_still_sun_keeps_exactly_the_map_it_always_had() {
+        // Carrying changes nothing while the light stands still: every frame's fit
+        // is bit-for-bit the first frame's, which is the one a fresh fit makes. So
+        // a scene under a fixed sun renders exactly as it did before carrying.
+        for sun in [demo_sun(), Vec3::NEG_Y, high_sun_sweep()[300]] {
+            let vp = chase_camera(Vec3::new(3.0, 0.0, -40.0), 16.0 / 9.0);
+            let first = fit_shadow_frustum(vp, sun, DIST, SHADOW_MAP_SIZE, None);
+            let mut previous = first;
+            for _ in 0..100 {
+                let fit = fit_shadow_frustum(vp, sun, DIST, SHADOW_MAP_SIZE, Some(&previous));
+                assert_eq!(fit, first);
+                previous = fit;
+            }
+        }
+    }
+
+    #[test]
+    fn a_jump_too_far_to_carry_starts_afresh() {
+        // Swapping the sun for a moon on the other side of the sky is a jump, not
+        // motion: the fit takes a fresh orientation, as on a first frame.
+        let vp = chase_camera(Vec3::ZERO, 16.0 / 9.0);
+        let sun = fit_shadow_frustum(vp, demo_sun(), DIST, SHADOW_MAP_SIZE, None);
+        let moon = SunSky {
+            sun_elevation_deg: 38.0,
+            sun_azimuth_deg: 200.0,
+            ..SunSky::default()
+        }
+        .direction();
+        assert!(sun.direction.angle_between(moon).to_degrees() > CARRY_MAX_TURN_DEG);
+        assert_eq!(
+            fit_shadow_frustum(vp, moon, DIST, SHADOW_MAP_SIZE, Some(&sun)),
+            fit_shadow_frustum(vp, moon, DIST, SHADOW_MAP_SIZE, None),
+        );
     }
 
     #[test]
@@ -675,6 +841,7 @@ mod tests {
             demo_sun(),
             DIST,
             SHADOW_MAP_SIZE,
+            None,
         );
         assert_eq!(SHADOW_MAP_SIZE, 4096);
         assert!(

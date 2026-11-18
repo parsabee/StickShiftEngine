@@ -77,6 +77,14 @@ const HEIGHT: u32 = 64;
 //
 // Blessed 2026-09-26: 0xdb98efc9ab5028c9 -> 0x4aa6c2b1732c4ac7.
 //
+// re-bless REQUIRED (intended look change): 0x9cc073f21160d04e -> 0xc245e4559d1e1354.
+// The sun's specular term is now scaled by the sun's intensity, like its diffuse
+// light and its disc, instead of a constant. This quad is lit by the default 0.8
+// sun, so its highlight dims to 0.8 of what it was. With the specular term
+// reverted the hash is unchanged, so nothing else in the change set (the shadow
+// map's carried orientation) touches this frame. Mesh, texture, camera and
+// transform are unchanged.
+//
 // re-bless REQUIRED (intended look change): 0x4aa6c2b1732c4ac7 ->
 // 0x95a7782d5aea44e4. The fake `ground_shadow` blob is deleted; it was centred on
 // the world origin (radius 1.2, strength 0.5), where this quad sits, so it was
@@ -95,7 +103,7 @@ const HEIGHT: u32 = 64;
 // the encoded bytes and encoding them a second time. The quad is darker and more
 // saturated; `srgb_texture_samples_as_its_linear_decode` checks the decode itself.
 // Mesh, texture bytes, camera and transform are unchanged.
-const REFERENCE_HASH: u64 = 0x9cc073f21160d04e;
+const REFERENCE_HASH: u64 = 0xc245e4559d1e1354;
 
 /// FNV-1a 64-bit over a byte buffer (self-contained, no external crate).
 fn fnv1a_64(bytes: &[u8]) -> u64 {

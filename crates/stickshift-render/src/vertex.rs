@@ -193,9 +193,11 @@ pub struct LightUniforms {
     pub _padding2: f32,
     /// Constant ambient strength. Offset 32.
     pub ambient_intensity: f32,
-    /// Diffuse (Lambertian) strength.
+    /// Diffuse (Lambertian) strength: the sun's intensity.
     pub diffuse_intensity: f32,
-    /// Specular highlight strength.
+    /// Specular highlight strength, relative to the light: the sun's highlights
+    /// are this times its intensity ([`diffuse_intensity`](Self::diffuse_intensity)),
+    /// so a dimmer sun has dimmer highlights and a sun at zero has none.
     pub specular_intensity: f32,
     /// Phong specular exponent.
     pub shininess: f32,
@@ -602,7 +604,7 @@ mod tests {
         let vp = Mat4::perspective_rh(0.8, 1.6, 0.1, 100.0)
             * Mat4::look_at_rh(Vec3::new(0.0, 6.0, 12.0), Vec3::ZERO, Vec3::Y);
         let mut l = LightUniforms::default();
-        let fit = fit_shadow_frustum(vp, Vec3::from(l.direction), 55.0, SHADOW_MAP_SIZE);
+        let fit = fit_shadow_frustum(vp, Vec3::from(l.direction), 55.0, SHADOW_MAP_SIZE, None);
         l.apply_shadow_fit(&fit);
         assert_eq!(
             l.light_view_projection,
