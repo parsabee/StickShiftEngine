@@ -28,7 +28,7 @@ let mut perf = PerfTracker::new();
 perf.begin_frame();
 
 perf.mark_start();
-// ... run the game's own physics, if it has any ...
+// ... run physics ...
 perf.mark_physics();
 
 perf.mark_start();

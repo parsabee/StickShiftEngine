@@ -147,8 +147,8 @@ impl Headless {
         self.lp.scene.world()
     }
 
-    /// The [`Scene`] after (or between) runs — inspect the ECS world and the
-    /// streaming state the game built.
+    /// The [`Scene`] after (or between) runs — inspect the ECS world, the physics
+    /// world, and streaming state the game built.
     #[must_use]
     pub fn scene(&self) -> &Scene {
         &self.lp.scene

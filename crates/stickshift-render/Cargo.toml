@@ -25,8 +25,8 @@ astc-textures = []
 # new_library_with_data, so no shader is compiled at runtime. This REQUIRES the
 # Metal toolchain (full Xcode; see scripts/preflight.sh --ios). OFF by default so a
 # development build needs only the Command Line Tools (shaders then compile at
-# runtime via new_library_with_source). Release builds (the Homebrew tarball and
-# libstickshift) turn it on, and CI tests both ways.
+# runtime via new_library_with_source). Release builds turn it on, and CI tests
+# both ways.
 precompiled-shaders = []
 
 # The `objc` 0.2 `msg_send!`/`sel_impl!` macros emit a `cfg(cargo-clippy)` check

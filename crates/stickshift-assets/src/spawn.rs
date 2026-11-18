@@ -5,7 +5,7 @@
 //! Spawn ECS entities from an imported [`SceneAsset`]'s node graph.
 //!
 //! This is the one place `stickshift-assets` touches `stickshift-ecs`. The dependency
-//! direction is acyclic: `stickshift-ecs` is a leaf (math + hecs) that never
+//! direction is acyclic: `stickshift-ecs` is a leaf (math + hecs + rapier) that never
 //! depends on `stickshift-assets`, so this helper adds a `stickshift-assets → stickshift-ecs`
 //! edge and no cycle. Keeping the helper here (rather than in the game) lets any
 //! title spawn imported scenes with one call while staying engine-generic — there
@@ -14,7 +14,8 @@
 //! Each mesh-bearing node in the baked node tree becomes one entity carrying a
 //! [`TransformComponent`] (the node's baked world transform), a
 //! [`RenderComponent`] rebuilt from the mesh's packed `[pos,normal,color]`
-//! geometry, and a [`StaticTag`] (imported static meshes do not move).
+//! geometry, and a [`StaticTag`] (imported static meshes do not move under
+//! physics in v1).
 //!
 //! A [`TransformComponent`] holds position, rotation and scale, which cannot
 //! express shear. When a node's world matrix has some (a rotated child under a

@@ -7,7 +7,7 @@ render seam, with a load-once/dedup cache and an ECS spawn helper.
 This crate is **metal-free** and **engine-generic**: it depends only on `gltf`,
 `stickshift-math`, `stickshift-render-api`, and `stickshift-ecs` — never on `metal`, and never on
 any game crate. The ECS spawn helper (and so `stickshift-ecs`) is behind the default
-`ecs` feature; graphics-only users such as the C API turn it off. A unit test scans the source for game-specific concept words to
+`ecs` feature; graphics-only users turn it off. A unit test scans the source for game-specific concept words to
 keep the boundary honest (mirroring `stickshift-ecs`).
 
 ## Import → seam mapping

@@ -6,7 +6,7 @@
 //!
 //! The `try_*` constructors and resource calls on
 //! [`MetalRenderer`](crate::MetalRenderer) return these instead of panicking, so a
-//! caller that cannot unwind (the C API) can report the failure. The infallible
+//! caller that must not panic can report the failure. The infallible
 //! seam methods ([`RenderDevice`](stickshift_render_api::RenderDevice)) keep their
 //! signatures and panic with the same message where the input is a caller error.
 

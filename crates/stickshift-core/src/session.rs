@@ -24,8 +24,8 @@
 //! - **The winit runner** ([`run`](crate::run), feature `windowed`) maps winit's
 //!   window events to [`HostEvent`]s and acts on the [`Requests`] with
 //!   `event_loop.exit()`, a full-screen toggle and the AppKit menu.
-//! - **A host that owns its own view and display link** (the C API, on macOS
-//!   or iOS) builds this crate without the `windowed` feature
+//! - **A host that owns its own view and display link** (an iOS app, say)
+//!   builds this crate without the `windowed` feature
 //!   and calls the same methods.
 //!
 //! So the Rust demo's window and every other host share one implementation of
@@ -132,8 +132,7 @@ impl View {
 
 /// Where [`Session::frame`] gets the time that passed since the last frame.
 ///
-/// Append-only, as the C API's clock kinds are: a match on it needs a wildcard
-/// arm.
+/// Append-only: a match on it needs a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Clock {
@@ -158,8 +157,8 @@ pub enum Clock {
 
 /// One platform event, as [`Session::event`] takes it.
 ///
-/// Append-only, as the C API's host event kinds are (touch and game-controller
-/// input are the expected additions): a match on it needs a wildcard arm.
+/// Append-only (touch and game-controller input are the expected additions): a
+/// match on it needs a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum HostEvent {
@@ -213,8 +212,7 @@ pub enum HostEvent {
 
 /// What a [`Session`] asks its host to do: the things only the platform can.
 ///
-/// A set of flags, with the values the C API uses for its
-/// `STICKSHIFT_REQUEST_*` bits. Each request is returned by the call that caused
+/// A set of flags. Each request is returned by the call that caused
 /// it; [`Requests::EXIT`] is also returned by every frame while the game's
 /// [`request_exit`](crate::EngineCtx::request_exit) stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -272,8 +270,7 @@ impl BitOrAssign for Requests {
 /// On Apple platforms the settings are four small integer codes
 /// ([`GraphicsSettings::to_codes`]) in `NSUserDefaults`, under the
 /// `StickShiftEngine.graphics.*` keys. Every host of the engine uses the same
-/// keys, so the Rust runner and any game over the C API read and write the same
-/// saved settings. Elsewhere nothing is stored: [`load`](Self::load) finds
+/// keys, so every host reads and writes the same saved settings. Elsewhere nothing is stored: [`load`](Self::load) finds
 /// nothing and [`save`](Self::save) does nothing.
 #[derive(Debug, Clone)]
 pub struct SettingsStore {
@@ -1032,7 +1029,7 @@ mod tests {
     }
 
     #[test]
-    fn the_request_bits_are_the_c_api_values() {
+    fn the_request_bits_are_stable() {
         assert_eq!(Requests::NONE.bits(), 0);
         assert_eq!(Requests::EXIT.bits(), 1);
         assert_eq!(Requests::TOGGLE_FULLSCREEN.bits(), 2);

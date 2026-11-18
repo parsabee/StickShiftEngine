@@ -44,8 +44,9 @@ use std::time::Duration;
 /// The fixed simulation timestep: **1/60 second**, the single source of truth.
 ///
 /// [`Game::update`](crate::Game::update) is always called with exactly this `dt`,
-/// regardless of display rate, so the simulation is deterministic; this constant
-/// is the one place the value is defined.
+/// regardless of display rate. Physics steps at the same rate so its
+/// behavior is deterministic, so this constant must stay the one place the value
+/// is defined.
 pub const FIXED_DT: f32 = 1.0 / 60.0;
 
 /// [`FIXED_DT`] as a [`Duration`]: exactly what one fixed step consumes from the
@@ -136,6 +137,14 @@ impl Default for Accumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The engine's fixed step is the physics step, which `stickshift-physics`
+    /// defines separately to avoid a dependency cycle
+    /// (`Scene::fixed_dt` is `stickshift_physics::FIXED_DT`).
+    #[test]
+    fn fixed_dt_matches_the_physics_step() {
+        assert_eq!(FIXED_DT, stickshift_scene::Scene::fixed_dt());
+    }
 
     /// One exact fixed step of real time yields exactly one update, no leftover.
     #[test]

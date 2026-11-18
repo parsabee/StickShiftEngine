@@ -1,9 +1,9 @@
 # Stick Shift Engine Roadmap
 
-Stick Shift Engine is a lean, **rasterization-only** Metal graphics engine for Apple Silicon, written in
-Rust and usable from other languages through a C API. The host
-application owns the window or view and drives the loop, one tick per display refresh; the
-engine runs the game's updates and renders, through the C API too.
+Stick Shift Engine is a lean, **rasterization-only** Metal game engine for Apple Silicon, written in
+Rust. A game is a Rust crate that implements `Game`; the engine runs its loop, world, streaming,
+physics, audio and rendering, and the host (the engine's winit runner, or an app that owns its
+view) drives it one tick per display refresh.
 
 Open work is tracked as [GitHub issues](https://github.com/parsabee/StickShiftEngine/issues). Release
 history is in [CHANGELOG.md](../CHANGELOG.md).
@@ -40,36 +40,32 @@ Everything in the betas, plus:
   with results recorded in [BENCHMARKS.md](BENCHMARKS.md). They called for no fixes.
 - **Every bug from the beta audit fixed** (#22–#43).
 
-## v0.2 — the whole engine through the C API
+## v0.2 — many lights
 
-The whole engine becomes reachable through the C API, a frame can carry many lights, and physics
-leaves the engine.
+A frame can carry many lights, and the engine is Rust crates only.
 [Milestone](https://github.com/parsabee/StickShiftEngine/milestone/1)
 
 Engine:
 
-- **The whole engine through the C API:** an engine object runs a C game's loop, with the
-  engine's world and its queries, scene streaming and the floating-origin rebase, the camera,
-  input, audio and graphics settings, while the host drives it one tick per display refresh.
 - **Many light sources:** point and spot lights and emissive materials ([#82](https://github.com/parsabee/StickShiftEngine/issues/82)), for scenes
   at night.
-- **Physics leaves the engine** ([#81](https://github.com/parsabee/StickShiftEngine/issues/81)). The C API has never exposed physics. The
-  release removes `stickshift-physics` (and `rapier3d`), `PhysicsBodyComponent` and the loop's
-  physics step. The scene keeps streaming and the
-  floating-origin rebase, and passes the rebase offset to the game. A game that wants physics
-  uses `rapier3d` directly.
+- **A host-driven loop:** `stickshift_core::Session`, the platform-free half of the windowed
+  runner, so a host that owns its own view (an iOS app, say) drives the same frame clock, settings
+  and menu as the winit runner. `stickshift-core` builds without winit and AppKit for iOS.
+- **The C API and its release packaging are retired:** the engine is used from source, as Rust
+  crates.
 
 ## v0.3 — particles and instancing
 
 [Milestone](https://github.com/parsabee/StickShiftEngine/milestone/2)
 
-- **GPU particles** in the engine and the C API, used for sparks, tyre smoke and weather
+- **GPU particles** in the engine, used for sparks, tyre smoke and weather
   ([#85](https://github.com/parsabee/StickShiftEngine/issues/85)).
 - **Instanced drawing** for dense scenes ([#89](https://github.com/parsabee/StickShiftEngine/issues/89)).
 
 ## v0.9 — iOS and full Xcode, right before 1.0
 
-Release the library for iOS as well as macOS: iOS build targets, an XCFramework, tile-memory
+Release the engine for iOS as well as macOS: iOS build targets, an iOS host for a game, tile-memory
 (TBDR) tuning, compressed textures, precompiled shaders for the iOS SDKs, on-device performance
 validation and App Store readiness, plus building and debugging from Xcode. Tracked
 in [#2 iOS support](https://github.com/parsabee/StickShiftEngine/issues/2) and its sub-issues. [Milestone](https://github.com/parsabee/StickShiftEngine/milestone/3)

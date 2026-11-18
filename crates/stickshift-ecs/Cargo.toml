@@ -13,13 +13,4 @@ publish.workspace = true
 [dependencies]
 hecs.workspace = true
 stickshift-math.workspace = true
-
-[features]
-# `stickshift_ecs::dynamic`: components registered at run time, for the C API.
-# Off by default, so Rust games do not compile its 256 slot types.
-dynamic = []
-
-[dev-dependencies]
-# Turns `dynamic` on for this crate's own tests, so `cargo test --workspace` runs
-# them without any other crate enabling the feature.
-stickshift-ecs = { path = ".", features = ["dynamic"] }
+rapier3d.workspace = true
