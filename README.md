@@ -22,8 +22,8 @@
 
 <img src="docs/images/demo.gif" alt="Offramp, a game built on Stick Shift Engine: a yellow sports car changing lanes through traffic on an elevated three-lane freeway between city buildings, with real-time shadows and horizon fog" width="600">
 
-<sub>Offramp, a game built on Stick Shift Engine, driven by a scripted autopilot and rendered offscreen
-by the engine's Metal backend.</sub>
+<sub>Built on Stick Shift Engine, driven by a scripted autopilot and rendered offscreen by the
+engine's Metal backend.</sub>
 
 </div>
 
