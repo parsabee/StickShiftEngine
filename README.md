@@ -45,7 +45,7 @@ reference title is the [playable demo](#the-playable-demo), an endless car runne
 > each release ships a prebuilt Apple Silicon build (the C library, its header and the playable
 > demo), installable with [Homebrew](#install-with-homebrew). The public API may change between
 > releases (see [CHANGELOG.md](CHANGELOG.md)). macOS is the supported platform today; iOS support
-> is planned for v0.2 ([#2](https://github.com/parsabee/StickShiftEngine/issues/2)).
+> is planned for v0.9, right before 1.0 ([#2](https://github.com/parsabee/StickShiftEngine/issues/2)).
 
 ## Table of contents
 
@@ -147,14 +147,14 @@ There are two tiers of dependencies:
 | Tier | Tools | Needed for |
 |---|---|---|
 | **Required now** | macOS · Rust ≥ 1.91 (`cargo`/`rustc`, MSRV enforced by cargo) · Apple `clang` + macOS SDK (Command Line Tools) | Building and running the engine on macOS |
-| **iOS / `.metallib`** | Full **Xcode** (`metal`/`metallib` shader compiler) · `rustup` + `aarch64-apple-ios`(`-sim`) targets | Precompiled `.metallib` shaders (planned for v0.1.0) and iOS builds (v0.2) |
+| **iOS / `.metallib`** | Full **Xcode** (`metal`/`metallib` shader compiler) · `rustup` + `aarch64-apple-ios`(`-sim`) targets | Release builds with precompiled `.metallib` shaders, and iOS builds (v0.9) |
 
-The Command Line Tools alone (`xcode-select --install`) cover the engine today, because shaders
-currently compile at runtime. Full Xcode becomes required once shaders are precompiled (v0.1.0)
-and for iOS (v0.2). The iOS targets are not needed yet:
+The Command Line Tools alone (`xcode-select --install`) cover development, because development
+builds compile shaders at runtime. Full Xcode is needed to build the release way, with
+precompiled shaders, and for iOS (v0.9). The iOS targets are not needed yet:
 
 ```sh
-rustup target add aarch64-apple-ios aarch64-apple-ios-sim   # iOS (v0.2) only
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim   # iOS (v0.9) only
 ```
 
 **Toolchain:** `rust-toolchain.toml` pins `1.91.0` (with `rustfmt`, `clippy` and
@@ -277,7 +277,9 @@ and rustdoc. The prototype's provenance is recorded in [docs/ARCHITECTURE.md](do
 | `v0.1.0-beta.1` | The async-shaped C API (`libstickshift`, `stickshift.h`, a Swift module map), sRGB colour textures and correct normals, docs that match the code, and a test and bug-fix pass |
 | `v0.1.0-beta.2` | The rename to Stick Shift Engine: crates, C API, Homebrew, repository and docs; no functional changes |
 | `v0.1.0` (current) | GPU frame timing and a renderer benchmark, release builds with precompiled shaders, and fixes for every bug the beta audit found |
-| `v0.2` | Planned: iOS ([#2](https://github.com/parsabee/StickShiftEngine/issues/2)) |
+| `v0.2` | Planned: Offramp, the Swift reference game, over a Swift package for the C API; many light sources; physics out of the engine |
+| `v0.3` | Planned: GPU particles, instancing, traffic AI, diverging roads, procedural city textures |
+| `v0.9` | Planned: iOS and full Xcode support, right before 1.0 ([#2](https://github.com/parsabee/StickShiftEngine/issues/2)) |
 
 - Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md)
 - Open work: [GitHub issues](https://github.com/parsabee/StickShiftEngine/issues)
@@ -302,7 +304,7 @@ Guides and design docs:
 | [docs/PLAYABLE_DEMO.md](docs/PLAYABLE_DEMO.md) | The demo walked through as a reference example |
 | [docs/DESIGN.md](docs/DESIGN.md) | Diagrams: component, UML class and sequence diagrams (Mermaid) of the layers, the render seam, the frame loop, streaming, and asset load |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Intentional constraints, the render seam, and workspace layout |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | What v0.1 and v0.2 contain |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | What each release contains, up to 1.0 |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Renderer CPU and GPU frame times on real hardware, and how to measure them |
 | [docs/INTEGRATION.md](docs/INTEGRATION.md) | Integration, testing and migration discipline |
 | [CHANGELOG.md](CHANGELOG.md) | Release history and notable changes |

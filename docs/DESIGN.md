@@ -423,5 +423,5 @@ not implemented.
 - [PLAYABLE_DEMO.md](PLAYABLE_DEMO.md) — these seams as the demo actually uses them, with pointers
   into its code. · [GETTING_STARTED.md](GETTING_STARTED.md) — build your own game on them.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — authoritative constraints (the *why*).
-- [ROADMAP.md](ROADMAP.md) — what v0.1 and v0.2 contain. · [INTEGRATION.md](INTEGRATION.md) — test/migration discipline.
+- [ROADMAP.md](ROADMAP.md) — what each release contains, up to 1.0. · [INTEGRATION.md](INTEGRATION.md) — test/migration discipline.
 - Inline API docs: `cargo doc --workspace --no-deps --open`.

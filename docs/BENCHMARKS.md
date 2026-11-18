@@ -61,4 +61,4 @@ Repeated runs agree within a few percent.
 
 Run the example on another machine and add a section for it: the device (the first line of the
 output), the OS version, the engine version or commit, and the table. iPhone results will come
-with iOS support in v0.2.
+with iOS support in v0.9.

@@ -7,7 +7,7 @@ Status: authoritative. Decisions here are intentional constraints, not defaults.
 
 ## 1. Targets and the rendering choice
 
-Stick Shift Engine targets **macOS and iPhone only** (macOS today; iOS is planned for v0.2). On both, Metal is the single native GPU
+Stick Shift Engine targets **macOS and iPhone only** (macOS today; iOS is planned for v0.9, right before 1.0). On both, Metal is the single native GPU
 API, so the engine uses **raw Metal** (`metal` crate) directly — this is *one* rendering
 code path across both targets, not two, and it gives direct access to TBDR features
 (memoryless attachments, tile memory) that portable abstractions expose late or not at all.
@@ -175,7 +175,7 @@ API today — see [PLAYABLE_DEMO.md](PLAYABLE_DEMO.md); for standing up a new ga
 | Concern | Choice | Notes |
 |---|---|---|
 | Rendering | raw Metal (`metal`) | Apple-only; behind `stickshift-render-api` |
-| Windowing | `winit` (macOS, in the Rust runner) | iOS (v0.2): the host app owns the view and the display link |
+| Windowing | `winit` (macOS, in the Rust runner) | iOS (v0.9): the host app owns the view and the display link |
 | Math | `glam` | leaf crate |
 | ECS | `hecs` | already integrated in the prototype |
 | Physics | `rapier3d` | behind `stickshift-physics`, with a body/collider removal API |

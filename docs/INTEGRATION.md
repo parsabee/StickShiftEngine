@@ -93,5 +93,5 @@ These are targets, not CI-enforced: there is no coverage tooling in CI yet.
 - **Renderer (GPU, not unit-testable):** golden pixel hashes plus Metal validation plus Instruments;
   each buffer or frames-in-flight change lands and is validated on its own.
 - **Physics:** the despawn use-after-free test was written *before* the removal API, and stays.
-- **iOS (v0.2):** a physical-device run is required for platform and GPU-performance changes (the
+- **iOS (v0.9):** a physical-device run is required for platform and GPU-performance changes (the
   simulator is not valid for GPU performance); signing is set up before engine changes pile up.

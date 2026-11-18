@@ -346,7 +346,7 @@ per-frame HUD path is heap-free.
 **Safe area.** Positions are derived from `surface_size` shrunk by
 [`safe_area_insets`](../crates/stickshift-render-api/src/device.rs#L171) (`[top, right, bottom, left]`
 in pixels), so the HUD stays clear of notches, rounded corners and home indicators. A desktop
-window reports zeros; an iOS host (planned for v0.2) would report real insets. The score sits at
+window reports zeros; an iOS host (planned for v0.9) would report real insets. The score sits at
 `inset + HUD_MARGIN`, and the game-over banner is centered in the *safe* rectangle, not the raw
 drawable ([hud.rs:256](../games/playable-demo/src/hud.rs#L256)).
 
