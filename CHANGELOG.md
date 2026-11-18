@@ -117,10 +117,6 @@ API**.
 
 ### Changed
 
-- **The playable demo is Offramp.** `games/playable-demo` moved to `games/offramp/rust-impl` and
-  its runtime assets to `games/offramp/shared/assets`; its crate and binary are now `offramp`
-  (`cargo run -p offramp`), and its title screen reads OFFRAMP. Its saved graphics settings are
-  under the `offramp` defaults domain. The Homebrew binary is still `stickshift-demo`.
 - **`libstickshift` links two more frameworks, AudioToolbox and CoreAudio.** The library now
   carries the engine loop, and with it the engine's audio (kira over cpal), so a host that links
   `libstickshift.a` statically must add `-framework AudioToolbox -framework CoreAudio`, even if it
@@ -138,6 +134,9 @@ API**.
 
 ### Removed
 
+- **The playable demo** (`games/playable-demo` and the `stickshift-demo` binary) is no longer part
+  of the engine or its release. The release tarball and the Homebrew package ship the C library,
+  its header, its pkg-config file and the engine source; the engine's tests use its own fixtures.
 - **Physics is no longer part of the engine** (#81). This breaks the Rust API; the C API never
   exposed physics and is unchanged. Removed:
   - the `stickshift-physics` crate and the workspace's `rapier3d` dependency;

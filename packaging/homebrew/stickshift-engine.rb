@@ -4,13 +4,13 @@
 #
 #   brew install parsabee/stickshift/stickshift-engine
 #
-# Installs the prebuilt `stickshift-demo` (the playable demo), the C library (`libstickshift`, its header
-# and pkg-config file) and the engine source, from the Apple Silicon tarball that
+# Installs the prebuilt C library (`libstickshift`, its header and pkg-config file) and the
+# engine source, from the Apple Silicon tarball that
 # .github/workflows/release.yml attaches to each GitHub release.
 # Kept current automatically: on every v* tag, release.yml runs scripts/update-homebrew-formula.sh
 # to point `url`/`sha256` at the new tarball, here and in the tap.
 class StickshiftEngine < Formula
-  desc "Metal graphics engine for Apple Silicon: a C library, Rust crates and a demo"
+  desc "Metal graphics engine for Apple Silicon: a C library and Rust crates"
   homepage "https://github.com/parsabee/StickShiftEngine"
   url "https://github.com/parsabee/StickShiftEngine/releases/download/v0.1.0/stickshift-engine-0.1.0-aarch64-apple-darwin.tar.gz"
   sha256 "687efd8409bfc212cfebe3a5b8ccb1a52f037f7bad7f85c940d08cf17bc5fba9"
@@ -22,21 +22,14 @@ class StickshiftEngine < Formula
   depends_on :macos
 
   def install
-    bin.install "bin/stickshift-demo"
     lib.install "lib/libstickshift.a", "lib/libstickshift.dylib"
     (lib/"pkgconfig").install "lib/pkgconfig/stickshift.pc"
     (include/"stickshift").install "include/stickshift/stickshift.h"
-    # `stickshift-demo` looks for its assets in <bin>/../share/stickshift-engine/assets, which is
-    # exactly pkgshare/"assets" in the keg.
-    pkgshare.install "share/stickshift-engine/assets"
     pkgshare.install "share/stickshift-engine/src"
   end
 
   def caveats
     <<~EOS
-      Run the playable demo (a Metal window; arrow keys to change lanes, Space to start):
-        stickshift-demo
-
       The C library: #include "stickshift.h" and link libstickshift, e.g. with pkg-config:
         cc app.c $(pkg-config --cflags --libs stickshift) -o app
       The API is described in #{opt_pkgshare}/src/docs/C_API.md.
@@ -55,9 +48,6 @@ class StickshiftEngine < Formula
   end
 
   test do
-    assert_match "share/stickshift-engine/assets", shell_output("#{bin}/stickshift-demo --print-assets-dir")
-    assert_match "smoke: 120 frames OK", shell_output("#{bin}/stickshift-demo --smoke")
-
     (testpath/"version.c").write <<~C
       #include <stdio.h>
       #include "stickshift.h"

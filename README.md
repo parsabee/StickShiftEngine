@@ -16,15 +16,14 @@
 [![Graphics](https://img.shields.io/badge/graphics-Metal-8A2BE2?logo=apple)](docs/ARCHITECTURE.md)
 
 [Quick start](#quick-start) ·
-[Playable demo](#the-playable-demo) ·
 [Documentation](#documentation) ·
 [Roadmap](docs/ROADMAP.md) ·
 [Contributing](#contributing)
 
-<img src="docs/images/demo.gif" alt="The Stick Shift Engine playable demo in motion: a yellow sports car changing lanes through traffic on an elevated three-lane freeway between city buildings, with real-time shadows and horizon fog" width="600">
+<img src="docs/images/demo.gif" alt="Offramp, a game built on Stick Shift Engine: a yellow sports car changing lanes through traffic on an elevated three-lane freeway between city buildings, with real-time shadows and horizon fog" width="600">
 
-<sub>The playable demo, driven by a scripted autopilot and rendered offscreen by the engine's Metal
-backend (<a href="scripts/record-demo-gif.sh">scripts/record-demo-gif.sh</a> records it).</sub>
+<sub>Offramp, a game built on Stick Shift Engine, driven by a scripted autopilot and rendered offscreen
+by the engine's Metal backend.</sub>
 
 </div>
 
@@ -36,14 +35,13 @@ backend-agnostic render seam keeps the door open for a future portable backend w
 engine logic.
 
 The engine is **rasterization-only**. For v0.1 it is becoming a lean graphics library with a C
-API, so that any host app (C, C++, Objective-C) can drive it; see the [roadmap](docs/ROADMAP.md). Its
-reference title is the [playable demo](#the-playable-demo), an endless car runner on a freeway.
+API, so that any host app (C, C++, Objective-C) can drive it; see the [roadmap](docs/ROADMAP.md).
 
 > [!NOTE]
 > Stick Shift Engine is **under active development**. The current release is
 > [`v0.1.0`](https://github.com/parsabee/StickShiftEngine/releases/tag/v0.1.0), the first release:
-> each release ships a prebuilt Apple Silicon build (the C library, its header and the playable
-> demo), installable with [Homebrew](#install-with-homebrew). The public API may change between
+> each release ships a prebuilt Apple Silicon build (the C library, its header and the engine
+> source), installable with [Homebrew](#install-with-homebrew). The public API may change between
 > releases (see [CHANGELOG.md](CHANGELOG.md)). macOS is the supported platform today; iOS support
 > is planned for v0.9, right before 1.0 ([#2](https://github.com/parsabee/StickShiftEngine/issues/2)).
 
@@ -53,7 +51,6 @@ reference title is the [playable demo](#the-playable-demo), an endless car runne
 - [Install with Homebrew](#install-with-homebrew)
 - [Quick start](#quick-start)
 - [Using Stick Shift Engine from C](#using-stick-shift-engine-from-c)
-- [The playable demo](#the-playable-demo)
 - [Project status](#project-status)
 - [Documentation](#documentation)
 - [Workspace layout](#workspace-layout)
@@ -86,7 +83,7 @@ reference title is the [playable demo](#the-playable-demo), an endless car runne
 - **2D HUD overlay** with SDF text rendering.
 - **Audio** built on [`kira`](https://crates.io/crates/kira): load-once sounds, one-shots, looping
   music, and master volume.
-- **Testable by design:** a headless smoke oracle that runs with no GPU, golden pixel-hash tests
+- **Testable by design:** a headless driver that runs a game with no window or GPU, golden pixel-hash tests
   that pin the renderer's output, a null backend that runs the C API without a GPU, and a C
   program compiled and run against the header in CI.
 - **Fully documented API:** every engine crate compiles under `#![deny(missing_docs)]`, and the
@@ -95,13 +92,11 @@ reference title is the [playable demo](#the-playable-demo), an endless car runne
 ## Install with Homebrew
 
 On an **Apple Silicon** Mac (arm64; Intel Macs are not supported and Homebrew refuses the
-install), install the prebuilt demo, the C library and the engine source, with no Rust toolchain
-needed:
+install), install the prebuilt C library and the engine source, with no Rust toolchain needed:
 
 ```sh
 brew install parsabee/stickshift/stickshift-engine
-stickshift-demo            # play the demo (Metal window)
-stickshift-demo --smoke    # headless check: 120 frames, prints "smoke: 120 frames OK"
+pkg-config --modversion stickshift   # the installed version
 ```
 
 If you installed the engine under its former name, `brew update && brew upgrade` moves you to
@@ -111,12 +106,10 @@ What gets installed:
 
 | Path | Contents |
 |---|---|
-| `$(brew --prefix)/bin/stickshift-demo` | The playable demo (the `offramp` binary) |
 | `$(brew --prefix)/lib/libstickshift.a`, `libstickshift.dylib` | The C library, static and dynamic (install name `@rpath/libstickshift.dylib`) |
 | `$(brew --prefix)/include/stickshift/` | `stickshift.h` |
 | `$(brew --prefix)/lib/pkgconfig/stickshift.pc` | `pkg-config --cflags --libs stickshift` |
-| `$(brew --prefix stickshift-engine)/share/stickshift-engine/assets/` | The demo's runtime assets |
-| `$(brew --prefix stickshift-engine)/share/stickshift-engine/src/` | The engine source: the workspace `Cargo.toml` / `Cargo.lock` / `rust-toolchain.toml`, `crates/`, `games/`, `docs/`, `LICENSE`, `NOTICE` |
+| `$(brew --prefix stickshift-engine)/share/stickshift-engine/src/` | The engine source: the workspace `Cargo.toml` / `Cargo.lock` / `rust-toolchain.toml`, `crates/`, `examples/`, `docs/`, `LICENSE`, `NOTICE` |
 
 To build your own game against the installed engine, use the crates as Cargo path dependencies
 (building needs Rust 1.91 or newer):
@@ -171,11 +164,9 @@ git clone https://github.com/parsabee/StickShiftEngine.git
 cd StickShiftEngine
 
 cargo build --workspace
-cargo run -p offramp                               # the demo, windowed (Metal)
 cargo test  --workspace
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo run -p offramp -- --smoke                    # headless oracle: 120 frames, exits 0
 ./scripts/test-c-api.sh                                  # build libstickshift, compile + run the C programs
 ./scripts/gen-header.sh --check                          # stickshift.h matches the Rust sources (needs cbindgen 0.29.0)
 ```
@@ -185,7 +176,6 @@ Release builds embed shaders compiled ahead of time instead, so nothing is compi
 library starts. To build that way, which needs full Xcode for the Metal compiler:
 
 ```sh
-cargo build --release -p offramp --features precompiled-shaders
 cargo build --release -p stickshift-capi --features precompiled-shaders
 ```
 
@@ -239,34 +229,6 @@ if (stickshift_frame_acquire(ctx, &frame) == STICKSHIFT_OK) {  /* never waits */
 }
 ```
 
-## The playable demo
-
-[`games/offramp/rust-impl`](games/offramp/rust-impl) is the first title, an endless 3-lane freeway runner.
-It is also the **reference example** for building a game on this engine: it touches nothing but
-the engine's public API.
-
-```sh
-cargo run -p offramp             # windowed, Metal backend (macOS)
-cargo run -p offramp -- --smoke  # headless oracle: 120 frames, prints "smoke: 120 frames OK", exits 0
-```
-
-| Key | Action |
-|---|---|
-| `Left` / `Right` | Move one lane left / right (one lane per press) |
-| `Space` | Start the run from the title screen; replay after a crash |
-| `Escape` | Quit |
-
-Graphics settings (shadows, shadow distance, draw distance, resolution, full screen) are in the
-**Graphics** menu in the macOS menu bar, and are remembered between launches.
-
-- [docs/PLAYABLE_DEMO.md](docs/PLAYABLE_DEMO.md): how the demo is built. Covers the
-  `Game`/`EngineCtx` boundary, the fixed-timestep loop, streaming + floating-origin rebase, asset
-  loading, the render seam, the HUD, and determinism/testing.
-- [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md): **build your own game**. The minimal steps
-  to stand up a new `Game`, load an asset, record a draw, and run it windowed and headless.
-- [games/offramp/rust-impl/README.md](games/offramp/rust-impl/README.md): the demo's own README, with the
-  code layout, the asset bakers, and asset licences.
-
 ## Project status
 
 Stick Shift Engine was built by **migrating and refactoring** an earlier prototype into this repo, module
@@ -279,8 +241,8 @@ and rustdoc. The prototype's provenance is recorded in [docs/ARCHITECTURE.md](do
 | `v0.1.0-beta.1` | The async-shaped C API (`libstickshift`, `stickshift.h`, a Swift module map), sRGB colour textures and correct normals, docs that match the code, and a test and bug-fix pass |
 | `v0.1.0-beta.2` | The rename to Stick Shift Engine: crates, C API, Homebrew, repository and docs; no functional changes |
 | `v0.1.0` (current) | GPU frame timing and a renderer benchmark, release builds with precompiled shaders, and fixes for every bug the beta audit found |
-| `v0.2` | Planned: Offramp, the playable demo grown into the reference game; the whole engine through the C API; many light sources; physics out of the engine |
-| `v0.3` | Planned: GPU particles, instancing, traffic AI, diverging roads, procedural city textures |
+| `v0.2` | Planned: the whole engine through the C API; many light sources; physics out of the engine |
+| `v0.3` | Planned: GPU particles and instanced drawing |
 | `v0.9` | Planned: iOS and full Xcode support, right before 1.0 ([#2](https://github.com/parsabee/StickShiftEngine/issues/2)) |
 
 - Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md)
@@ -303,7 +265,6 @@ Guides and design docs:
 |---|---|
 | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | Build your own game on the engine |
 | [docs/C_API.md](docs/C_API.md) | The C API: concepts, threading, the engine and its scopes, what may wait in v0.1, how the API grows, reference |
-| [docs/PLAYABLE_DEMO.md](docs/PLAYABLE_DEMO.md) | The demo walked through as a reference example |
 | [docs/DESIGN.md](docs/DESIGN.md) | Diagrams: component, UML class and sequence diagrams (Mermaid) of the layers, the render seam, the frame loop, streaming, and asset load |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Intentional constraints, the render seam, and workspace layout |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What each release contains, up to 1.0 |
@@ -313,8 +274,8 @@ Guides and design docs:
 
 ## Workspace layout
 
-The workspace is `crates/stickshift-*` (the engine) plus `games/offramp/rust-impl` (the first title and the
-smoke oracle), whose runtime assets are in `games/offramp/shared`. The layout follows [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §3.
+The workspace is the engine's `crates/stickshift-*`; [`examples/c`](examples/c) holds the C
+examples. The layout follows [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §3.
 
 | Crate | Purpose |
 |---|---|
@@ -329,7 +290,6 @@ smoke oracle), whose runtime assets are in `games/offramp/shared`. The layout fo
 | [`stickshift-math`](crates/stickshift-math) | Shared math layer: `glam` re-export plus the `Transform` (TRS) type |
 | [`stickshift-perf`](crates/stickshift-perf) | Profiling and frame-timing instrumentation with an injectable clock |
 | [`stickshift-scene`](crates/stickshift-scene) | The `Scene`: the ECS world, world streaming, and floating-origin rebase |
-| [`games/offramp/rust-impl`](games/offramp/rust-impl) | The reference example game (an endless runner) and host of the headless smoke oracle |
 
 ## Contributing
 
@@ -343,7 +303,7 @@ cargo build --workspace
 cargo test  --workspace
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo run -p offramp -- --smoke
+./scripts/test-c-api.sh
 RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links" \
   cargo doc --workspace --no-deps
 ```
@@ -360,5 +320,4 @@ Licensed under the [Apache License, Version 2.0](LICENSE). See [LICENSE](LICENSE
 [NOTICE](NOTICE).
 
 You are free to use, modify and distribute Stick Shift Engine, including commercially, as long as you
-retain the copyright and attribution notices the license requires. Third-party demo assets carry
-their own licences, listed in [games/offramp/rust-impl/README.md](games/offramp/rust-impl/README.md).
+retain the copyright and attribution notices the license requires.

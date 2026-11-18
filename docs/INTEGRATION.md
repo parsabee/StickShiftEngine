@@ -19,13 +19,11 @@ a red run blocks merging.
 - `cargo build --workspace` and `cargo test --workspace` (unit, integration and doc tests,
   including the golden pixel-hash tests on the runner's Metal device)
 - the render-seam firewall: `stickshift-render-api` must not depend on `metal`
-- the de-brand guard: no prototype identifiers in `crates/` or `games/`
+- the de-brand guard: no prototype identifiers in `crates/`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - the C header check (`scripts/gen-header.sh --check`), the C smoke test and sample
   (`scripts/test-c-api.sh`)
 - rustdoc with broken and private intra-doc links denied
-- the headless smoke oracle, `cargo run -p offramp -- --smoke` (120 frames on the CPU-only
-  `NullRenderer`, with Metal API Validation enabled)
 
 Run the same commands locally before pushing; the [README](../README.md#contributing) lists them.
 

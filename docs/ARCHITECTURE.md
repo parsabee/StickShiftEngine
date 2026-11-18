@@ -34,7 +34,7 @@ frame before `Game::render`, and the backend forms `mvp = view_proj * model` per
 sticky (retained until replaced) so the engine's push survives the game's `begin_frame`. This
 **replaced and deleted** the minimal camera that was temporarily inlined into `stickshift-render`
 (`stickshift-render/src/camera.rs`); the real camera now lives in `stickshift-camera`, which also provides the
-`ChaseController` follow camera the `offramp` uses. `stickshift-core → stickshift-camera → stickshift-math` keeps
+`ChaseController` follow camera. `stickshift-core → stickshift-camera → stickshift-math` keeps
 the dependency direction acyclic and `stickshift-core` metal-free.
 
 The concrete backend lives **below** this seam: `stickshift-render` provides
@@ -42,7 +42,7 @@ The concrete backend lives **below** this seam: `stickshift-render` provides
 therefore `stickshift-core`'s `Renderer` marker). `stickshift-render` is the *only* crate that depends on
 `metal`. Crucially, `stickshift-core` does **not** depend on `stickshift-render`: the windowed entry
 `stickshift-core::run_with_backend` takes a backend **factory**
-(`FnOnce(&Window, u32, u32) -> Box<dyn Renderer>`), and the game binary (`offramp`, which does
+(`FnOnce(&Window, u32, u32) -> Box<dyn Renderer>`), and the game binary (which does
 depend on `stickshift-render`) constructs the Metal backend and injects it. So `metal` reaches the
 process only through `stickshift-render` and the game binary — never through `stickshift-core` — and the CI
 `cargo tree -p stickshift-core` shows no `metal` (CI enforces the stricter rule on `stickshift-render-api`
@@ -67,10 +67,8 @@ depends on `stickshift-assets`) and no `metal` enters the tree. The C API uses t
 `ecs` feature, so its `spawn_scene` glue stays out of `libstickshift`; the library's ECS is the
 engine's own world (§3a). Imported geometry packs onto `[pos,normal,color]` with a default vertex color so it renders
 through the existing pipeline immediately; parsed UVs are retained on `MeshAsset::uvs` for the
-textured pipeline. `offramp` loads every mesh it draws this way: the player and
-traffic are real committed CC0 car models (`assets/*.glb`), and the road, skyline, and scenery come
-from committed glTF too — see the [demo guide](PLAYABLE_DEMO.md). The earlier placeholder,
-`assets/cube.gltf`, is retained only as a `stickshift-assets` import fixture.
+textured pipeline. A game loads every mesh it draws this way; the import fixtures are in
+`crates/stickshift-assets/tests/fixtures`.
 
 **Modern-look rendering stack.** Below the seam, `stickshift-render` applies a small,
 mobile/TBDR-safe look stack — nothing above the seam learns about it. In pass order per frame:
@@ -103,7 +101,7 @@ sun moves them together. The camera's **world position** crosses the seam too
 (`set_camera_position`), making specular view-dependent instead of using a constant view vector, and
 the ambient term is rebalanced as sky fill (0.6 → 0.2 against diffuse 0.8, which previously left
 unlit faces at 43% of lit and read overcast). **Time of day is not an engine concept**: the
-playable demo's "summer 4pm" sun is a set of named constants in the *demo's* config, pushed through
+a game's "summer 4pm" sun is a set of named constants in *its* config, pushed through
 the seam. The two 3D pixel-hash baselines were re-blessed; the screen-space overlay baseline is
 unchanged, which is the proof the change stayed in the 3D passes.
 
@@ -160,8 +158,7 @@ stickshift-engine/
 │   ├── stickshift-assets        # glTF + textures                         (new)
 │   ├── stickshift-audio         # kira wrapper: sounds/one-shots/loops    (new)
 │   └── stickshift-capi          # the C API: libstickshift + stickshift.h           (new)
-├── games/
-│   └── offramp             # reference title (rust-impl/) and its assets (shared/); only uses engine public API
+├── examples/c/             # C programs over libstickshift (an offscreen frame, a small game)
 ├── docs/                   # architecture, design, guides, roadmap
 ├── scripts/                # preflight, release packaging, doc-anchor check
 └── packaging/homebrew/     # the Homebrew formula
@@ -169,22 +166,20 @@ stickshift-engine/
 
 The Metal shader source lives in `crates/stickshift-render/shaders/`.
 
-Dependency direction is acyclic: `stickshift-math` is a leaf; `stickshift-core` and `games/*` sit at
-the top. Game concepts (car, road, score) never enter engine crates — the boundary is a
+Dependency direction is acyclic: `stickshift-math` is a leaf; `stickshift-core` and `stickshift-capi` sit
+at the top. Game concepts (car, road, score) never enter engine crates — the boundary is a
 `Game` trait + `EngineCtx` seam, and self-scanning guard tests in `stickshift-core`,
 `stickshift-scene`, `stickshift-assets`, `stickshift-audio` and `stickshift-ecs` fail if a game-named symbol appears in
 them.
 
-For how `games/offramp/rust-impl` sits on that boundary in practice, see
-[PLAYABLE_DEMO.md](PLAYABLE_DEMO.md); for standing up a new game on it, see
-[GETTING_STARTED.md](GETTING_STARTED.md).
+For standing up a game on it, see [GETTING_STARTED.md](GETTING_STARTED.md).
 
 ### 3a. Layers: one engine, two ways in
 
 A game reaches the engine in one of two ways, and both run the same loop:
 
 ```
-  Rust game (games/offramp/rust-impl)            C game (examples/c/engine.c)
+  Rust game (its own crate)                      C game (examples/c/engine.c)
     impl stickshift_core::Game                 StickShiftGame callbacks
             |                                          |  stickshift.h: API 4, minor 1
             |                                  crates/stickshift-capi (libstickshift)

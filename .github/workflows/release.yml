@@ -1,7 +1,7 @@
 name: Release
 
-# Build the prebuilt Apple Silicon tarball for a release tag (the playable demo, the C library and
-# header, and the engine source) and attach it (plus its .sha256) to the GitHub release. The Homebrew formula (packaging/homebrew/stickshift-engine.rb, published in the
+# Build the prebuilt Apple Silicon tarball for a release tag (the C library and header, and the
+# engine source) and attach it (plus its .sha256) to the GitHub release. The Homebrew formula (packaging/homebrew/stickshift-engine.rb, published in the
 # parsabee/homebrew-stickshift tap) downloads this asset. Packaging lives in
 # scripts/package-release.sh so it can be run and checked locally.
 #
@@ -66,9 +66,6 @@ jobs:
           xcrun -sdk macosx metal --version || xcodebuild -downloadComponent MetalToolchain
           xcrun -sdk macosx metal --version
 
-      - name: Build release binary
-        run: cargo build --release -p offramp --locked --features "$STICKSHIFT_FEATURES"
-
       # libstickshift.a and libstickshift.dylib (install name @rpath/libstickshift.dylib) for C hosts.
       - name: Build the C library
         run: cargo build --release -p stickshift-capi --locked --features "$STICKSHIFT_FEATURES"
@@ -76,20 +73,13 @@ jobs:
       # The shader source's header comment is only in a runtime-compiling build.
       - name: Verify precompiled shaders are embedded
         run: |
-          for artefact in target/release/offramp target/release/libstickshift.a; do
+          for artefact in target/release/libstickshift.a; do
             ! grep -aq "Rasterization Shader - Phong Lighting Model" "$artefact" \
               || { echo "$artefact compiles its shaders at runtime"; exit 1; }
           done
 
-      - name: Verify binary (arm64, smoke)
-        run: |
-          file target/release/offramp
-          [ "$(lipo -archs target/release/offramp)" = "arm64" ] || { echo "not arm64"; exit 1; }
-          target/release/offramp --smoke
-
-      # Stages bin/, lib/, include/ and share/, tars it, writes the .sha256, then from an unpacked
-      # copy re-runs --smoke (the packaged assets resolve) and builds and runs the C smoke test and
-      # sample against the packaged library and header.
+      # Stages lib/, include/ and share/, tars it, writes the .sha256, then from an unpacked copy
+      # builds and runs the C smoke test and sample against the packaged library and header.
       - name: Package
         run: ./scripts/package-release.sh "${{ steps.version.outputs.version }}" dist
 

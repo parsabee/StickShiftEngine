@@ -576,19 +576,18 @@ mod tests {
         assert_eq!(ours, v(documented, documented, documented));
     }
 
-    // The demo's inputs (games/offramp/rust-impl/src/config.rs).
+    // A game's fit inputs: an endless runner's car and building footprint.
     const CAR_LEN: f32 = 2.85;
     const CAR_BOTTOM: f32 = -0.4;
     const CAR_YAW: f32 = PI;
     const BUILDING_FOOTPRINT: f32 = 8.0;
-    /// `ScrollingConfig::default().axis`, the direction the demo's `dot`s use.
+    /// `ScrollingConfig::default().axis`, the direction a streaming game's `dot`s use.
     const AXIS: Vec3 = Vec3::new(0.0, 0.0, -1.0);
 
-    /// The demo's own models: the car, traffic and building prefabs, the road
-    /// tile and the skyline (games/offramp/shared/assets).
-    fn demo_models() -> Vec<(String, stickshift_assets::SceneAsset)> {
+    /// The engine's committed glTF fixtures (stickshift-assets/tests/fixtures).
+    fn fixture_models() -> Vec<(String, stickshift_assets::SceneAsset)> {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../games/offramp/shared/assets");
+            .join("../stickshift-assets/tests/fixtures");
         let mut paths: Vec<_> = std::fs::read_dir(&dir)
             .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
             .map(|entry| entry.expect("a directory entry").path())
@@ -604,21 +603,21 @@ mod tests {
             })
             .collect();
         assert!(
-            models.len() >= 12,
-            "found only {} demo models in {}",
+            models.len() >= 3,
+            "found only {} fixture models in {}",
             models.len(),
             dir.display()
         );
         models
     }
 
-    /// The demo's fit math (`fit_transform` and `building_fit`,
-    /// games/offramp/rust-impl/src/assets.rs:84-143), done once with glam and
+    /// A game's fit math (placing a model on the road by its bounds, and a
+    /// building on its footprint), done once with glam and
     /// once through the helpers, step by step: the baked vertices, the
     /// pivots, the car's yaw, the fitted transforms, their matrices, and each
     /// node's local matrix.
     #[test]
-    fn the_helpers_are_glam_bit_for_bit_on_the_demo_fit_math() {
+    fn the_helpers_are_glam_bit_for_bit_on_fit_math() {
         let yaw = black_box(CAR_YAW);
         let rotation = Quat::from_rotation_y(yaw);
         let c_rotation = stickshift_quat_from_rotation_y(yaw);
@@ -627,7 +626,7 @@ mod tests {
         let facing = Quat::from_rotation_y(black_box(-FRAC_PI_2));
         let mut last = Vec3::ZERO;
         let mut vertices = 0usize;
-        for (name, scene) in demo_models() {
+        for (name, scene) in fixture_models() {
             let mut min = Vec3::splat(f32::INFINITY);
             let mut max = Vec3::splat(f32::NEG_INFINITY);
             for (n, node) in scene.mesh_nodes() {
@@ -684,7 +683,7 @@ mod tests {
             for (fit, label) in [(car, "car fit"), (building, "building fit")] {
                 let matrix = stickshift_transform_to_mat4(black_box(fit.into()));
                 check_mat4(matrix, fit.to_matrix(), &format_args!("{name}: {label}"));
-                // load_model's per-node local matrix: fit × node (assets.rs:61).
+                // A model's per-node local matrix: fit × node.
                 for (n, node) in scene.mesh_nodes() {
                     check_mat4(
                         stickshift_mat4_mul(matrix, node.world.into()),
@@ -695,16 +694,16 @@ mod tests {
             }
         }
         assert!(
-            vertices > 1_000,
-            "only {vertices} vertices: the models did not load"
+            vertices >= 48,
+            "only {vertices} vertices: the fixtures did not load"
         );
     }
 
-    /// The facing quaternions the demo spawns its buildings with
+    /// The facing quaternions a streaming game spawns its roadside buildings with
     /// (`Quat::from_rotation_y(-sign * FRAC_PI_2)`, game.rs:417), and the
     /// rotations they apply to the travel axis and to each other.
     #[test]
-    fn the_helpers_are_glam_bit_for_bit_on_the_demo_facing_angles() {
+    fn the_helpers_are_glam_bit_for_bit_on_facing_angles() {
         let angles = [-FRAC_PI_2, FRAC_PI_2, CAR_YAW, -CAR_YAW, 0.0, -0.0];
         for &sign in &[1.0f32, -1.0] {
             let angle = black_box(-sign * FRAC_PI_2);

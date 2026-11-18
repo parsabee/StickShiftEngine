@@ -12,7 +12,6 @@ members = [
     "crates/stickshift-audio",
     "crates/stickshift-core",
     "crates/stickshift-capi",
-    "games/offramp/rust-impl",
 ]
 
 # Shared package metadata. Individual crates inherit these via `field.workspace = true`.
@@ -67,16 +66,13 @@ gltf = { version = "1.4", default-features = false, features = [
 # off so only the two codecs glTF assets commonly embed are pulled in — no metal,
 # no game baggage. `stickshift-assets` stays engine-generic and metal-free.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-# Pure-Rust TrueType rasterizer. Dev-dependency only: the demo's `gen_font`
-# example uses it to bake the committed SDF font atlas; no runtime crate links it.
-fontdue = "0.9"
 # Audio: game-audio library — mixer, static sounds, loop regions,
 # tweened volume. Pure Rust over `cpal` (CoreAudio on Apple), so no C toolchain
 # beyond std and no metal. Engine-generic; the game supplies the sounds.
 #
 # `default-features` is off and only four features are enabled. Kira's defaults
-# also pull mp3, ogg, vorbis, flac, aac and `cpal-realtime-dbus`; the demo's
-# assets are 16-bit PCM WAV and this engine is Apple-only, so every one of those
+# also pull mp3, ogg, vorbis, flac, aac and `cpal-realtime-dbus`; a game's sounds
+# are typically 16-bit PCM WAV and this engine is Apple-only, so every one of those
 # is dead weight (dbus doubly so). Same trimming discipline as `gltf`/`image`.
 # `wav` is the container reader and `pcm` the codec — WAV needs both.
 kira = { version = "0.12", default-features = false, features = [
@@ -113,4 +109,3 @@ objc2-app-kit = { version = "0.2.2", default-features = false, features = [
     "NSMenuItem",
     "NSResponder",
 ] }
-clap = { version = "4.5", features = ["derive"] }
