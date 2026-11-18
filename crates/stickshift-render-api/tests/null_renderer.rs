@@ -100,6 +100,7 @@ fn records_a_full_frame_with_bound_state_per_draw() {
     let t_b = Transform::from_position(Vec3::new(0.0, 2.0, 0.0));
     let mat_a = MaterialParams {
         base_color: [1.0, 0.0, 0.0, 1.0],
+        ..MaterialParams::default()
     };
     let mat_b = MaterialParams::default();
 
@@ -430,5 +431,62 @@ fn sun_sky_is_recorded_sticky_and_assertable() {
     let recorded = r.sun_sky().expect("sun pushed above");
     assert!(recorded.toward_sun().x < 0.0, "the sun is in the west");
     assert!(recorded.direction().y < 0.0, "its light travels downward");
+    r.submit();
+}
+
+#[test]
+fn lights_are_recorded_per_frame_not_sticky() {
+    use stickshift_math::glam::Vec3;
+    use stickshift_render_api::{Light, ProtocolViolation, MAX_LIGHTS};
+
+    let mut r = NullRenderer::new();
+    let street = Light::point(Vec3::new(0.0, 8.0, 0.0), [1.0, 0.9, 0.7], 50.0, 20.0);
+    let headlight = Light::spot(
+        Vec3::new(0.0, 0.6, -2.0),
+        Vec3::NEG_Z,
+        [1.0, 1.0, 0.95],
+        80.0,
+        30.0,
+        12.0,
+        22.0,
+    );
+
+    // Outside a frame a light has nothing to light.
+    r.add_light(&street);
+    assert!(r.lights().is_empty());
+    assert_eq!(r.protocol_violations(), &[ProtocolViolation::OutsideFrame]);
+
+    r.begin_frame();
+    r.add_light(&street);
+    r.add_light(&headlight);
+    assert_eq!(r.lights(), &[street, headlight]);
+    r.submit();
+    // Between frames the last frame's lights stay readable...
+    assert_eq!(r.lights().len(), 2);
+
+    // ...but the next frame starts dark.
+    r.begin_frame();
+    assert!(
+        r.lights().is_empty(),
+        "lights must not carry into the next frame"
+    );
+
+    // An invalid light and one past the budget are refused, not recorded.
+    let mut broken = street;
+    broken.range = 0.0;
+    r.add_light(&broken);
+    for _ in 0..MAX_LIGHTS {
+        r.add_light(&street);
+    }
+    r.add_light(&headlight);
+    assert_eq!(r.lights().len(), MAX_LIGHTS);
+    assert!(r.lights().iter().all(|l| *l == street));
+    assert_eq!(
+        &r.protocol_violations()[1..],
+        &[
+            ProtocolViolation::InvalidLight,
+            ProtocolViolation::TooManyLights
+        ]
+    );
     r.submit();
 }

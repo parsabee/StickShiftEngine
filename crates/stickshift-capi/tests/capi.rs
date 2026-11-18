@@ -714,6 +714,7 @@ fn a_vertex_colour_draw_ignores_its_texture() {
             a: 1.0,
         },
         base_color_texture: texture,
+        emissive: [0.0; 3],
     };
     let frame = ctx.acquire();
     // SAFETY: a live context and an open frame.
@@ -1376,14 +1377,144 @@ fn events_that_do_not_fit_stay_queued() {
 /// The C API and the Rust API render the same pixels for the same scene.
 #[cfg(target_os = "macos")]
 #[test]
+fn lights_and_emission_are_validated_and_lights_are_per_frame() {
+    let ctx = Ctx::null(8, 8);
+    let mesh = make_mesh(&ctx);
+    let point = StickShiftLight {
+        kind: STICKSHIFT_LIGHT_POINT,
+        position: StickShiftVec3 {
+            x: 0.0,
+            y: 2.0,
+            z: 0.0,
+        },
+        color: [1.0, 0.9, 0.7],
+        intensity: 10.0,
+        range: 5.0,
+        ..StickShiftLight::default()
+    };
+    let spot = StickShiftLight {
+        kind: STICKSHIFT_LIGHT_SPOT,
+        direction: StickShiftVec3 {
+            x: 0.0,
+            y: -1.0,
+            z: 0.0,
+        },
+        inner_angle_deg: 15.0,
+        outer_angle_deg: 30.0,
+        ..point
+    };
+    let refused = |frame, light: &StickShiftLight, code| {
+        // SAFETY: an open frame and a valid light.
+        assert_eq!(unsafe { stickshift_frame_add_light(frame, light) }, code);
+    };
+
+    let frame = ctx.acquire();
+    refused(frame, &point, STICKSHIFT_OK);
+    refused(frame, &spot, STICKSHIFT_OK);
+    refused(
+        frame,
+        &StickShiftLight { kind: 7, ..point },
+        STICKSHIFT_ERROR_INVALID_ARGUMENT,
+    );
+    assert!(
+        last_error().contains("STICKSHIFT_LIGHT_"),
+        "{}",
+        last_error()
+    );
+    for bad in [
+        StickShiftLight {
+            range: 0.0,
+            ..point
+        },
+        StickShiftLight {
+            intensity: -1.0,
+            ..point
+        },
+        StickShiftLight {
+            color: [1.0, f32::NAN, 1.0],
+            ..point
+        },
+        StickShiftLight {
+            outer_angle_deg: 10.0,
+            ..spot
+        },
+        StickShiftLight {
+            outer_angle_deg: 120.0,
+            ..spot
+        },
+        StickShiftLight {
+            direction: StickShiftVec3::default(),
+            ..spot
+        },
+    ] {
+        refused(frame, &bad, STICKSHIFT_ERROR_INVALID_ARGUMENT);
+    }
+    // SAFETY: an open frame; NULL is checked.
+    assert_eq!(
+        unsafe { stickshift_frame_add_light(frame, null()) },
+        STICKSHIFT_ERROR_INVALID_ARGUMENT
+    );
+    // A point light's direction and angles are ignored, whatever they hold.
+    refused(
+        frame,
+        &StickShiftLight {
+            outer_angle_deg: -5.0,
+            ..point
+        },
+        STICKSHIFT_OK,
+    );
+    for _ in 3..STICKSHIFT_MAX_LIGHTS {
+        refused(frame, &point, STICKSHIFT_OK);
+    }
+    refused(frame, &point, STICKSHIFT_ERROR_LIMIT_EXCEEDED);
+
+    // Emission must be finite and non-negative.
+    let material = |emissive| StickShiftMaterial {
+        base_color: StickShiftColor {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: 1.0,
+        },
+        base_color_texture: StickShiftTexture { id: 0 },
+        emissive,
+    };
+    // SAFETY: an open frame and valid pointers.
+    unsafe {
+        assert_eq!(
+            stickshift_frame_draw_mesh(frame, mesh, &identity(), &material([2.0, 1.5, 0.5])),
+            STICKSHIFT_OK
+        );
+        assert_eq!(
+            stickshift_frame_draw_mesh(frame, mesh, &identity(), &material([0.0, -1.0, 0.0])),
+            STICKSHIFT_ERROR_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            stickshift_frame_submit(frame, null(), null_mut()),
+            STICKSHIFT_OK
+        );
+    }
+
+    // The next frame starts with no lights: it can hold the full budget again.
+    let frame = ctx.acquire();
+    for _ in 0..STICKSHIFT_MAX_LIGHTS {
+        refused(frame, &point, STICKSHIFT_OK);
+    }
+    // SAFETY: an open frame.
+    unsafe { stickshift_frame_discard(frame) };
+    // Without an open frame there is nothing to add to.
+    refused(frame, &point, STICKSHIFT_ERROR_WRONG_STATE);
+}
+
+#[test]
 fn the_c_api_renders_what_the_rust_api_renders() {
     use std::io::Write;
 
     use stickshift_math::glam::{Mat4, Vec3};
     use stickshift_render::MetalRenderer;
     use stickshift_render_api::{
-        FrameRecorder, MaterialParams, MeshData, PipelineDescriptor, PipelineKind, RenderDevice,
-        SunSky,
+        FrameRecorder, Light, MaterialParams, MeshData, PipelineDescriptor, PipelineKind,
+        RenderDevice, SunSky,
     };
 
     const W: u32 = 64;
@@ -1420,9 +1551,31 @@ fn the_c_api_renders_what_the_rust_api_renders() {
     rust.set_view_projection(vp);
     rust.set_camera_position(Vec3::new(0.0, 0.0, 2.0));
     rust.set_sun_sky(&SunSky::default());
+    // A point light and a spot light in front of the triangle, and a little
+    // emission, so the light path is compared too.
+    let point = Light::point(Vec3::new(0.3, 0.2, 0.8), [1.0, 0.6, 0.3], 0.6, 2.0);
+    let spot = Light::spot(
+        Vec3::new(-0.2, 0.0, 1.0),
+        Vec3::NEG_Z,
+        [0.3, 0.5, 1.0],
+        0.5,
+        3.0,
+        10.0,
+        25.0,
+    );
+    let emissive = [0.05, 0.02, 0.0];
     rust.begin_frame();
+    rust.add_light(&point);
+    rust.add_light(&spot);
     rust.set_pipeline(pipeline);
-    rust.draw_mesh_matrix(mesh, Mat4::IDENTITY, &MaterialParams::default());
+    rust.draw_mesh_matrix(
+        mesh,
+        Mat4::IDENTITY,
+        &MaterialParams {
+            emissive,
+            ..MaterialParams::default()
+        },
+    );
     rust.submit();
     let expected = rust.read_pixels().expect("offscreen read-back");
 
@@ -1459,8 +1612,43 @@ fn the_c_api_renders_what_the_rust_api_renders() {
             },
         };
         stickshift_frame_set_camera(frame, &camera);
+        let vec3 = |v: Vec3| StickShiftVec3 {
+            x: v.x,
+            y: v.y,
+            z: v.z,
+        };
+        let c_point = StickShiftLight {
+            kind: STICKSHIFT_LIGHT_POINT,
+            position: vec3(point.position),
+            color: point.color,
+            intensity: point.intensity,
+            range: point.range,
+            ..StickShiftLight::default()
+        };
+        let c_spot = StickShiftLight {
+            kind: STICKSHIFT_LIGHT_SPOT,
+            position: vec3(spot.position),
+            direction: vec3(Vec3::NEG_Z),
+            color: spot.color,
+            intensity: spot.intensity,
+            range: spot.range,
+            inner_angle_deg: 10.0,
+            outer_angle_deg: 25.0,
+        };
+        assert_eq!(stickshift_frame_add_light(frame, &c_point), STICKSHIFT_OK);
+        assert_eq!(stickshift_frame_add_light(frame, &c_spot), STICKSHIFT_OK);
+        let material = StickShiftMaterial {
+            base_color: StickShiftColor {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            },
+            base_color_texture: StickShiftTexture { id: 0 },
+            emissive,
+        };
         assert_eq!(
-            stickshift_frame_draw_mesh(frame, c_mesh, &identity(), null()),
+            stickshift_frame_draw_mesh(frame, c_mesh, &identity(), &material),
             STICKSHIFT_OK
         );
         assert_eq!(

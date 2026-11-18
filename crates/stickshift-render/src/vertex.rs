@@ -29,10 +29,11 @@ pub struct Vertex {
     pub color: [f32; 3],
 }
 
-/// Per-draw transform uniform: the model-view-projection, model and normal
-/// matrices.
+/// Per-draw uniform: the model-view-projection, model and normal matrices, and
+/// the draw's emissive colour.
 ///
-/// Matches `Uniforms` in `rasterization.metal` — three `float4x4`s, 192 bytes.
+/// Matches `Uniforms` in `rasterization.metal` — three `float4x4`s and a
+/// `float4`, 208 bytes.
 ///
 /// # Layout contract
 ///
@@ -50,7 +51,11 @@ pub struct Vertex {
 ///   view-projection instead of the camera's.
 /// - Rust `normal_matrix: [[f32; 4]; 4]` ⇔ MSL `float4x4 normalMatrix`: what the
 ///   lit vertex shaders transform normals by (see [`normal_matrix`]).
-/// - Size is **exactly 192 bytes** (asserted by `uniforms_is_192_bytes`).
+/// - Rust `emissive: [f32; 4]` ⇔ MSL `float4 emissive`: the draw's
+///   [`MaterialParams::emissive`](stickshift_render_api::MaterialParams::emissive)
+///   in `xyz`, added by both lit pipelines. It rides in this per-draw slot, which
+///   has room for it, so an emissive draw costs no extra ring slot or binding.
+/// - Size is **exactly 208 bytes** (asserted by `uniforms_is_208_bytes`).
 /// - When sub-allocated from the uniform ring the struct is written at a
 ///   [`UNIFORM_RING_STRIDE`]-byte-aligned offset so it satisfies the Apple GPU
 ///   256-byte `set_vertex_buffer` offset requirement; the struct itself only
@@ -67,6 +72,9 @@ pub struct Uniforms {
     /// Normal matrix, column-major: [`normal_matrix`] of `model`. The shaders
     /// multiply `float4(normal, 0)` by it and normalise.
     pub normal_matrix: [[f32; 4]; 4],
+    /// Linear RGB emissive colour in `xyz` (`w` unused), added to the lit
+    /// surface before fog.
+    pub emissive: [f32; 4],
 }
 
 /// The matrix that carries normals through `model`.
@@ -106,7 +114,7 @@ pub fn normal_matrix(model: Mat4) -> Mat4 {
 /// Per-slot byte stride of the uniform ring.
 ///
 /// Apple GPUs require the `offset` passed to `setVertexBuffer:offset:atIndex:`
-/// to be a multiple of 256 bytes. A [`Uniforms`] is only 192 bytes, so each ring
+/// to be a multiple of 256 bytes. A [`Uniforms`] is only 208 bytes, so each ring
 /// slot is padded up to this stride and every per-draw offset is a multiple of
 /// it — see [`crate::backend`]'s uniform-ring docs. Kept next to [`Uniforms`] so
 /// the layout contract and its GPU alignment requirement live together.
@@ -378,11 +386,13 @@ mod tests {
     }
 
     #[test]
-    fn uniforms_is_192_bytes() {
-        // Three float4x4s (MVP, model, normal matrix), matching the MSL struct.
-        assert_eq!(size_of::<Uniforms>(), 192);
+    fn uniforms_is_208_bytes() {
+        // Three float4x4s (MVP, model, normal matrix) and the emissive float4,
+        // matching the MSL struct.
+        assert_eq!(size_of::<Uniforms>(), 208);
         assert_eq!(std::mem::offset_of!(Uniforms, model), 64);
         assert_eq!(std::mem::offset_of!(Uniforms, normal_matrix), 128);
+        assert_eq!(std::mem::offset_of!(Uniforms, emissive), 192);
     }
 
     #[test]

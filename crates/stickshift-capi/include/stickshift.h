@@ -19,7 +19,13 @@
  * The API version this header describes. It increases with every incompatible
  * change; set [`StickShiftContextDesc::api_version`] to it.
  */
-#define STICKSHIFT_API_VERSION 3
+#define STICKSHIFT_API_VERSION 4
+
+/**
+ * The most lights one frame can hold; `stickshift_frame_add_light` refuses
+ * more with `STICKSHIFT_ERROR_LIMIT_EXCEEDED`.
+ */
+#define STICKSHIFT_MAX_LIGHTS 256
 
 /**
  * An opaque rendering context. See `docs/C_API.md`.
@@ -376,6 +382,56 @@ typedef struct StickShiftSunSky {
 } StickShiftSunSky;
 
 /**
+ * What shape of light a [`StickShiftLight`] is.
+ */
+typedef uint32_t StickShiftLightKind;
+
+/**
+ * A point or spot light, added to one frame with `stickshift_frame_add_light`.
+ *
+ * Brightness falls off with the inverse square of the distance and reaches
+ * exactly zero at `range`: `intensity` is roughly the brightness one world
+ * unit away, on the scale of the sun's `sun_intensity`.
+ */
+typedef struct StickShiftLight {
+  /**
+   * A `STICKSHIFT_LIGHT_*` value.
+   */
+  StickShiftLightKind kind;
+  /**
+   * World-space position.
+   */
+  struct StickShiftVec3 position;
+  /**
+   * Spot lights: the direction the light travels (need not be unit
+   * length). Ignored for point lights.
+   */
+  struct StickShiftVec3 direction;
+  /**
+   * Linear RGB colour, each channel `>= 0`.
+   */
+  float color[3];
+  /**
+   * Brightness, `>= 0`.
+   */
+  float intensity;
+  /**
+   * Distance at which the light has faded to zero, `> 0`. Shorter is cheaper.
+   */
+  float range;
+  /**
+   * Spot lights: half angle in degrees inside which the light is at full
+   * strength.
+   */
+  float inner_angle_deg;
+  /**
+   * Spot lights: half angle in degrees past which the light is gone;
+   * `inner_angle_deg <= outer_angle_deg <= 90`.
+   */
+  float outer_angle_deg;
+} StickShiftLight;
+
+/**
  * A mesh owned by a context. `id == 0` is the null handle.
  */
 typedef struct StickShiftMesh {
@@ -419,6 +475,12 @@ typedef struct StickShiftMaterial {
    * The base-colour texture for `POS_NORMAL_UV` meshes; `{0}` for white.
    */
   struct StickShiftTexture base_color_texture;
+  /**
+   * Linear RGB light the surface gives off, added after lighting: a lit
+   * window or a lamp glows without lighting anything else. May exceed 1.
+   * `{0, 0, 0}` emits nothing.
+   */
+  float emissive[3];
 } StickShiftMaterial;
 
 /**
@@ -767,6 +829,16 @@ typedef struct StickShiftTextureDesc {
 #define STICKSHIFT_COLOR_SPACE_LINEAR 1
 
 /**
+ * Shines equally in every direction from its position.
+ */
+#define STICKSHIFT_LIGHT_POINT 0
+
+/**
+ * Shines in a cone from its position, along `direction`.
+ */
+#define STICKSHIFT_LIGHT_SPOT 1
+
+/**
  * The quad's colour, untextured.
  */
 #define STICKSHIFT_FILL_SOLID 0
@@ -1027,6 +1099,17 @@ StickShiftResult stickshift_frame_set_sun_sky(struct StickShiftFrame *frame,
  * `out` must be NULL or valid.
  */
 void stickshift_sun_sky_default(struct StickShiftSunSky *out);
+
+/**
+ * Add a point or spot light to the frame. Lights are per frame: each frame
+ * starts with none, and every light added before submit lights every draw in
+ * the frame. `STICKSHIFT_ERROR_LIMIT_EXCEEDED` past `STICKSHIFT_MAX_LIGHTS`.
+ *
+ * # Safety
+ * `frame` must be NULL or an open frame; `light` NULL or valid.
+ */
+StickShiftResult stickshift_frame_add_light(struct StickShiftFrame *frame,
+                                            const struct StickShiftLight *light);
 
 /**
  * Record a draw of `mesh` with model-to-world matrix `*model`. `material` may

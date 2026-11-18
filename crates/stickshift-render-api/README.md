@@ -75,10 +75,19 @@ draw projects with the camera in effect when it is recorded. The frame's
 lighting (sky, specular and the shadow fit) uses the camera and sun in effect at
 its first draw, or at `submit` for a frame with no draws.
 
+`add_light(&Light)` adds a point or spot light to the **open frame only**: lights
+are not sticky, and every light added before `submit` lights every draw in the
+frame. A frame holds up to `MAX_LIGHTS` (256). The `light` module documents the
+falloff (inverse square, windowed to zero at the light's `range`), the spot cone,
+and the budget; `Light::falloff`, `Light::cone` and `Light::radiance_at` compute
+them on the CPU, so a game can ask how lit a point is without a GPU.
+
 ### Plain-data descriptors
 
 `VertexFormat`, `VertexAttribute`, `VertexLayout` describe vertex memory layout;
-`MaterialParams` is a small backend-neutral shading block. No GPU objects, no
+`MaterialParams` is a small backend-neutral shading block: a base colour, and an
+`emissive` colour that both pipelines add after lighting, so lit windows and lamps
+glow without lighting anything around them. No GPU objects, no
 `metal` types, no device-tied lifetimes — freely constructed, copied, and
 compared above the seam. The backend translates them into native objects.
 
@@ -94,7 +103,8 @@ headlessly:
   `destroyed_*()`, and `live_*_count()`.
 - Frames: `draws()` / `draw_count()` (each `RecordedDraw` captures the mesh plus
   the pipeline/texture bound at record time, the model matrix, and the material),
-  `frames_begun()`, `frames_submitted()`, `frame_open()`.
+  `frames_begun()`, `frames_submitted()`, `frame_open()`, and `lights()`, the
+  lights the open (or last) frame added.
 
 It never panics on protocol violations — it records the observed behaviour so a
 test can assert it. This is the mechanism by which the whole engine above the

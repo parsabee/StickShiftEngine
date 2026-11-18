@@ -162,7 +162,7 @@ const REFERENCE_HASH: u64 = 0xbb6d718f1804993d;
 /// that produces [`REFERENCE_HASH`]. Two things were checked before accepting it,
 /// because a golden hash is worthless if either fails:
 ///
-/// - **The frame is not blank.** `bless_or_assert` requires more than 8 distinct
+/// - **The frame is not blank.** `common::bless_or_assert` requires more than 8 distinct
 ///   pixel values, so a baseline can never be blessed from a render that silently
 ///   drew nothing.
 /// - **The 3D baseline did not move.** The same blessing run reprinted
@@ -217,58 +217,6 @@ const OVERLAY_REFERENCE_HASH: u64 = 0x2b3859048070b2b6;
 ///   the shader moved this hash to `0x79a74f9a300fd87d`; restoring it brought
 ///   `0x93bf3a3f86062cbd` back. The guard is live, not decorative.
 const SUN_REFERENCE_HASH: u64 = 0x93bf3a3f86062cbd;
-
-/// FNV-1a 64-bit hash over a byte buffer. Self-contained (no external crate) so
-/// the golden hash has no dependency surface.
-fn fnv1a_64(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for &b in bytes {
-        hash ^= b as u64;
-        hash = hash.wrapping_mul(0x00000100000001b3);
-    }
-    hash
-}
-
-/// Hash `pixels` and either print a fresh baseline (`BLESS=1`) or assert it
-/// matches `baseline`.
-///
-/// `constant` is the name of the `const` that holds `baseline`, so a `BLESS=1`
-/// run that exercises several references says which constant each printed value
-/// belongs in, and a failure says which one to look at. Shared by both tests so
-/// the blessing contract has exactly one implementation.
-fn bless_or_assert(pixels: &[u8], baseline: u64, constant: &str) {
-    // A pixel hash only guards anything if the frame actually has content. A
-    // regression that drew *nothing* would produce a perfectly stable hash, and
-    // once blessed it would pass forever while testing nothing at all. Both
-    // references put varied geometry over a gradient sky, so a frame this uniform
-    // means the render broke — checked before blessing too, so a blank frame can
-    // never be baked into a baseline.
-    let distinct = pixels
-        .chunks_exact(4)
-        .collect::<std::collections::HashSet<_>>();
-    assert!(
-        distinct.len() > 8,
-        "{constant}: the rendered frame has only {} distinct pixel value(s) — it is \
-         effectively blank, so its hash would guard nothing",
-        distinct.len(),
-    );
-
-    let hash = fnv1a_64(pixels);
-
-    if common::blessing() {
-        println!("BLESS: new {constant} = {hash:#018x}");
-        println!("Update {constant} in tests/pixel_hash.rs with a justification note.");
-        return;
-    }
-
-    assert_eq!(
-        hash, baseline,
-        "{constant} pixel hash changed ({hash:#018x} != {baseline:#018x}). \
-         If this is an intended visual change, re-bless with \
-         `BLESS=1 cargo test -p stickshift-render --test pixel_hash` and update {constant} \
-         with a justification note."
-    );
-}
 
 /// The 9-float-per-vertex layout used by `stickshift-ecs` meshes, packed as raw bytes
 /// for the seam: `[pos_xyz, normal_xyz, color_rgb]` == 36-byte stride.
@@ -384,7 +332,7 @@ fn reference_scene_matches_committed_hash() {
         return;
     };
 
-    bless_or_assert(&pixels, REFERENCE_HASH, "REFERENCE_HASH");
+    common::bless_or_assert(&pixels, REFERENCE_HASH, "REFERENCE_HASH");
 }
 
 // ---------------------------------------------------------------------------
@@ -546,7 +494,7 @@ fn reference_overlay_matches_committed_hash() {
         return;
     };
 
-    bless_or_assert(&pixels, OVERLAY_REFERENCE_HASH, "OVERLAY_REFERENCE_HASH");
+    common::bless_or_assert(&pixels, OVERLAY_REFERENCE_HASH, "OVERLAY_REFERENCE_HASH");
 }
 
 // ============================================================================
@@ -618,7 +566,7 @@ fn reference_sun_matches_committed_hash() {
         return;
     };
 
-    bless_or_assert(&pixels, SUN_REFERENCE_HASH, "SUN_REFERENCE_HASH");
+    common::bless_or_assert(&pixels, SUN_REFERENCE_HASH, "SUN_REFERENCE_HASH");
 }
 
 // ---------------------------------------------------------------------------
@@ -1096,12 +1044,6 @@ fn compare_shadow_frames(
     Ok(())
 }
 
-/// Whether `device_name` is a paravirtualized Metal device (a macOS virtual
-/// machine, e.g. a GitHub Actions runner) rather than a real Apple GPU.
-fn is_paravirtual(device_name: &str) -> bool {
-    device_name.contains("Paravirtual")
-}
-
 /// Mean luminance (0..255) of the 3x3 pixels around where `world` projects in the
 /// shadow reference's camera.
 fn luminance_at(pixels: &[u8], world: Vec3) -> f32 {
@@ -1152,7 +1094,7 @@ fn reference_shadow_matches_committed_hash() {
     }
 
     if blessing {
-        bless_or_assert(&pixels, SHADOW_REFERENCE_HASH, "SHADOW_REFERENCE_HASH");
+        common::bless_or_assert(&pixels, SHADOW_REFERENCE_HASH, "SHADOW_REFERENCE_HASH");
         return;
     }
 
@@ -1160,7 +1102,7 @@ fn reference_shadow_matches_committed_hash() {
     // CI depends on is exercised locally too.
     let tolerance = compare_shadow_frames(SHADOW_REFERENCE_BGRA, &pixels, &unshadowed);
 
-    if is_paravirtual(&device) {
+    if common::is_paravirtual(&device) {
         // See SHADOW_REFERENCE_BGRA: a paravirtualized GPU flips a few texel
         // compares at the soft edge, so the exact hash is replaced by the
         // edge-confined tolerance comparison against the committed frame.
@@ -1168,10 +1110,10 @@ fn reference_shadow_matches_committed_hash() {
             "{device}: paravirtualized Metal device, so the shadow reference is compared \
              within tolerance (hash here {:#018x}; the exact {SHADOW_REFERENCE_HASH:#018x} \
              is asserted on real Apple GPUs)",
-            fnv1a_64(&pixels)
+            common::fnv1a_64(&pixels)
         );
         if let Err(why) = tolerance {
-            dump_frame("SHADOW_REFERENCE_BGRA", &pixels);
+            common::dump_frame("SHADOW_REFERENCE_BGRA", &pixels);
             panic!(
                 "SHADOW_REFERENCE on {device} is outside the paravirtualized-GPU tolerance: \
                  {why}. See SHADOW_REFERENCE_BGRA in tests/pixel_hash.rs."
@@ -1180,36 +1122,12 @@ fn reference_shadow_matches_committed_hash() {
         return;
     }
 
-    if fnv1a_64(&pixels) != SHADOW_REFERENCE_HASH {
-        dump_frame("SHADOW_REFERENCE_BGRA", &pixels);
+    if common::fnv1a_64(&pixels) != SHADOW_REFERENCE_HASH {
+        common::dump_frame("SHADOW_REFERENCE_BGRA", &pixels);
     }
-    bless_or_assert(&pixels, SHADOW_REFERENCE_HASH, "SHADOW_REFERENCE_HASH");
+    common::bless_or_assert(&pixels, SHADOW_REFERENCE_HASH, "SHADOW_REFERENCE_HASH");
     // Real GPU and the hash matched, so the frame *is* the committed image.
     assert_eq!(tolerance, Ok(()));
-}
-
-/// Print `frame` base64-encoded on one line between `BEGIN <name>` / `END <name>`
-/// markers, so a failing CI run carries the frame needed to re-record
-/// `tests/data/shadow_reference.bgra` (decode the line into that file).
-fn dump_frame(name: &str, frame: &[u8]) {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut encoded = String::with_capacity(frame.len().div_ceil(3) * 4);
-    for chunk in frame.chunks(3) {
-        let b = [
-            chunk[0],
-            *chunk.get(1).unwrap_or(&0),
-            *chunk.get(2).unwrap_or(&0),
-        ];
-        let n = u32::from(b[0]) << 16 | u32::from(b[1]) << 8 | u32::from(b[2]);
-        for i in 0..4 {
-            if i <= chunk.len() {
-                encoded.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
-            } else {
-                encoded.push('=');
-            }
-        }
-    }
-    eprintln!("BEGIN {name}\n{encoded}\nEND {name}");
 }
 
 #[test]
@@ -1218,7 +1136,7 @@ fn shadow_reference_image_matches_committed_hash() {
     // tolerance path compares against the same baseline the strict path asserts.
     assert_eq!(SHADOW_REFERENCE_BGRA.len(), (WIDTH * HEIGHT * 4) as usize);
     assert_eq!(
-        fnv1a_64(SHADOW_REFERENCE_BGRA),
+        common::fnv1a_64(SHADOW_REFERENCE_BGRA),
         SHADOW_REFERENCE_HASH,
         "tests/data/shadow_reference.bgra is not the frame SHADOW_REFERENCE_HASH pins; \
          re-bless both together (BLESS=1 rewrites the image)"
@@ -1304,8 +1222,8 @@ fn reference_shadow_is_cast_by_the_shadow_pass() {
     };
 
     assert_ne!(
-        fnv1a_64(&on),
-        fnv1a_64(&off),
+        common::fnv1a_64(&on),
+        common::fnv1a_64(&off),
         "disabling the shadow pass changed nothing: the reference has no shadow in it"
     );
     for (point, what) in [

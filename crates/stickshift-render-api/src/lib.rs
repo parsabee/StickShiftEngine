@@ -31,6 +31,9 @@
 //!   frame through [`FrameRecorder::set_sun_sky`]. Physical parameters only: the
 //!   sun's elevation/azimuth, colour and intensity, the sky-fill level, and the
 //!   sky gradient. No time-of-day policy lives below the seam.
+//! - [`Light`] / [`LightKind`] — point and spot lights, added to each frame with
+//!   [`FrameRecorder::add_light`] (up to [`MAX_LIGHTS`]); together with
+//!   [`MaterialParams::emissive`], what lights a scene after dark.
 //! - [`RenderSettings`] / [`ShadowQuality`] — render quality settings:
 //!   shadow tier and range and a draw-distance scale, pushed with
 //!   [`RenderDevice::set_render_settings`]; the drawable's resolution goes through
@@ -74,6 +77,7 @@
 pub mod descriptor;
 pub mod device;
 pub mod handles;
+pub mod light;
 pub mod null;
 pub mod overlay;
 pub mod recorder;
@@ -85,6 +89,7 @@ pub use device::{
     ColorSpace, GpuFrameTime, MeshData, PipelineDescriptor, RenderDevice, TextureData,
 };
 pub use handles::{MeshHandle, PipelineHandle, TextureHandle};
+pub use light::{Light, LightKind, LIGHT_MIN_DISTANCE, MAX_LIGHTS, MAX_SPOT_ANGLE_DEG};
 pub use null::{NullRenderer, ProtocolViolation, RecordedDraw};
 pub use overlay::{FontAtlas, Glyph, OverlayFill, OverlayQuad};
 pub use recorder::FrameRecorder;

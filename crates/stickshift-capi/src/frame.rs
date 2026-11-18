@@ -5,8 +5,10 @@
 //! Frames: recorded CPU-side, re-checked and handed to the backend whole at
 //! submit. Acquiring a frame never waits.
 
-use stickshift_math::glam::Mat4;
-use stickshift_render_api::{ColorSpace, OverlayFill, OverlayQuad, PipelineKind, SunSky};
+use stickshift_math::glam::{Mat4, Vec3};
+use stickshift_render_api::{
+    ColorSpace, Light, LightKind, OverlayFill, OverlayQuad, PipelineKind, SunSky, MAX_LIGHTS,
+};
 
 use crate::backend::{DrawCall, FrameData};
 use crate::context::{frame_of, with_context, with_frame, Inner, OwnedEvent, PendingRead};
@@ -29,6 +31,8 @@ pub(crate) struct Recording {
     /// Per quad: the texture handle it samples (or 0), and the draw call that
     /// recorded it.
     quad_sources: Vec<(u64, u32)>,
+    /// The frame's point and spot lights, already validated.
+    pub(crate) lights: Vec<Light>,
     /// Draw calls recorded this frame, so the draws or glyph quads one call
     /// recorded count as one skipped draw if they are dropped at submit.
     calls: u32,
@@ -50,6 +54,7 @@ impl Recording {
         self.draw_sources.clear();
         self.quads.clear();
         self.quad_sources.clear();
+        self.lights.clear();
         self.calls = 0;
         self.kept_draws.clear();
         self.kept_quads.clear();
@@ -211,6 +216,65 @@ pub unsafe extern "C" fn stickshift_sun_sky_default(out: *mut StickShiftSunSky) 
     }
 }
 
+/// A C light as the seam's [`Light`], or why it cannot be drawn.
+fn light_from(l: StickShiftLight) -> Result<Light, Error> {
+    let kind = match l.kind {
+        STICKSHIFT_LIGHT_POINT => LightKind::Point,
+        STICKSHIFT_LIGHT_SPOT => LightKind::Spot {
+            direction: l.direction.into(),
+            inner_angle_deg: l.inner_angle_deg,
+            outer_angle_deg: l.outer_angle_deg,
+        },
+        other => {
+            return Err(Error::invalid_argument(format!(
+                "{other} is not a STICKSHIFT_LIGHT_* value"
+            )))
+        }
+    };
+    let light = Light {
+        kind,
+        position: Vec3::from(l.position),
+        color: l.color,
+        intensity: l.intensity,
+        range: l.range,
+    };
+    if !light.is_valid() {
+        return Err(Error::invalid_argument(
+            "a light needs finite values, range > 0, intensity >= 0 and colour channels \
+             >= 0; a spot also needs a non-zero direction and \
+             0 <= inner_angle_deg <= outer_angle_deg <= 90",
+        ));
+    }
+    Ok(light)
+}
+
+/// Add a point or spot light to the frame. Lights are per frame: each frame
+/// starts with none, and every light added before submit lights every draw in
+/// the frame. `STICKSHIFT_ERROR_LIMIT_EXCEEDED` past `STICKSHIFT_MAX_LIGHTS`.
+///
+/// # Safety
+/// `frame` must be NULL or an open frame; `light` NULL or valid.
+#[no_mangle]
+pub unsafe extern "C" fn stickshift_frame_add_light(
+    frame: *mut StickShiftFrame,
+    light: *const StickShiftLight,
+) -> StickShiftResult {
+    call(|| {
+        let light = light_from(*input(light, "light")?)?;
+        with_frame(frame, |inner| {
+            let lights = &mut inner.recording.lights;
+            if lights.len() >= MAX_LIGHTS {
+                return Err(Error::new(
+                    STICKSHIFT_ERROR_LIMIT_EXCEEDED,
+                    format!("a frame holds at most {MAX_LIGHTS} lights"),
+                ));
+            }
+            lights.push(light);
+            Ok(STICKSHIFT_OK)
+        })
+    })
+}
+
 const WHITE: StickShiftColor = StickShiftColor {
     r: 1.0,
     g: 1.0,
@@ -235,7 +299,13 @@ pub unsafe extern "C" fn stickshift_frame_draw_mesh(
         let material = material.as_ref().copied().unwrap_or(StickShiftMaterial {
             base_color: WHITE,
             base_color_texture: StickShiftTexture { id: 0 },
+            emissive: [0.0; 3],
         });
+        if !material.emissive.iter().all(|c| c.is_finite() && *c >= 0.0) {
+            return Err(Error::invalid_argument(
+                "material.emissive channels must be finite and >= 0",
+            ));
+        }
         with_frame(frame, |inner| {
             let entry = inner
                 .meshes
@@ -259,6 +329,7 @@ pub unsafe extern "C" fn stickshift_frame_draw_mesh(
                 mesh: handle,
                 model,
                 base_color: material.base_color.to_array(),
+                emissive: material.emissive,
                 texture,
             });
             recording.draw_sources.push((mesh.id, texture_id, call));
@@ -303,6 +374,7 @@ pub unsafe extern "C" fn stickshift_frame_draw_model(
                     mesh: part.mesh,
                     model: world * transform,
                     base_color,
+                    emissive: part.emissive,
                     texture: part.texture,
                 });
                 inner.recording.draw_sources.push((model.id, 0, call));
@@ -509,6 +581,7 @@ pub unsafe extern "C" fn stickshift_frame_submit(
                 view_projection: inner.camera.0,
                 camera_position: inner.camera.1,
                 sun: inner.sun,
+                lights: &inner.recording.lights,
                 draws: &inner.recording.kept_draws,
                 quads: &inner.recording.kept_quads,
                 readback: inner.recording.readback.is_some(),

@@ -33,8 +33,8 @@
 //! no `new_buffer*` on the hot path. Invariants:
 //!
 //! - **Stride/alignment:** each slot is [`UNIFORM_RING_STRIDE`] (256) bytes so
-//!   every per-draw offset is a multiple of 256; a 192-byte [`Uniforms`] (MVP,
-//!   model and normal matrices) fits with padding.
+//!   every per-draw offset is a multiple of 256; a 208-byte [`Uniforms`] (MVP,
+//!   model and normal matrices, emissive colour) fits with padding.
 //! - **Capacity:** the ring holds `ring_draws_per_frame * MAX_FRAMES_IN_FLIGHT`
 //!   slots; [`MAX_FRAMES_IN_FLIGHT`] is `3`. A frame that exceeds its per-frame
 //!   capacity grows the ring (doubling, an allocation-time event), never a
@@ -65,6 +65,20 @@
 //!
 //! Before the sun moved into the seam, the light was a single buffer written once at construction, so
 //! nothing above the seam could set the sun at all.
+//!
+//! # Point and spot lights
+//!
+//! [`add_light`](FrameRecorder::add_light) only collects the frame's lights. At
+//! `submit`, once the whole frame is known, they are binned into clusters
+//! against the camera captured with the frame's light block ([`crate::lights`]
+//! has the technique and the budget) and copied into a third ring,
+//! `cluster_ring`: one [`LIGHT_REGION_SIZE`](crate::lights::LIGHT_REGION_SIZE)-byte
+//! region per in-flight frame, selected by `frame_index % MAX_FRAMES_IN_FLIGHT`
+//! like the other two and safe for the same reason. The scene pass binds the
+//! region's header, lights, cluster table and index list at fragment buffers 3
+//! to 6 for every lit draw. A frame without lights writes only the header,
+//! whose zero count makes the shaders skip the loop. The bins are kept and
+//! refilled each frame, so lights add no per-frame allocation.
 //!
 //! # Deferred encoding and the shadow pass
 //!
@@ -184,14 +198,18 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use stickshift_math::glam::{Mat4, Vec3};
 use stickshift_math::Transform;
 use stickshift_render_api::{
-    ColorSpace, FrameRecorder, GpuFrameTime, MaterialParams, MeshData, MeshHandle, OverlayFill,
-    OverlayQuad, PipelineDescriptor, PipelineHandle, PipelineKind, RenderDevice, RenderSettings,
-    SunSky, TextureData, TextureHandle, VertexFormat, VertexLayout,
+    ColorSpace, FrameRecorder, GpuFrameTime, Light, MaterialParams, MeshData, MeshHandle,
+    OverlayFill, OverlayQuad, PipelineDescriptor, PipelineHandle, PipelineKind, RenderDevice,
+    RenderSettings, SunSky, TextureData, TextureHandle, VertexFormat, VertexLayout, MAX_LIGHTS,
 };
 
 use crate::deindex::deindex;
 use crate::error::{check_size, rgba8_len, RenderError};
 use crate::frame_sync::FrameSemaphore;
+use crate::lights::{
+    ClusterInfo, GpuLight, LightBins, CLUSTERS_OFFSET, INDICES_OFFSET, LIGHTS_OFFSET,
+    LIGHT_REGION_SIZE,
+};
 use crate::registry::Registry;
 use crate::shadow::{
     fit_shadow_frustum, resolve_shadow_distance, shadow_distance_for_fog, shadow_map_size_for,
@@ -682,6 +700,20 @@ pub struct MetalRenderer {
     // a stale offset in a dead buffer.
     light_ring: metal::Buffer,
 
+    // The open frame's point and spot lights, collected by `add_light` and
+    // cleared when a frame opens (lights are not sticky). Capacity `MAX_LIGHTS`,
+    // reserved at construction.
+    frame_lights: Vec<Light>,
+    // Retained clustering scratch, refilled at each submit without allocating.
+    light_bins: LightBins,
+    // Per-frame ring for the binned lights: one `LIGHT_REGION_SIZE` region per
+    // in-flight frame, partitioned like `light_ring`.
+    cluster_ring: metal::Buffer,
+    // Lights `add_light` ignored as invalid, and lights a frame lost to the
+    // `MAX_LIGHTS` / index budget. Diagnostic aids.
+    rejected_lights: u64,
+    dropped_lights: u64,
+
     // The world → clip view-projection, pushed through the seam via
     // `set_view_projection`. The backend owns no camera; the
     // game/engine computes this from a `stickshift_camera::Camera` and hands it across
@@ -907,6 +939,9 @@ struct FrameState {
 struct FrameShading {
     casts_shadows: bool,
     shadow_map: metal::Texture,
+    /// The view-projection the light block was captured with, which the frame's
+    /// point and spot lights are binned against at submit.
+    view_projection: Mat4,
 }
 
 impl MetalRenderer {
@@ -1313,6 +1348,13 @@ impl MetalRenderer {
             MTLResourceOptions::CPUCacheModeDefaultCache,
         );
 
+        // Binned point and spot lights: one region per in-flight frame, written
+        // at submit (see the module docs' "Point and spot lights").
+        let cluster_ring = device.new_buffer(
+            MAX_FRAMES_IN_FLIGHT * LIGHT_REGION_SIZE,
+            MTLResourceOptions::CPUCacheModeDefaultCache,
+        );
+
         // Persistent uniform ring: one buffer covering all in-flight frames.
         let ring_draws_per_frame = INITIAL_MAX_DRAWS_PER_FRAME;
         let ring_len = ring_draws_per_frame * MAX_FRAMES_IN_FLIGHT * UNIFORM_RING_STRIDE;
@@ -1346,6 +1388,11 @@ impl MetalRenderer {
             draws: Vec::new(),
             light,
             light_ring,
+            frame_lights: Vec::with_capacity(MAX_LIGHTS),
+            light_bins: LightBins::new(),
+            cluster_ring,
+            rejected_lights: 0,
+            dropped_lights: 0,
             // No camera pushed yet; identity until the first `set_view_projection`,
             // and the origin until the first `set_camera_position`.
             view_projection: Mat4::IDENTITY,
@@ -1366,9 +1413,10 @@ impl MetalRenderer {
             meshes: Registry::new(),
             pipelines: Vec::new(),
             textures: Vec::new(),
-            // Two construction-time allocations: the `light_ring` and the
-            // persistent `uniform_ring`. Both are load-time, off the hot path.
-            alloc_count: AtomicU64::new(2),
+            // Three construction-time allocations: the `light_ring`, the
+            // `cluster_ring` and the persistent `uniform_ring`. All load-time,
+            // off the hot path.
+            alloc_count: AtomicU64::new(3),
             rejected_draws: 0,
             frame: None,
         })
@@ -1864,6 +1912,7 @@ impl MetalRenderer {
         let shading = FrameShading {
             casts_shadows: self.render_settings.shadows.casts_shadows(),
             shadow_map: self.shadow_map.clone(),
+            view_projection: self.view_projection,
         };
         if let Some(frame) = &mut self.frame {
             frame.shading = Some(shading);
@@ -2137,7 +2186,7 @@ impl MetalRenderer {
     /// into its color target. This is the original single pass, unchanged except
     /// that it binds the shadow map at fragment `[[texture(1)]]` for the lit
     /// shaders and replays the recorded draw list instead of encoding immediately.
-    fn encode_scene_pass(&mut self, frame: &FrameState, shading: &FrameShading) {
+    fn encode_scene_pass(&mut self, frame: &FrameState, shading: &FrameShading, lights: u64) {
         let render_pass_descriptor = metal::RenderPassDescriptor::new();
 
         // MSAA: render into a multisampled color attachment and resolve
@@ -2193,6 +2242,12 @@ impl MetalRenderer {
         // the pass above just stored.
         encoder.set_depth_stencil_state(&self.depth_stencil_state);
         encoder.set_fragment_texture(1, Some(&shading.shadow_map));
+        // The frame's binned point and spot lights (see `upload_lights`): one
+        // region, bound once for every lit draw.
+        encoder.set_fragment_buffer(3, Some(&self.cluster_ring), lights);
+        encoder.set_fragment_buffer(4, Some(&self.cluster_ring), lights + LIGHTS_OFFSET);
+        encoder.set_fragment_buffer(5, Some(&self.cluster_ring), lights + CLUSTERS_OFFSET);
+        encoder.set_fragment_buffer(6, Some(&self.cluster_ring), lights + INDICES_OFFSET);
         let mut bound_textured: Option<bool> = None;
         for draw in &self.draws {
             if bound_textured != Some(draw.textured) {
@@ -2285,6 +2340,7 @@ impl MetalRenderer {
         self.draws.clear();
         self.overlay_vertices.clear();
         self.overlay_textures.clear();
+        self.frame_lights.clear();
 
         self.frame = Some(FrameState {
             command_buffer,
@@ -2434,6 +2490,7 @@ impl MetalRenderer {
         self.capture_shading();
         let frame = self.frame.take()?;
         let shading = frame.shading.as_ref().expect("captured above");
+        let lights = self.upload_lights(&frame, shading);
         autoreleasepool(|| {
             // Pass order: the depth-only shadow pass first (every recorded
             // draw as a caster, into the stored shadow map), then the scene pass
@@ -2443,7 +2500,7 @@ impl MetalRenderer {
             if shading.casts_shadows {
                 self.encode_shadow_pass(&frame, shading);
             }
-            self.encode_scene_pass(&frame, shading);
+            self.encode_scene_pass(&frame, shading, lights);
 
             // Offscreen: synchronize the Managed color texture so `read_pixels`
             // sees this frame, and copy it into the read-back buffer if one was
@@ -2542,6 +2599,66 @@ impl MetalRenderer {
         self.rejected_draws
     }
 
+    /// Lights [`add_light`](FrameRecorder::add_light) ignored because they were
+    /// not [valid](Light::is_valid). Diagnostic aid.
+    #[must_use]
+    pub fn rejected_light_count(&self) -> u64 {
+        self.rejected_lights
+    }
+
+    /// Valid lights that went unlit because their frame was over budget: past
+    /// [`MAX_LIGHTS`], or past the cluster index budget (see
+    /// [`crate::lights`]). Diagnostic aid; a game that sees it climb should
+    /// shorten its lights' ranges or add fewer.
+    #[must_use]
+    pub fn dropped_light_count(&self) -> u64 {
+        self.dropped_lights
+    }
+
+    /// Bin the frame's lights and copy them into its `cluster_ring` region;
+    /// returns the region's byte offset, which the scene pass binds.
+    ///
+    /// Safe for the same reason as [`write_light_to_ring`](Self::write_light_to_ring):
+    /// the region for frame `F` is next written by frame `F + 3`, which cannot
+    /// begin until frame `F`'s completion handler has returned its permit.
+    fn upload_lights(&mut self, frame: &FrameState, shading: &FrameShading) -> u64 {
+        let base = (self.frame_index % MAX_FRAMES_IN_FLIGHT) * LIGHT_REGION_SIZE;
+        let bins = &mut self.light_bins;
+        bins.bin(&self.frame_lights, shading.view_projection);
+        self.dropped_lights += bins.dropped() as u64;
+        let info = ClusterInfo::new(frame.width as u32, frame.height as u32, bins.lights().len());
+
+        // SAFETY: the ring is `MAX_FRAMES_IN_FLIGHT * LIGHT_REGION_SIZE` bytes and
+        // each write stays inside this frame's region: the header fits before
+        // `LIGHTS_OFFSET`, at most `MAX_LIGHTS` lights fit before
+        // `CLUSTERS_OFFSET`, the table is exactly `CLUSTER_COUNT` entries before
+        // `INDICES_OFFSET`, and at most `MAX_LIGHT_INDICES` indices fit before
+        // the region's end (all asserted in `lights.rs`). The buffer is
+        // CPU-visible and every type is POD.
+        unsafe {
+            let region = (self.cluster_ring.contents() as *mut u8).add(base as usize);
+            std::ptr::write(region as *mut ClusterInfo, info);
+            if !bins.lights().is_empty() {
+                std::ptr::copy_nonoverlapping(
+                    bins.lights().as_ptr(),
+                    region.add(LIGHTS_OFFSET as usize) as *mut GpuLight,
+                    bins.lights().len(),
+                );
+                std::ptr::copy_nonoverlapping(
+                    bins.clusters().as_ptr(),
+                    region.add(CLUSTERS_OFFSET as usize) as *mut [u32; 2],
+                    bins.clusters().len(),
+                );
+                std::ptr::copy_nonoverlapping(
+                    bins.indices().as_ptr(),
+                    region.add(INDICES_OFFSET as usize) as *mut u16,
+                    bins.indices().len(),
+                );
+            }
+        }
+        base
+    }
+
     /// Record a draw of `mesh` with a model-to-world **matrix**: the body of
     /// [`draw_mesh_matrix`](FrameRecorder::draw_mesh_matrix) (and so of
     /// [`draw_mesh`](FrameRecorder::draw_mesh)).
@@ -2595,6 +2712,12 @@ impl MetalRenderer {
             model: model.to_cols_array_2d(),
             // Normals use the inverse-transpose under non-uniform scale.
             normal_matrix: normal_matrix(model).to_cols_array_2d(),
+            emissive: [
+                material.emissive[0],
+                material.emissive[1],
+                material.emissive[2],
+                0.0,
+            ],
         };
         let uniform_offset = self.write_uniform_to_ring(&uniforms);
 
@@ -2873,6 +2996,21 @@ impl FrameRecorder for MetalRenderer {
         // preserved). Sticky: a game with a fixed sun pushes once at load, and this
         // value is re-uploaded for every subsequent frame.
         self.light.apply_sun_sky(sun);
+    }
+
+    fn add_light(&mut self, light: &Light) {
+        // Collected only: the frame's lights are binned at submit, when the
+        // whole frame is known. Ignored outside a frame, like a draw.
+        if self.frame.is_none() {
+            return;
+        }
+        if !light.is_valid() {
+            self.rejected_lights += 1;
+        } else if self.frame_lights.len() >= MAX_LIGHTS {
+            self.dropped_lights += 1;
+        } else {
+            self.frame_lights.push(*light);
+        }
     }
 
     fn set_pipeline(&mut self, handle: PipelineHandle) {

@@ -96,6 +96,29 @@ Moving the sun into the seam also rebalanced the ambient term as **sky fill** (0
 unchanged diffuse 0.8): at the old balance an unlit face sat at 43% of a lit one and
 every scene read overcast. Both 3D pixel-hash baselines were re-blessed for it.
 
+## Point and spot lights, and emission
+
+Up to 256 lights a frame arrive through `add_light`. The backend collects them, and at
+`submit` bins them into **clusters** (16 × 9 screen tiles × 24 exponential depth slices)
+against the camera the frame is lit with; a lit fragment finds its cluster from its pixel
+and view depth and shades only the lights listed there. That keeps the scene one forward
+pass with MSAA resolved in tile memory, the shape a tile-based GPU wants. The binning is
+CPU code in `src/lights.rs`, conservative by construction and unit-tested against the
+shader's own cluster formula; the module docs hold the budget (32,768 light-to-cluster
+entries a frame; a light that no longer fits is dropped whole and counted by
+`dropped_light_count`). The bins go into a third ring next to the uniform and light rings,
+one region per in-flight frame, so lights add no per-frame allocation.
+
+`MaterialParams::emissive` rides in the per-draw uniform slot, which had room for it, and
+both lit shaders add it after lighting and before fog.
+
+With no lights and no emission a frame shades bit-for-bit as before lights existed: every
+pre-existing pixel hash is unchanged. `tests/lights.rs` checks the new path on the GPU:
+every ground pixel the seam's `Light::radiance_at` says is lit is brighter than without
+lights, every pixel out of reach is byte-identical, spot cones cut off where they should,
+emission lights nothing but its own surface, lights last one frame, and a golden night
+street (`NIGHT_STREET_REFERENCE_HASH`) pins the look.
+
 ## Shadows: a fitted shadow-map pass
 
 The sun casts real shadows. (Before this pass the only "shadow" was a fake blob that
@@ -232,7 +255,13 @@ versa. Moving the **sun into the seam** leaned on exactly that: it re-blessed th
 deliberate lighting change) and `OVERLAY_REFERENCE_HASH` came back **unchanged**,
 which is the evidence that the new lighting did not leak into screen space.
 
-Both go through `bless_or_assert`, which first refuses any frame with 8 or fewer
+`tests/lights.rs` adds a fifth, `NIGHT_STREET_REFERENCE_HASH`: many point lights, spot
+headlights and emissive windows in one frame. Like the shadow reference, it is exact on a real
+Apple GPU and compared within a tight tolerance of its committed image
+(`tests/data/night_street_reference.bgra`) on a paravirtualized one, whose arithmetic rounds a
+little differently.
+
+Every golden goes through `common::bless_or_assert`, which first refuses any frame with 8 or fewer
 distinct pixel values. A render that silently drew *nothing* would otherwise hash
 perfectly stably and, once blessed, pass forever while guarding nothing.
 

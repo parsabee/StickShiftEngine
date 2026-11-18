@@ -200,6 +200,17 @@ if (stickshift_frame_acquire(ctx, &frame) == STICKSHIFT_OK) {
   Within a frame, the last value set before submit applies to the whole frame (every draw, the
   sky and the shadow fit). Before the first set, the camera is the identity and the sun is
   `stickshift_sun_sky_default`.
+- **Lights are per frame**: `stickshift_frame_add_light` adds a point or spot light to the open
+  frame only, and the next frame starts with none. Every light added before submit lights every
+  draw in the frame. A frame holds up to `STICKSHIFT_MAX_LIGHTS` (256); past that the call returns
+  `STICKSHIFT_ERROR_LIMIT_EXCEEDED`. A light's brightness falls off with the inverse square of the
+  distance and reaches exactly zero at its `range`, so keep ranges as short as the light needs: the
+  renderer shades a light only where it reaches. If a frame's lights together cover more of the
+  screen than the renderer's budget, it drops whole lights that no longer fit, so lights added
+  earlier keep priority (see [ARCHITECTURE §4c](ARCHITECTURE.md#4c-point-and-spot-lights)).
+- **Emission**: `StickShiftMaterial.emissive` is light a surface gives off itself (a lit window, a
+  lamp's bulb), added after lighting. It lights nothing around it and costs nothing per light. A
+  glTF model's parts take theirs from the material's `emissiveFactor`.
 - 3D draws are depth-tested. 2D quads and text composite on top of the 3D scene, in record
   order.
 - **Draws and handle states.** A draw naming a `PENDING` or `FAILED` resource is not recorded:
@@ -459,8 +470,9 @@ typedef struct StickShiftFontDesc {
 | `StickShiftResult stickshift_frame_acquire(StickShiftContext *ctx, StickShiftFrame **out)` | `OK` or `FRAME_SKIPPED`; never waits. |
 | `StickShiftResult stickshift_frame_set_camera(StickShiftFrame *frame, const StickShiftCamera *camera)` | Sticky. |
 | `StickShiftResult stickshift_frame_set_sun_sky(StickShiftFrame *frame, const StickShiftSunSky *sun)` | Sticky. |
-| `StickShiftResult stickshift_frame_draw_mesh(StickShiftFrame *frame, StickShiftMesh mesh, const StickShiftMat4 *model, const StickShiftMaterial *material)` | `material` may be NULL (white, no texture). |
-| `StickShiftResult stickshift_frame_draw_model(StickShiftFrame *frame, StickShiftModel model, const StickShiftMat4 *world, const StickShiftColor *tint)` | `tint` may be NULL (white); it multiplies each part's base colour. |
+| `StickShiftResult stickshift_frame_add_light(StickShiftFrame *frame, const StickShiftLight *light)` | This frame only. `INVALID_ARGUMENT` for a light that cannot be drawn (see `StickShiftLight`); `LIMIT_EXCEEDED` past `STICKSHIFT_MAX_LIGHTS`. |
+| `StickShiftResult stickshift_frame_draw_mesh(StickShiftFrame *frame, StickShiftMesh mesh, const StickShiftMat4 *model, const StickShiftMaterial *material)` | `material` may be NULL (white, no texture, no emission). `emissive` channels must be finite and `>= 0`. |
+| `StickShiftResult stickshift_frame_draw_model(StickShiftFrame *frame, StickShiftModel model, const StickShiftMat4 *world, const StickShiftColor *tint)` | `tint` may be NULL (white); it multiplies each part's base colour, not its emission. |
 | `StickShiftResult stickshift_frame_draw_quad(StickShiftFrame *frame, const StickShiftQuad *quad)` | 2D overlay. |
 | `StickShiftResult stickshift_frame_draw_text(StickShiftFrame *frame, StickShiftFont font, const char *text, float x, float y, float px, StickShiftColor color)` | `(x, y)`: left end of the first line's baseline, in pixels. `\n` starts a new line. |
 | `StickShiftResult stickshift_frame_read_pixels_async(StickShiftFrame *frame, void *dst, size_t len, const StickShiftCompletion *completion)` | Offscreen contexts. `dst` (`width × height × 4` bytes, BGRA8) must stay valid until `READBACK_COMPLETE` / `READBACK_FAILED`. |
@@ -484,9 +496,23 @@ typedef struct StickShiftSunSky {
     float sky_horizon_color[3];   // the fog fades toward this
 } StickShiftSunSky;
 
+typedef uint32_t StickShiftLightKind;  // STICKSHIFT_LIGHT_POINT, STICKSHIFT_LIGHT_SPOT
+
+typedef struct StickShiftLight {
+    StickShiftLightKind kind;
+    StickShiftVec3 position;          // world space
+    StickShiftVec3 direction;         // spot: the way the light travels; ignored for points
+    float color[3];                   // linear RGB, >= 0
+    float intensity;                  // >= 0; roughly the brightness one unit away
+    float range;                      // > 0; the light is exactly zero from here on
+    float inner_angle_deg;            // spot: full strength inside this half angle
+    float outer_angle_deg;            // spot: gone past this one; inner <= outer <= 90
+} StickShiftLight;
+
 typedef struct StickShiftMaterial {
     StickShiftColor   base_color;
     StickShiftTexture base_color_texture;  // {0}: none
+    float emissive[3];                // linear RGB light the surface gives off; may exceed 1
 } StickShiftMaterial;
 
 typedef uint32_t StickShiftFill;  // STICKSHIFT_FILL_SOLID, STICKSHIFT_FILL_TEXTURE, STICKSHIFT_FILL_SDF

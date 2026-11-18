@@ -97,6 +97,7 @@ pub mod backend;
 pub mod deindex;
 pub mod error;
 pub mod frame_sync;
+pub mod lights;
 pub mod registry;
 pub mod shadow;
 pub mod vertex;

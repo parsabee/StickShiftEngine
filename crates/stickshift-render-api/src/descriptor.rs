@@ -92,22 +92,33 @@ impl VertexLayout {
 /// backend-neutral terms. It intentionally carries no textures — those are bound
 /// separately via [`FrameRecorder::bind_texture`](crate::FrameRecorder::bind_texture).
 ///
-/// It holds only what the built-in pipelines actually use: the base colour,
-/// which the [`Textured`](PipelineKind::Textured) pipeline multiplies into the
-/// sampled texture. The [`VertexColor`](PipelineKind::VertexColor) pipeline takes
-/// its colour from the vertices and ignores it.
+/// It holds only what the built-in pipelines actually use:
 ///
-/// The default is opaque white (`base_color = [1, 1, 1, 1]`).
+/// - the base colour, which the [`Textured`](PipelineKind::Textured) pipeline
+///   multiplies into the sampled texture (the
+///   [`VertexColor`](PipelineKind::VertexColor) pipeline takes its colour from
+///   the vertices and ignores it);
+/// - the **emissive** colour, which both pipelines add to the lit surface: light
+///   the surface gives off itself, so a lit window or a lamp's bulb glows at
+///   night without lighting anything around it, and costs nothing per light.
+///
+/// The default is opaque white with no emission.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MaterialParams {
     /// Linear RGBA base colour / albedo, each channel in `0.0..=1.0`.
     pub base_color: [f32; 4],
+    /// Linear RGB light the surface emits, added after lighting and before fog.
+    /// Not limited to `1.0`: the frame is tonemapped, so a bright emitter (`3.0`
+    /// and up) reads as a glowing light source rather than a flat colour. `[0, 0, 0]`
+    /// (the default) emits nothing.
+    pub emissive: [f32; 3],
 }
 
 impl Default for MaterialParams {
     fn default() -> Self {
         Self {
             base_color: [1.0, 1.0, 1.0, 1.0],
+            emissive: [0.0, 0.0, 0.0],
         }
     }
 }

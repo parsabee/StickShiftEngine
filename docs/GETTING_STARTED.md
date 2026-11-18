@@ -185,9 +185,11 @@ fit transforms that place a model on the ground) and
 The render seam is two traits, handed to you as one `&mut dyn Renderer` from `ctx.renderer()`:
 [`RenderDevice`](../crates/stickshift-render-api/src/device.rs#L100) for resources (and
 `surface_size` / `safe_area_insets`) and
-[`FrameRecorder`](../crates/stickshift-render-api/src/recorder.rs#L66) for the frame. The frame
+[`FrameRecorder`](../crates/stickshift-render-api/src/recorder.rs#L68) for the frame. The frame
 protocol is `begin_frame` → `set_pipeline` / `bind_texture` / `draw_mesh` /
-`draw_overlay_quad` → `submit`, exactly once per `render` call.
+`draw_overlay_quad` → `submit`, exactly once per `render` call. For a night scene, add point and
+spot lights to the open frame with `add_light`; they last that frame only, so add them every
+frame, and give glowing surfaces an `emissive` colour in their `MaterialParams`.
 
 You never set the view: the driver pushes the engine camera's view-projection across the seam
 before `render` runs, so whatever pose the camera is in at the end of `update` is the pose the
