@@ -42,6 +42,8 @@ Everything in the betas, plus:
 
 ## v0.2 — many lights
 
+### `v0.2.0`
+
 A frame can carry many lights, and the engine is Rust crates only.
 [Milestone](https://github.com/parsabee/StickShiftEngine/milestone/1)
 
