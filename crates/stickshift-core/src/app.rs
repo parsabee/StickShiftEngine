@@ -491,7 +491,7 @@ impl<G: Game> ApplicationHandler<EngineEvent> for EngineApp<'_, '_, G> {
 
 // --- macOS-isolated helpers -------------------------------------------------
 //
-// These are deliberately small free functions. A platform split (iOS, v0.2) can
+// These are deliberately small free functions. A platform split (iOS, v0.9) can
 // wrap them (or provide iOS variants) without touching `EngineApp`'s loop.
 
 /// Create the application window. Isolated so the platform split can

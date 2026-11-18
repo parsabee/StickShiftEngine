@@ -50,6 +50,8 @@ API**.
 - `MaterialParams` gained the `emissive` field, so a struct literal must name it or end with
   `..MaterialParams::default()`. `FrameRecorder` gained the required `add_light` method, which a
   custom renderer must implement.
+- The Homebrew formula (`brew install parsabee/stickshift/stickshift-engine`) installs only the
+  engine source, from the release tag, for use as Cargo path dependencies.
 
 ### Fixed
 
@@ -63,8 +65,8 @@ API**.
 - **The C API** (`stickshift-capi`: `libstickshift` and `stickshift.h`), its C examples and
   `docs/C_API.md`. The engine is Rust crates: a game implements `Game` and depends on them from
   source, as Cargo git dependencies pinned to a release tag.
-- **The release tarball and the Homebrew formula**, which carried the C library and the demo. A
-  release is now a tag and its notes.
+- **The release tarball**, which carried the C library and the demo. A release is now a tag and
+  its notes.
 - **The playable demo** (`games/playable-demo` and the `stickshift-demo` binary) is no longer part
   of the engine; the engine's tests use its own fixtures.
 

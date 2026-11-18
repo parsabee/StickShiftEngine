@@ -317,7 +317,7 @@ const MSAA_SAMPLE_COUNT: u64 = 4;
 /// On iOS (TBDR) the multisampled color and depth only ever live in tile memory
 /// — they are cleared, drawn, and resolved without ever being read back — so
 /// they can be `Memoryless`, costing **zero** system-memory bandwidth (iOS
-/// support, v0.2, finishes this). On macOS they must be `Private` (memoryless is not a valid
+/// support, v0.9, finishes this). On macOS they must be `Private` (memoryless is not a valid
 /// storage mode for a resolvable attachment there). This is the single cfg hook
 /// the iOS build flips; the rest of the MSAA wiring is platform-neutral.
 #[cfg(target_os = "ios")]
