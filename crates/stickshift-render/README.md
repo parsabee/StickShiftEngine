@@ -215,8 +215,8 @@ position through the seam each frame. The camera type and the chase controller l
 
 Shaders compile at runtime via `include_str!` + `new_library_with_source`
 (`shaders/rasterization.metal`). An off-by-default `precompiled-shaders` feature compiles
-them to a `.metallib` at build time instead (it needs full Xcode); making that the default
-is planned for v0.1.0.
+them to a `.metallib` at build time instead (it needs full Xcode). A game's release build turns it
+on by forwarding the feature.
 
 ## Render pixel-hash guard
 

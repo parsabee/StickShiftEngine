@@ -10,8 +10,8 @@ Prerequisites are the engine's own: macOS, Rust ≥ 1.91, Command Line Tools. Ru
 ## 1. A new crate
 
 A game is its own crate, in its own repository, that depends on the engine's crates. Take them from
-the engine's repository, pinned to one commit (or a release tag) so every build uses the same
-engine; every engine crate should name the same `rev`.
+the engine's repository, pinned to a release tag (or to one commit, with `rev = "<commit>"`) so
+every build uses the same engine; every engine crate should name the same one.
 
 `Cargo.toml`:
 
@@ -27,18 +27,18 @@ name = "my-game"
 path = "src/main.rs"
 
 [dependencies]
-stickshift-assets = { git = "https://github.com/parsabee/StickShiftEngine", rev = "<commit>" }
-stickshift-core = { git = "https://github.com/parsabee/StickShiftEngine", rev = "<commit>" }
-stickshift-ecs = { git = "https://github.com/parsabee/StickShiftEngine", rev = "<commit>" }
-stickshift-math = { git = "https://github.com/parsabee/StickShiftEngine", rev = "<commit>" }
-stickshift-render-api = { git = "https://github.com/parsabee/StickShiftEngine", rev = "<commit>" }
-stickshift-scene = { git = "https://github.com/parsabee/StickShiftEngine", rev = "<commit>" }
+stickshift-assets = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.0" }
+stickshift-core = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.0" }
+stickshift-ecs = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.0" }
+stickshift-math = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.0" }
+stickshift-render-api = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.0" }
+stickshift-scene = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.0" }
 
 # The Metal backend lives below the render seam. Only the game binary depends on
 # `stickshift-render` (and thus `metal`); it builds the backend and injects it, so
 # `stickshift-core` stays metal-free (ARCHITECTURE §2).
 [target.'cfg(target_os = "macos")'.dependencies]
-stickshift-render = { git = "https://github.com/parsabee/StickShiftEngine", rev = "<commit>" }
+stickshift-render = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.0" }
 ```
 
 Take only the crates you use; `stickshift-camera` (for a follow camera) is the usual addition.
