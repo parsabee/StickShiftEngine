@@ -120,6 +120,12 @@ pub struct MeshAsset {
     /// so lit windows and lamps glow. `[0, 0, 0]` (glTF's default) emits nothing.
     /// An emissive *texture* is not imported.
     pub emissive: [f32; 3],
+    /// The name of this primitive's glTF material (`materials[i].name`), if it
+    /// has one. A model made of several materials names its parts this way, so
+    /// a caller can tell them apart: draw the part named for its windows with an
+    /// emissive colour at night, say. `None` when the primitive has no material
+    /// or its material has no name. Names are as authored, so not unique.
+    pub material_name: Option<String>,
     /// The decoded normal map, if the material has one (best-effort).
     /// RGBA8 like [`base_color`](Self::base_color); the tangent-space normal is
     /// in RGB. Plumbed toward a basic lit material.

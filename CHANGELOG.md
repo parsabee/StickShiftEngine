@@ -9,6 +9,14 @@ API**.
 
 ## [Unreleased]
 
+### Added
+
+- **`MeshAsset::material_name`**: the name of each imported primitive's glTF material, so a game
+  can pick out a model's parts by what they are (its windows, its lamps) and give them their own
+  treatment, such as an emissive colour at night. `None` when the primitive has no material or the
+  material is unnamed. It is a new public field, so code that builds a `MeshAsset` with a struct
+  literal must now set it. The `gltf` dependency gains its `names` feature, which adds no crates.
+
 ## [0.2.0] - 2026-11-17
 
 ### Added
