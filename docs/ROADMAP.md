@@ -70,6 +70,16 @@ Engine:
   shadow-map fits carry their orientation across frames so a turning sun's shadow edges no longer
   shimmer.
 
+### `v0.2.2`
+
+A patch release.
+
+Engine:
+
+- **The sky grades by elevation:** the sky gradient follows each pixel's view-ray elevation rather
+  than its height on screen, so a camera looking down (a chase camera over a road) sees mostly the
+  horizon colour and the fogged edge of the world meets the sky without a hard seam.
+
 ## v0.3 — particles and instancing
 
 [Milestone](https://github.com/parsabee/StickShiftEngine/milestone/2)

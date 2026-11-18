@@ -27,18 +27,18 @@ name = "my-game"
 path = "src/main.rs"
 
 [dependencies]
-stickshift-assets = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.1" }
-stickshift-core = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.1" }
-stickshift-ecs = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.1" }
-stickshift-math = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.1" }
-stickshift-render-api = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.1" }
-stickshift-scene = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.1" }
+stickshift-assets = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.2" }
+stickshift-core = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.2" }
+stickshift-ecs = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.2" }
+stickshift-math = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.2" }
+stickshift-render-api = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.2" }
+stickshift-scene = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.2" }
 
 # The Metal backend lives below the render seam. Only the game binary depends on
 # `stickshift-render` (and thus `metal`); it builds the backend and injects it, so
 # `stickshift-core` stays metal-free (ARCHITECTURE §2).
 [target.'cfg(target_os = "macos")'.dependencies]
-stickshift-render = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.1" }
+stickshift-render = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.2" }
 ```
 
 Take only the crates you use; `stickshift-camera` (for a follow camera) is the usual addition.
