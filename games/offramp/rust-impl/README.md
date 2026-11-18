@@ -119,29 +119,11 @@ One more example records the demo rather than baking an asset.
 [`record_demo`](examples/record_demo.rs) runs the game offscreen through the Metal backend, with
 an autopilot steering around traffic, and writes PNG frames. Traffic is seeded, so it records the
 same clip every time. [`scripts/record-demo-gif.sh`](../../../scripts/record-demo-gif.sh) runs it and
-assembles the frames into the top-level README's `docs/images/demo.gif` with macOS's ImageIO:
+assembles the frames into the top-level README's `docs/images/demo.gif` with
+[`frames_to_gif`](examples/frames_to_gif.rs):
 
 ```sh
 ./scripts/record-demo-gif.sh   # macOS, needs a Metal device
-```
-
-[`trace`](examples/trace.rs) prints the game's state, one JSON line per frame of a headless run,
-for comparing [Offramp](../swift-impl), the Swift port, with this demo. `offramp --trace` prints the
-same format, and [`scripts/offramp-parity.sh`](../../../scripts/offramp-parity.sh) compares the two,
-and `record_demo`'s frames with Offramp's:
-
-```sh
-cargo run --release -p offramp --example trace -- autopilot   # smoke | autopilot | long [--summary]
-```
-
-[`goldens`](goldens) (`offramp-goldens`) writes the rest of Offramp's golden fixtures,
-from this demo's modules, as its
-[fixtures README](../swift-impl/Tests/OfframpTests/Fixtures/README.md) describes. Its build script
-compiles a copy of `src/game.rs` with accessors appended, so it can read the state `CarRunner`
-keeps private without any change to `src`:
-
-```sh
-cargo run --release -p offramp-goldens -- games/offramp/swift-impl/Tests/OfframpTests/Fixtures
 ```
 
 ## Asset licences

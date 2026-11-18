@@ -1,7 +1,7 @@
 # Stick Shift Engine Roadmap
 
 Stick Shift Engine is a lean, **rasterization-only** Metal graphics engine for Apple Silicon, written in
-Rust and usable from other languages through a C API (and, from v0.2, a Swift package). The host
+Rust and usable from other languages through a C API. The host
 application owns the window or view and drives the loop, one tick per display refresh; the
 engine runs the game's updates and renders, through the C API too.
 
@@ -40,15 +40,17 @@ Everything in the betas, plus:
   with results recorded in [BENCHMARKS.md](BENCHMARKS.md). They called for no fixes.
 - **Every bug from the beta audit fixed** (#22–#43).
 
-## v0.2 — Offramp in Swift
+## v0.2 — Offramp
 
-The playable demo becomes **Offramp**, an open-source Swift app on macOS that drives the engine
-only through the C API: the reference for building a native game on Stick Shift Engine.
+The playable demo becomes **Offramp**, the open-source reference for building a game on Stick
+Shift Engine, and the whole engine becomes reachable through the C API.
 [Milestone](https://github.com/parsabee/StickShiftEngine/milestone/1)
 
 Engine:
 
-- **A Swift package** wrapping the C API ([#76](https://github.com/parsabee/StickShiftEngine/issues/76)).
+- **The whole engine through the C API:** an engine object runs a C game's loop, with the
+  engine's world and its queries, scene streaming and the floating-origin rebase, the camera,
+  input, audio and graphics settings, while the host drives it one tick per display refresh.
 - **Many light sources:** point and spot lights and emissive materials ([#82](https://github.com/parsabee/StickShiftEngine/issues/82)), which the
   day/night cycle needs at night.
 - **Physics leaves the engine** ([#81](https://github.com/parsabee/StickShiftEngine/issues/81)). The C API has never exposed physics, and the playable
@@ -59,18 +61,11 @@ Engine:
 
 Offramp:
 
-- **The port to Swift** ([#75](https://github.com/parsabee/StickShiftEngine/issues/75)), at parity with the Rust demo first.
-  The first milestone is done: [`games/offramp`](../games/offramp) is the playable demo as a Swift
-  game on the engine, through the Swift package. It is game code only: the engine's world, scene
-  streaming, loop, camera, input, audio and graphics settings run it, and its window, Graphics
-  menu and sound are the package's macOS host's. It has the Rust demo's `--smoke`, its recorder
-  and its tests. It matches the Rust demo exactly on three headless runs (smoke, the recorder's
-  autopilot run, and 12 000 frames across four rebases), compared frame by frame, and its
-  recorded frames match the Rust recorder's pixel for pixel. CI checks both with
-  `scripts/offramp-parity.sh`.
+- **The playable demo is Offramp** ([#75](https://github.com/parsabee/StickShiftEngine/issues/75)): it lives in [`games/offramp`](../games/offramp)
+  (the game in `rust-impl/`, its assets in `shared/`), and its crate and binary are `offramp`.
 - **Its presentation:** name, logo, font and menus ([#77](https://github.com/parsabee/StickShiftEngine/issues/77)).
 - **A day/night cycle** ([#78](https://github.com/parsabee/StickShiftEngine/issues/78)), **curved roads** ([#79](https://github.com/parsabee/StickShiftEngine/issues/79)) and **car physics** ([#80](https://github.com/parsabee/StickShiftEngine/issues/80)),
-  written in Swift as game code.
+  written as game code.
 
 ## v0.3 — Offramp grows
 
@@ -91,8 +86,8 @@ in [#2 iOS support](https://github.com/parsabee/StickShiftEngine/issues/2) and i
 
 ## v1.0 — the goal
 
-A competent engine for **native Apple games and graphics apps**: Metal-native, embedded in Swift
-and SwiftUI apps, fast on iPhone. That includes **AR** on iPhone and iPad (with ARKit) and
+A competent engine for **native Apple games and graphics apps**: Metal-native, embedded in native
+apps, fast on iPhone. That includes **AR** on iPhone and iPad (with ARKit) and
 **immersive apps on Vision Pro** (with Compositor Services). Work toward it that is not yet
 scheduled:
 

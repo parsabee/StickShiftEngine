@@ -26,15 +26,6 @@ API**.
   `emissiveFactor` (times `KHR_materials_emissive_strength`) as `MeshAsset::emissive`, and the C
   API draws model parts with it.
 - The renderer benchmark has 64- and 256-light scenarios; `docs/BENCHMARKS.md` has the numbers.
-- **A Swift package, `StickShift`** (#76), in `bindings/swift/StickShift`, over the C API. A
-  main-actor `Context` (layer, offscreen or null backend), and `Mesh`, `Texture`, `Model` and
-  `Font` classes that destroy their handles when released. `StickShiftError` carries the C
-  result code and message. Model loads are `async`. `context.frame { frame in ... }` submits
-  the frame when the closure returns and discards it if the closure throws. Also: `simd`
-  interop, lights and emission, pixel read-back, and `StickShiftView`, an `NSView` hosting a
-  `CAMetalLayer` that keeps the drawable sized to the view and drives a display link.
-  `scripts/test-swift.sh` builds `libstickshift` with cargo and runs the package's Swift
-  Testing suite (null backend, plus Metal), which CI now runs too.
 - **Model draws with a local matrix and a part filter** in the C API:
   `stickshift_frame_draw_model_ex(frame, model, &draw)` takes a `StickShiftModelDraw`
   (`world`, `local`, `tint`, `parts`) and records each selected part at
@@ -45,69 +36,6 @@ API**.
   part. The products are grouped as the Rust demo groups them, which a single `world` matrix
   cannot reproduce bit for bit. The addition changes no existing type, so
   `STICKSHIFT_API_VERSION` stays 4.
-- **The Swift package** gained what a Swift port of the playable demo needs:
-  `Frame.draw(_:world:local:parts:tint:)` with `ModelParts` (`.all`, `.textured`,
-  `.untextured`) over the new C call; `StickShiftMath.multiply(_:_:)` and
-  `StickShiftMath.rotation(axis:angle:)`, the engine's own unfused matrix product and
-  quaternion, which `Camera.perspective` now multiplies with instead of simd's fused `*`;
-  `Context.scale`, the UI scale last given to the context; and on `StickShiftView`, a
-  `renderScale` (also `init(size:renderScale:)`) that renders below native resolution with
-  the engine's rounding, and keyboard input: once `onKey(keyCode, isDown, isRepeat)` is set,
-  the view becomes first responder and hands it every key-down and key-up without passing it
-  on, so AppKit does not beep. Without a handler it takes no focus and passes keys on. A key
-  released while Command is held arrives too: `NSApplication` never hands a window that key-up,
-  so the view's local event monitor sends it to the window, as winit does.
-- **The Swift package runs the engine** (first half): `Engine` attaches to a `Context` and runs
-  a `Game` (`initialize`, `update`, `render`, `graphicsSettingsChanged`, and an optional
-  `load(_:) async` phase) through the C API's engine object, so the game is game code only and
-  the host drives the loop: `initialize()`, `resume(_:)`, `tick(_:readback:)` with the fixed-step,
-  elapsed, timestamp and engine clocks, `advance()`, `runHeadless(frames:)`, `push(_:)` of
-  `HostEvent`s returning `HostRequests`, `resetClock()`, `requestExit()`, `state` and `perf`.
-  Each hook gets an `EngineContext` that traps when used after its hook. A thrown `initialize`
-  is rethrown; a thrown `render` still submits its frame (`lastRenderError`). `Engine.init`
-  refuses a library older than its API minor, and an engine dropped off the main thread is
-  destroyed on it. Also: `Context.startLoadingModel(contentsOf:)` for a synchronous load with
-  `Model.wait`, `Frame.surface`, glam's operations (`glamDot`, `simd_quatf(glamRotationY:)`,
-  `glamRotate`, `glamTransformPoint`, ...) and `RustF32`. `scripts/test-swift.sh` now fails on
-  any Swift warning.
-- **The Swift package reaches the engine's services** (second half): `Component` (any
-  bitwise-copyable struct; an empty one is a tag), the engine's `Transform`, `RenderComponent`,
-  `StaticTag` and `DynamicTag`, `Entity`, and `World` (`spawn`, `insert` and `query` over
-  parameter packs, with `with`, `without` and `Optional` terms, in hecs order), `Scene` (streaming
-  through a noncopyable `StreamSlot`, `maybeRebase`), `EngineCamera` and `ChaseController`,
-  `Input` and the host's `HostInput`, `Audio`, `Graphics` and `GraphicsControl`, and
-  `GraphicsMenu` as data, from a hook's `EngineContext` or the `Engine`. Components register on
-  first use. Swift ports of the C API's probe games print the Rust probes' lines. `EngineState`
-  gains `isPoisoned`, and a mesh, texture, font or model released off the main thread while an
-  engine is attached is now destroyed on the main thread instead of leaking. A panic in the
-  engine's own work during `Engine.tick` or `Engine.push` no longer traps: the call returns
-  `.exit` (a tick with `TickResult.isPoisoned`) so the host can drop the engine; a panic in a
-  call the game makes from a hook still traps at that call. `HostInput` presses and releases
-  mouse buttons with `pressMouse(_:)` and `releaseMouse(_:)`, so `press(.left)` is the key.
-- **`StickShiftAppKit`, the macOS host**, a new library product of the Swift package, so a Swift
-  game is game code only: `StickShiftApp.run(title:size:options:makeGame:)` makes the app, its
-  window and menus and runs the game, as `stickshift_core::run` does for a Rust game.
-  `EngineView` is a `StickShiftView` that runs an `Engine`: it ticks on the engine clock each
-  display refresh, reports resizes, density changes, keys (through the macOS keycode table,
-  `Key(macKeyCode:)`), mouse buttons, the cursor and focus loss as winit does, and carries out
-  the engine's requests (exit, full screen, menu sync). `GraphicsMenuBar` builds the native
-  Graphics menu from `Engine.menu(fullScreen:)`, and `FrameWatchdog` keeps the game ticking
-  while AppKit has stopped the display link. `examples/swift/Cubes` is a small game on it, which
-  `scripts/test-swift.sh` builds.
-- **Offramp** (#75), in `games/offramp`: the playable demo as a Swift game on the engine, through
-  the Swift package. It is game code only (its rules, components, spawning, draw list and HUD
-  layout): the engine's world, scene streaming, loop, camera, input, audio and graphics settings
-  run it, and `StickShiftApp.run` gives it the Rust demo's window, Graphics menu (its settings
-  saved in Offramp's own defaults domain), Escape to quit and sound. `offramp --smoke` prints
-  what the Rust `--smoke` prints, `offramp --record <dir>` records the same autopilot run as
-  `record_demo`, and `offramp --trace <smoke|autopilot|long>` prints one JSON line of game state
-  per frame, as the new `trace` example of `offramp` does. The Rust demo's tests are
-  ported under their Rust names, and golden values from the Rust demo are checked bit for bit;
-  the new `offramp-goldens` crate (`games/offramp/rust-impl/goldens`) regenerates those
-  fixtures from the demo's own modules. `scripts/test-offramp.sh` builds `libstickshift` and
-  runs them. `scripts/offramp-parity.sh` runs both games side by side: it checks that both
-  builds resolve the same glam and hecs, then compares `--smoke` and the three traces byte for
-  byte and the 80 recorded frames pixel for pixel. CI runs both scripts.
 - **`stickshift_core::Session`**, the platform-free half of the windowed runner: the frame clock
   (the first frame, and the first after a menu choice or `reset_clock`, banks exactly one step),
   the drawable sized for the view and the render scale, graphics settings restored at start-up
@@ -134,7 +62,7 @@ API**.
   their Rust types and get a byte form through a `Codec`.
 - **The engine through the C API.** A `StickShiftEngine` attached to a context runs the engine's
   own game loop for a game written as C callbacks (`StickShiftGame`: `init`, `update`, `render`,
-  `graphics_settings_changed`, `release`), so a C or Swift game is game code only and the host
+  `graphics_settings_changed`, `release`), so a C game is game code only and the host
   drives the loop: `stickshift_engine_create`, then `stickshift_engine_init` (no view) or
   `stickshift_engine_resume` (a view), then one `stickshift_engine_tick` per display refresh, on a
   fixed-step, elapsed, timestamp or engine-read clock, with `stickshift_engine_push_events` for
@@ -189,14 +117,15 @@ API**.
 
 ### Changed
 
+- **The playable demo is Offramp.** `games/playable-demo` moved to `games/offramp/rust-impl` and
+  its runtime assets to `games/offramp/shared/assets`; its crate and binary are now `offramp`
+  (`cargo run -p offramp`), and its title screen reads OFFRAMP. Its saved graphics settings are
+  under the `offramp` defaults domain. The Homebrew binary is still `stickshift-demo`.
 - **`libstickshift` links two more frameworks, AudioToolbox and CoreAudio.** The library now
   carries the engine loop, and with it the engine's audio (kira over cpal), so a host that links
   `libstickshift.a` statically must add `-framework AudioToolbox -framework CoreAudio`, even if it
   never creates an engine. `pkg-config --static --libs stickshift` and rustc's
-  `--print native-static-libs` already list them; the `StickShift` Swift package links them.
-- **`StickShiftView` moved to the `StickShiftAppKit` module**, so the `StickShift` module has no
-  AppKit in it. Code that makes one adds the `StickShiftAppKit` product and
-  `import StickShiftAppKit`; the view itself is unchanged.
+  `--print native-static-libs` already list them.
 - **`stickshift_context_resize` works on null contexts**, which returned
   `STICKSHIFT_ERROR_UNSUPPORTED` before, so an engine on a null context sizes its drawable for the
   view and the render scale as on a layer context. A Metal offscreen context still keeps its size.

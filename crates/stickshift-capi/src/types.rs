@@ -204,8 +204,8 @@ pub struct StickShiftQuat {
     pub w: f32,
 }
 
-/// A 4×4 matrix, **column-major**: `m[0..4]` is the first column. The same
-/// memory layout as Swift's `simd_float4x4`.
+/// A 4×4 matrix, **column-major**: `m[0..4]` is the first column, and each
+/// column's four floats are contiguous.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct StickShiftMat4 {

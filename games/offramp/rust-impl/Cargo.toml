@@ -18,7 +18,7 @@ path = "src/main.rs"
 # the committed asphalt PNG). The runtime never gains an `image` dep — it decodes
 # the embedded PNG through `stickshift-assets` at import time.
 [dev-dependencies]
-image.workspace = true
+image = { workspace = true, features = ["gif"] }
 fontdue.workspace = true
 
 [features]

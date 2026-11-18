@@ -1,9 +1,7 @@
 # stickshift-capi
 
 The Stick Shift Engine **C API**: `libstickshift.a` / `libstickshift.dylib` and the generated
-[`include/stickshift.h`](include/stickshift.h), with a [`module.modulemap`](include/module.modulemap)
-so Swift can `import StickShift`. Swift apps will usually want the
-[`StickShift` Swift package](../../bindings/swift/StickShift) over it instead.
+[`include/stickshift.h`](include/stickshift.h), for hosts in C, Objective-C or C++.
 
 The contract (concepts, threading, the engine and its scopes, what may wait in v0.1, how the
 API grows, the reference) is [docs/C_API.md](../../docs/C_API.md). In short, a **context**

@@ -13,7 +13,6 @@ members = [
     "crates/stickshift-core",
     "crates/stickshift-capi",
     "games/offramp/rust-impl",
-    "games/offramp/rust-impl/goldens",
 ]
 
 # Shared package metadata. Individual crates inherit these via `field.workspace = true`.

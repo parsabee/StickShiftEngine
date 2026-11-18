@@ -36,7 +36,7 @@ backend-agnostic render seam keeps the door open for a future portable backend w
 engine logic.
 
 The engine is **rasterization-only**. For v0.1 it is becoming a lean graphics library with a C
-API, so that any host app (C, C++, Swift) can drive it; see the [roadmap](docs/ROADMAP.md). Its
+API, so that any host app (C, C++, Objective-C) can drive it; see the [roadmap](docs/ROADMAP.md). Its
 reference title is the [playable demo](#the-playable-demo), an endless car runner on a freeway.
 
 > [!NOTE]
@@ -52,7 +52,7 @@ reference title is the [playable demo](#the-playable-demo), an endless car runne
 - [Features](#features)
 - [Install with Homebrew](#install-with-homebrew)
 - [Quick start](#quick-start)
-- [Using Stick Shift Engine from C or Swift](#using-stick-shift-engine-from-c-or-swift)
+- [Using Stick Shift Engine from C](#using-stick-shift-engine-from-c)
 - [The playable demo](#the-playable-demo)
 - [Project status](#project-status)
 - [Documentation](#documentation)
@@ -62,12 +62,7 @@ reference title is the [playable demo](#the-playable-demo), an endless car runne
 
 ## Features
 
-- **A Swift package** ([`bindings/swift/StickShift`](bindings/swift/StickShift)) over the C API: a
-  game is a `Game` with plain-struct `Component`s, and the engine runs it (the loop, the world and
-  its queries, scene streaming, the camera, input, audio and graphics settings). Resources are
-  classes, errors `throws`, model loads `async`; `StickShiftAppKit` is the macOS window and menu.
-- **A C API** (`libstickshift` + a generated `stickshift.h`, with a Swift module map) for hosts in C,
-  Objective-C, Swift or C++. It is asynchronous in shape: calls return at once with a handle or a
+- **A C API** (`libstickshift` + a generated `stickshift.h`) for hosts in C, Objective-C or C++. It is asynchronous in shape: calls return at once with a handle or a
   result code, resources become ready later, and completions arrive as events. glTF models load
   on worker threads, and acquiring a frame never waits. It also runs the whole engine: an engine
   object runs the game loop for a game written as C callbacks, with the engine's world, scene
@@ -118,7 +113,7 @@ What gets installed:
 |---|---|
 | `$(brew --prefix)/bin/stickshift-demo` | The playable demo (the `offramp` binary) |
 | `$(brew --prefix)/lib/libstickshift.a`, `libstickshift.dylib` | The C library, static and dynamic (install name `@rpath/libstickshift.dylib`) |
-| `$(brew --prefix)/include/stickshift/` | `stickshift.h` and the Swift `module.modulemap` |
+| `$(brew --prefix)/include/stickshift/` | `stickshift.h` |
 | `$(brew --prefix)/lib/pkgconfig/stickshift.pc` | `pkg-config --cflags --libs stickshift` |
 | `$(brew --prefix stickshift-engine)/share/stickshift-engine/assets/` | The demo's runtime assets |
 | `$(brew --prefix stickshift-engine)/share/stickshift-engine/src/` | The engine source: the workspace `Cargo.toml` / `Cargo.lock` / `rust-toolchain.toml`, `crates/`, `games/`, `docs/`, `LICENSE`, `NOTICE` |
@@ -194,14 +189,14 @@ cargo build --release -p offramp --features precompiled-shaders
 cargo build --release -p stickshift-capi --features precompiled-shaders
 ```
 
-## Using Stick Shift Engine from C or Swift
+## Using Stick Shift Engine from C
 
 Build the library from a checkout (or install it with [Homebrew](#install-with-homebrew)):
 
 ```sh
 cargo build --release -p stickshift-capi
 # -> target/release/libstickshift.a and target/release/libstickshift.dylib
-# header and Swift module map: crates/stickshift-capi/include/
+# header: crates/stickshift-capi/include/stickshift.h
 ```
 
 Then include `stickshift.h` and link `libstickshift`:
@@ -219,18 +214,6 @@ cc -std=c11 app.c -I crates/stickshift-capi/include target/release/libstickshift
 The exact library list for static linking is what rustc reports
 (`cargo rustc -p stickshift-capi --lib --crate-type staticlib -- --print native-static-libs`);
 [`scripts/test-c-api.sh`](scripts/test-c-api.sh) builds this way.
-
-**From Swift**, use the [`StickShift` Swift package](bindings/swift/StickShift). A game conforms to
-`Game` and keeps its data in `Component` structs. The engine runs the fixed-step loop, calls the
-game's `initialize`, `update` and `render`, and gives it the world (spawns, and queries in the
-engine's order), scene streaming, the camera, input, audio and graphics settings; the game keeps
-only its own rules and drawing. Resources are classes that own the engine's handles, with `throws`
-for errors and `async` model loading. `StickShiftAppKit` is the macOS host:
-`StickShiftApp.run { MyGame() }` opens the window with the Graphics menu, and
-[`examples/swift/Cubes`](examples/swift/Cubes) is a complete small game. Build the library with
-cargo first; then depend on the package by path. [`scripts/test-swift.sh`](scripts/test-swift.sh) does both and runs its
-tests. The raw C API is also importable from Swift: put the include directory on the import paths
-(`SWIFT_INCLUDE_PATHS` in Xcode, or `-I`), link `libstickshift`, and `import StickShift`.
 
 A frame looks like this; the full contract (handles, events, threading, what may wait) is
 [docs/C_API.md](docs/C_API.md), and [`examples/c/offscreen.c`](examples/c/offscreen.c) is a
@@ -284,26 +267,6 @@ Graphics settings (shadows, shadow distance, draw distance, resolution, full scr
 - [games/offramp/rust-impl/README.md](games/offramp/rust-impl/README.md): the demo's own README, with the
   code layout, the asset bakers, and asset licences.
 
-### Offramp, the demo in Swift
-
-[`games/offramp`](games/offramp) is the same game as a Swift game on the engine. It is game code
-only: the engine's world, scene streaming, loop, camera, input, audio and graphics settings are
-the Rust engine's, reached through the C API by way of the
-[`StickShift` Swift package](bindings/swift/StickShift), and its window is the package's macOS
-host, `StickShiftAppKit`. For now it is an exact port: the same world, state and HUD on every
-step, frames that match the Rust recorder pixel for pixel, and the same `--smoke` output. It
-becomes the v0.2 reference game ([roadmap](docs/ROADMAP.md)).
-
-```sh
-cargo build -p stickshift-capi                            # SwiftPM cannot run cargo
-swift run --package-path games/offramp/swift-impl offramp            # windowed, Metal (macOS 14+)
-swift run --package-path games/offramp/swift-impl offramp --smoke    # the same oracle as the Rust demo's
-./scripts/test-offramp.sh                                 # its tests
-./scripts/offramp-parity.sh                               # run both games and compare traces and frames
-```
-
-Its [README](games/offramp/swift-impl/README.md) has its architecture and explains how parity is checked.
-
 ## Project status
 
 Stick Shift Engine was built by **migrating and refactoring** an earlier prototype into this repo, module
@@ -316,7 +279,7 @@ and rustdoc. The prototype's provenance is recorded in [docs/ARCHITECTURE.md](do
 | `v0.1.0-beta.1` | The async-shaped C API (`libstickshift`, `stickshift.h`, a Swift module map), sRGB colour textures and correct normals, docs that match the code, and a test and bug-fix pass |
 | `v0.1.0-beta.2` | The rename to Stick Shift Engine: crates, C API, Homebrew, repository and docs; no functional changes |
 | `v0.1.0` (current) | GPU frame timing and a renderer benchmark, release builds with precompiled shaders, and fixes for every bug the beta audit found |
-| `v0.2` | Planned: Offramp, the Swift reference game, over a Swift package for the C API; many light sources; physics out of the engine |
+| `v0.2` | Planned: Offramp, the playable demo grown into the reference game; the whole engine through the C API; many light sources; physics out of the engine |
 | `v0.3` | Planned: GPU particles, instancing, traffic AI, diverging roads, procedural city textures |
 | `v0.9` | Planned: iOS and full Xcode support, right before 1.0 ([#2](https://github.com/parsabee/StickShiftEngine/issues/2)) |
 
@@ -351,12 +314,11 @@ Guides and design docs:
 ## Workspace layout
 
 The workspace is `crates/stickshift-*` (the engine) plus `games/offramp/rust-impl` (the first title and the
-smoke oracle). Next to it are the Swift package (`bindings/swift/StickShift`) and Offramp
-(`games/offramp`), which SwiftPM builds. The layout follows [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §3.
+smoke oracle), whose runtime assets are in `games/offramp/shared`. The layout follows [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §3.
 
 | Crate | Purpose |
 |---|---|
-| [`stickshift-capi`](crates/stickshift-capi) | The C API: `libstickshift` (static and dynamic), the generated `stickshift.h` and the Swift module map, over a Metal or a null backend, and the engine object that runs a C game's loop. No windowing: the host owns the view |
+| [`stickshift-capi`](crates/stickshift-capi) | The C API: `libstickshift` (static and dynamic), the generated `stickshift.h`, over a Metal or a null backend, and the engine object that runs a C game's loop. No windowing: the host owns the view |
 | [`stickshift-core`](crates/stickshift-core) | Application lifecycle and the engine/game boundary: the `Game` trait, `EngineCtx`, the fixed-timestep loop, input, and the windowed (winit) and headless drivers |
 | [`stickshift-render-api`](crates/stickshift-render-api) | Backend-agnostic render seam: `RenderDevice` / `FrameRecorder` traits, opaque handles, descriptors, sun/sky and 2D overlay types, and a `NullRenderer` test double. Never depends on `metal` |
 | [`stickshift-render`](crates/stickshift-render) | Raw-Metal implementation of the seam: rasterization pipeline, look stack, shadow maps, clustered point and spot lights, offscreen rendering and pixel read-back |
@@ -368,7 +330,6 @@ smoke oracle). Next to it are the Swift package (`bindings/swift/StickShift`) an
 | [`stickshift-perf`](crates/stickshift-perf) | Profiling and frame-timing instrumentation with an injectable clock |
 | [`stickshift-scene`](crates/stickshift-scene) | The `Scene`: the ECS world, world streaming, and floating-origin rebase |
 | [`games/offramp/rust-impl`](games/offramp/rust-impl) | The reference example game (an endless runner) and host of the headless smoke oracle |
-| [`games/offramp`](games/offramp) | Offramp: the playable demo as a Swift game on the engine, through the Swift package and its macOS host (a SwiftPM package, not a crate) |
 
 ## Contributing
 

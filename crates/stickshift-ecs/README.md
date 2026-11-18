@@ -64,8 +64,8 @@ for (_e, (t, r)) in world.query::<(&TransformComponent, &RenderComponent)>().ite
 
 ## Dynamic components (`dynamic` feature)
 
-`stickshift_ecs::dynamic` lets a host that cannot define Rust types (the C API,
-and through it Swift) register components at run time and use them in an ordinary
+`stickshift_ecs::dynamic` lets a host that cannot define Rust types (the C API)
+register components at run time and use them in an ordinary
 hecs `World`. It is off by default; the crate's own tests turn it on.
 
 - **Slot types.** Each registered component gets a Rust type of its own: `Tag<N>`
