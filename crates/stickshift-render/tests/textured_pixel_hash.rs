@@ -103,7 +103,12 @@ const HEIGHT: u32 = 64;
 // the encoded bytes and encoding them a second time. The quad is darker and more
 // saturated; `srgb_texture_samples_as_its_linear_decode` checks the decode itself.
 // Mesh, texture bytes, camera and transform are unchanged.
-const REFERENCE_HASH: u64 = 0xc245e4559d1e1354;
+//
+// re-bless REQUIRED (intended look change): 0xc245e4559d1e1354 -> 0xe3e6991117e34dc4.
+// The sky around the quad now grades by the view ray's elevation instead of by
+// screen height. The change is confined to the sky pass, which draws only where
+// no geometry is; the quad itself is untouched.
+const REFERENCE_HASH: u64 = 0xe3e6991117e34dc4;
 
 /// FNV-1a 64-bit over a byte buffer (self-contained, no external crate).
 fn fnv1a_64(bytes: &[u8]) -> u64 {

@@ -589,6 +589,15 @@ fn over_budget_and_invalid_lights_are_counted_not_drawn() {
 /// each other with no tile or slice seams, the headlights' pool on the road,
 /// the tail light's red patch, and every window glowing against its dark wall.
 ///
+/// # Re-blessed: the sky grades by elevation
+///
+/// `0xd1c676c95af0bc4a` → `0x35ec5b4618a52fb9`. The night sky above the street now
+/// deepens from its horizon colour to its zenith colour by the view ray's
+/// elevation instead of by screen height. 2644 of 9216 pixels changed, all in the
+/// sky band at the top of the frame (rows 0–27) and the antialiased edges where the
+/// street's blocks meet it. The lights, the lamp pools and the windows are
+/// untouched.
+///
 /// # Re-blessed: the sun's highlights follow its intensity
 ///
 /// `0x4983fc2460d51eef` → `0xd1c676c95af0bc4a`. The sun's specular term was
@@ -618,7 +627,7 @@ fn over_budget_and_invalid_lights_are_counted_not_drawn() {
 /// [`NIGHT_STREET_MAX_DIFFERING_PIXELS`] pixels off by more than one step.
 /// `the_night_street_tolerance_is_not_vacuous` proves that rule still fails a
 /// frame missing a single lamp.
-const NIGHT_STREET_REFERENCE_HASH: u64 = 0xd1c676c95af0bc4a;
+const NIGHT_STREET_REFERENCE_HASH: u64 = 0x35ec5b4618a52fb9;
 
 /// The night street's size: small, so its committed image stays small.
 const NIGHT_WIDTH: u32 = 128;
