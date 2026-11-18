@@ -39,7 +39,7 @@ its loop, world, streaming, physics, audio and rendering. See the [roadmap](docs
 
 > [!NOTE]
 > Stick Shift Engine is **under active development**. The current release is
-> [`v0.2.0`](https://github.com/parsabee/StickShiftEngine/releases/tag/v0.2.0). A game uses the engine from source, as Cargo git dependencies pinned to a release tag (see
+> [`v0.2.1`](https://github.com/parsabee/StickShiftEngine/releases/tag/v0.2.1). A game uses the engine from source, as Cargo git dependencies pinned to a release tag (see
 > [Using the engine in a game](#using-the-engine-in-a-game)). The public API may change between
 > releases (see [CHANGELOG.md](CHANGELOG.md)). macOS is the supported platform today; iOS support
 > is planned for v0.9, right before 1.0 ([#2](https://github.com/parsabee/StickShiftEngine/issues/2)).
@@ -140,8 +140,8 @@ commit, with `rev`); every engine crate names the same one:
 
 ```toml
 [dependencies]
-stickshift-core = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.0" }
-stickshift-scene = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.0" }
+stickshift-core = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.1" }
+stickshift-scene = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.1" }
 ```
 
 [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) goes from an empty crate to a game the engine
@@ -159,7 +159,8 @@ and rustdoc. The prototype's provenance is recorded in [docs/ARCHITECTURE.md](do
 | `v0.1.0-beta.1` | The async-shaped C API (`libstickshift`, `stickshift.h`, a Swift module map), sRGB colour textures and correct normals, docs that match the code, and a test and bug-fix pass |
 | `v0.1.0-beta.2` | The rename to Stick Shift Engine: crates, C API, Homebrew, repository and docs; no functional changes |
 | `v0.1.0` | GPU frame timing and a renderer benchmark, release builds with precompiled shaders, and fixes for every bug the beta audit found |
-| `v0.2.0` (current) | Point and spot lights and emissive materials, a host-driven loop (`Session`) with a core that builds for iOS, and the engine as Rust crates only |
+| `v0.2.0` | Point and spot lights and emissive materials, a host-driven loop (`Session`) with a core that builds for iOS, and the engine as Rust crates only |
+| `v0.2.1` (current) | Imported glTF material names, and a moving sun keeps its highlights and shadows steady |
 | `v0.3` | Planned: GPU particles and instanced drawing |
 | `v0.9` | Planned: iOS and full Xcode support, right before 1.0 ([#2](https://github.com/parsabee/StickShiftEngine/issues/2)) |
 

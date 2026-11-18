@@ -9,6 +9,8 @@ API**.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-18
+
 ### Added
 
 - **`MeshAsset::material_name`**: the name of each imported primitive's glTF material, so a game
@@ -684,7 +686,8 @@ workspace version and are not published to crates.io.
   crash WAVs were generated for this project and dedicated CC0 1.0. The HUD font is OFL. See
   `games/playable-demo/README.md`.
 
-[Unreleased]: https://github.com/parsabee/StickShiftEngine/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/parsabee/StickShiftEngine/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/parsabee/StickShiftEngine/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0-beta.1...v0.1.0
 [0.1.0-beta.2]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0-beta.1...f48f44a
