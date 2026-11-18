@@ -83,9 +83,11 @@ pub struct SunSky {
     pub sky_fill: f32,
     /// Linear RGB colour of the sky at the **zenith** (straight up).
     pub sky_zenith_color: [f32; 3],
-    /// Linear RGB colour of the sky at the **horizon**. Distance fog blends
-    /// toward this, so far geometry meets the sky seamlessly — changing it
-    /// changes the haze the horizon dissolves into.
+    /// Linear RGB colour of the sky at the **horizon**, and everywhere below it.
+    /// Distance fog blends toward this, so far geometry meets the sky seamlessly
+    /// — changing it changes the haze the horizon dissolves into. The sky gives
+    /// way to [`sky_zenith_color`](Self::sky_zenith_color) over the first few
+    /// degrees of elevation.
     pub sky_horizon_color: [f32; 3],
 }
 
