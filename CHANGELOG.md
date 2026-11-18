@@ -9,6 +9,8 @@ API**.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-18
+
 ### Changed
 
 - **The sky grades by elevation, so the world meets it without a seam.** The Metal renderer's sky
@@ -697,7 +699,8 @@ workspace version and are not published to crates.io.
   crash WAVs were generated for this project and dedicated CC0 1.0. The HUD font is OFL. See
   `games/playable-demo/README.md`.
 
-[Unreleased]: https://github.com/parsabee/StickShiftEngine/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/parsabee/StickShiftEngine/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/parsabee/StickShiftEngine/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/parsabee/StickShiftEngine/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0-beta.1...v0.1.0

@@ -2062,7 +2062,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stickshift-assets"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "gltf",
  "image",
@@ -2073,21 +2073,21 @@ dependencies = [
 
 [[package]]
 name = "stickshift-audio"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "kira",
 ]
 
 [[package]]
 name = "stickshift-camera"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "stickshift-math",
 ]
 
 [[package]]
 name = "stickshift-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "objc2 0.5.2",
  "objc2-app-kit",
@@ -2104,7 +2104,7 @@ dependencies = [
 
 [[package]]
 name = "stickshift-ecs"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "hecs",
  "rapier3d",
@@ -2113,18 +2113,18 @@ dependencies = [
 
 [[package]]
 name = "stickshift-math"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "glam 0.29.3",
 ]
 
 [[package]]
 name = "stickshift-perf"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "stickshift-physics"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "rapier3d",
  "stickshift-math",
@@ -2132,7 +2132,7 @@ dependencies = [
 
 [[package]]
 name = "stickshift-render"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "block",
  "cocoa",
@@ -2147,7 +2147,7 @@ dependencies = [
 
 [[package]]
 name = "stickshift-render-api"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "stickshift-camera",
  "stickshift-math",
@@ -2155,7 +2155,7 @@ dependencies = [
 
 [[package]]
 name = "stickshift-scene"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "stickshift-ecs",
  "stickshift-math",
