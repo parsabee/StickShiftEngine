@@ -11,31 +11,20 @@ API**.
 
 ### Added
 
-- **Point and spot lights** (#82). A frame can add up to 256 lights next to its sun, from Rust with
-  `FrameRecorder::add_light(&Light)` and from C with `stickshift_frame_add_light`. Lights last one
-  frame: a game re-adds them every frame from its own state. Brightness falls off with the inverse
-  square of the distance, windowed to zero at the light's range; a spot fades between an inner and
-  an outer half angle. `Light::falloff`, `Light::cone` and `Light::radiance_at` compute the same
-  curve on the CPU. The Metal renderer shades them with clustered forward shading: lights are
-  binned on the CPU into 16 × 9 screen tiles × 24 depth slices, and each fragment shades only its
-  cluster's lights. On an M3 Max, 256 lights add about 0.1 ms of GPU time to a 1080p frame.
-  ARCHITECTURE §4c has the design and the per-frame budget.
-- **Emissive materials.** `MaterialParams::emissive` (and `StickShiftMaterial.emissive`) is light
-  a surface gives off itself, added after lighting and before fog: lit windows and lamps glow at
-  night without lighting anything around them. Imported glTF meshes carry their material's
-  `emissiveFactor` (times `KHR_materials_emissive_strength`) as `MeshAsset::emissive`, and the C
-  API draws model parts with it.
+- **Point and spot lights** (#82). A frame can add up to 256 lights next to its sun with
+  `FrameRecorder::add_light(&Light)`. Lights last one frame: a game re-adds them every frame from
+  its own state. Brightness falls off with the inverse square of the distance, windowed to zero at
+  the light's range; a spot fades between an inner and an outer half angle. `Light::falloff`,
+  `Light::cone` and `Light::radiance_at` compute the same curve on the CPU. The Metal renderer
+  shades them with clustered forward shading: lights are binned on the CPU into 16 × 9 screen
+  tiles × 24 depth slices, and each fragment shades only its cluster's lights. On an M3 Max, 256
+  lights add about 0.1 ms of GPU time to a 1080p frame. ARCHITECTURE §4c has the design and the
+  per-frame budget.
+- **Emissive materials.** `MaterialParams::emissive` is light a surface gives off itself, added
+  after lighting and before fog: lit windows and lamps glow at night without lighting anything
+  around them. Imported glTF meshes carry their material's `emissiveFactor` (times
+  `KHR_materials_emissive_strength`) as `MeshAsset::emissive`.
 - The renderer benchmark has 64- and 256-light scenarios; `docs/BENCHMARKS.md` has the numbers.
-- **Model draws with a local matrix and a part filter** in the C API:
-  `stickshift_frame_draw_model_ex(frame, model, &draw)` takes a `StickShiftModelDraw`
-  (`world`, `local`, `tint`, `parts`) and records each selected part at
-  `world × (local × node)`, in node order. `STICKSHIFT_MODEL_PARTS_TEXTURED` and
-  `STICKSHIFT_MODEL_PARTS_UNTEXTURED` record only the parts with or without a base-colour
-  texture, so a game can draw its textured surfaces, then other draws, then its untextured
-  parts, as the playable demo's render pass does; `STICKSHIFT_MODEL_PARTS_ALL` records every
-  part. The products are grouped as the Rust demo groups them, which a single `world` matrix
-  cannot reproduce bit for bit. The addition changes no existing type, so
-  `STICKSHIFT_API_VERSION` stays 4.
 - **`stickshift_core::Session`**, the platform-free half of the windowed runner: the frame clock
   (the first frame, and the first after a menu choice or `reset_clock`, banks exactly one step),
   the drawable sized for the view and the render scale, graphics settings restored at start-up
@@ -44,114 +33,38 @@ API**.
   `Requests` (`EXIT`, `TOGGLE_FULLSCREEN`, `MENU_SYNC`). The winit runner is now an adapter over
   it, with unchanged behaviour, so a host that owns its own view drives the same code.
   `SettingsStore` keeps the settings in `NSUserDefaults` (the standard defaults or a named
-  suite), on every Apple target. The Graphics menu model, `stickshift_core::settings_menu`
-  (`MenuCommand`, `submenus`, `ACTIONS`), is public for such a host to build its menu from.
+  suite), on every Apple target, and `SettingsStore::clear` forgets them. The Graphics menu model,
+  `stickshift_core::settings_menu` (`MenuCommand`, `submenus`, `ACTIONS`), is public for such a
+  host to build its menu from.
 - **`stickshift-core` builds without a platform.** Its new default feature, `windowed`, holds
   `winit` and the AppKit menu (`run`, `run_with_backend`, `run_with_config`). With
   `default-features = false` the crate has neither, and builds for `aarch64-apple-ios`.
 - `Camera::fov_y`, `Camera::set_fov_y` and `Camera::aspect_ratio`.
 - `Scene::try_set_config`, which returns `StreamingConfigError::AxisOrIntervalChanged` where
   `Scene::set_config` panics, and changes nothing.
-- **Components registered at run time**, in `stickshift-ecs` behind a new `dynamic` feature
-  (off by default), for hosts that cannot define Rust types. `stickshift_ecs::dynamic::Registry`
-  gives each registered component its own slot type from one of two families, `Tag<N>`
-  (zero-sized) and `Blob<N>` (the value's bytes, inline up to 32 bytes and boxed up to 4096), with 128
-  slots each and at most 128 game components per registry. Spawn, insert and remove are hecs's
-  own calls, so archetypes, query order and id reuse match Rust types. Queries copy their rows
-  into an aligned `Rows` buffer that borrows nothing from the world. Engine components keep
-  their Rust types and get a byte form through a `Codec`.
-- **The engine through the C API.** A `StickShiftEngine` attached to a context runs the engine's
-  own game loop for a game written as C callbacks (`StickShiftGame`: `init`, `update`, `render`,
-  `graphics_settings_changed`, `release`), so a C game is game code only and the host
-  drives the loop: `stickshift_engine_create`, then `stickshift_engine_init` (no view) or
-  `stickshift_engine_resume` (a view), then one `stickshift_engine_tick` per display refresh, on a
-  fixed-step, elapsed, timestamp or engine-read clock, with `stickshift_engine_push_events` for
-  keys, mouse buttons, the cursor, focus loss, resizes, the safe area, menu choices and close. A
-  tick runs the same `Session` and `drive_frame` as the Rust runner: a queued settings change,
-  0 to 5 fixed updates of `stickshift_fixed_dt()`, the camera push, and one render hook into a
-  frame the engine opens and submits (`WAIT` or `SKIP` pacing, and an optional pixel read-back on
-  offscreen contexts). What only the host can do comes back as request bits: exit, full screen,
-  menu sync. Calls are checked against Rust's borrows at run time: a call a hook or a stream spawn
-  callback may not make is `STICKSHIFT_ERROR_WRONG_STATE`, a call from another thread
-  `STICKSHIFT_ERROR_WRONG_THREAD`, and a failed init hook `STICKSHIFT_ERROR_ABORTED`; a caught
-  panic poisons the engine, which `stickshift_engine_get_state` still reports. Also new: the
-  context's sticky camera and sun set and read without a frame open
-  (`stickshift_context_set_camera`, `_set_sun_sky` and their getters), `_get_scale`,
-  `_set_safe_area`, `stickshift_context_get_last_frame` (what the last frame recorded, for tools
-  and tests), `stickshift_model_wait` (a synchronous load in init), glam's own operations
-  (`stickshift_vec3_dot`, `_cross`, `_length`, `_normalize_or_zero`, `_lerp`,
-  `stickshift_quat_from_rotation_x`/`_y`/`_z`, `_mul`, `_mul_vec3`,
-  `stickshift_mat4_transform_point3`, `_transform_vector3`, `stickshift_transform_to_mat4`),
-  `stickshift_api_minor()` (now 1), and the result `STICKSHIFT_ABSENT`. It is all additive, so
-  `STICKSHIFT_API_VERSION` stays 4. `docs/C_API.md` documents the engine, its scope rules and the
-  rules the API grows by (size-prefixed structs, strides, append-only values), and
-  [`examples/c/engine.c`](examples/c/engine.c) is a small game on it, built and run by
-  `scripts/test-c-api.sh`.
-- **The engine's world and scene in the C API.** `stickshift_component_register` gives a C game
-  its own components (up to 128, tags or values of up to 4096 bytes); the engine's
-  `TransformComponent`, `RenderComponent`, `StaticTag` and `DynamicTag` have fixed ids, with
-  `StickShiftTransform` and `StickShiftRenderComponent` as their values. `stickshift_world_*`
-  spawns an entity with its whole bundle in one call, and gets, sets, inserts, removes and
-  despawns as hecs does, so archetypes, query order and entity ids are what a Rust game gets.
-  `stickshift_world_query` snapshots matching entities in query order, with required, excluded
-  and optional terms, into rows that stay valid until released or until the hook that took them
-  returns (16 at once). `stickshift_scene_stream` runs the scene's streaming pass with a C spawn
-  callback, which spawns into the pass's world and reports entities with
-  `stickshift_stream_track`; `stickshift_scene_set_config` refuses an axis or spacing change once
-  streaming has started (`STICKSHIFT_ERROR_WRONG_STATE`), and `stickshift_scene_maybe_rebase`
-  rebases the floating origin. World changes are refused in the render hook, and a spawn
-  callback reaches only the world. Both refuse a focus that is not finite
-  (`STICKSHIFT_ERROR_INVALID_ARGUMENT`), and `Scene::stream` no longer overflows its frontier (a
-  debug panic, a release re-spawn every pass) once a far focus saturates the slot at `i64::MAX`.
-- **The engine's camera, input, audio and graphics settings in the C API.** A C game moves the
-  engine camera (`stickshift_camera_*`) and follows with its chase controller
-  (`stickshift_camera_follow`); reads the input the host pushed (`stickshift_input_get`); loads
-  and plays sounds by handle and reads the audio counters (`stickshift_audio_*`, silent engines
-  count too); and reads and requests graphics settings (`stickshift_graphics_*`). A host builds
-  its native Graphics menu from `stickshift_engine_get_menu` and sends choices back as menu
-  events. `STICKSHIFT_ENGINE_PERSIST_SETTINGS` keeps the settings in the same user defaults the
-  Rust runner uses, or in a named suite.
-- `SettingsStore::clear`, which forgets the saved graphics settings.
-- `GraphicsSettings::from_codes` no longer overflows (a debug-build panic) on a stored code of
-  `i64::MIN`; it decodes to the default like any other unknown code.
 
 ### Changed
 
-- **`libstickshift` links two more frameworks, AudioToolbox and CoreAudio.** The library now
-  carries the engine loop, and with it the engine's audio (kira over cpal), so a host that links
-  `libstickshift.a` statically must add `-framework AudioToolbox -framework CoreAudio`, even if it
-  never creates an engine. `pkg-config --static --libs stickshift` and rustc's
-  `--print native-static-libs` already list them.
-- **`stickshift_context_resize` works on null contexts**, which returned
-  `STICKSHIFT_ERROR_UNSUPPORTED` before, so an engine on a null context sizes its drawable for the
-  view and the render scale as on a layer context. A Metal offscreen context still keeps its size.
-- **The C API is at `STICKSHIFT_API_VERSION` 4.** `StickShiftMaterial` gained an `emissive` field,
-  which changes its size, so code built against version 3 must be rebuilt (contexts created with
-  `api_version = 3` are refused). Zero-initialising the field keeps the old look.
 - `MaterialParams` gained the `emissive` field, so a struct literal must name it or end with
   `..MaterialParams::default()`. `FrameRecorder` gained the required `add_light` method, which a
   custom renderer must implement.
 
+### Fixed
+
+- `Scene::stream` no longer overflows its spawn frontier (a debug panic, a release re-spawn every
+  pass) once a far focus saturates the slot index at `i64::MAX`.
+- `GraphicsSettings::from_codes` no longer overflows (a debug-build panic) on a stored code of
+  `i64::MIN`; it decodes to the default like any other unknown code.
+
 ### Removed
 
+- **The C API** (`stickshift-capi`: `libstickshift` and `stickshift.h`), its C examples and
+  `docs/C_API.md`. The engine is Rust crates: a game implements `Game` and depends on them from
+  source, as Cargo git dependencies pinned to a release tag.
+- **The release tarball and the Homebrew formula**, which carried the C library and the demo. A
+  release is now a tag and its notes.
 - **The playable demo** (`games/playable-demo` and the `stickshift-demo` binary) is no longer part
-  of the engine or its release. The release tarball and the Homebrew package ship the C library,
-  its header, its pkg-config file and the engine source; the engine's tests use its own fixtures.
-- **Physics is no longer part of the engine** (#81). This breaks the Rust API; the C API never
-  exposed physics and is unchanged. Removed:
-  - the `stickshift-physics` crate and the workspace's `rapier3d` dependency;
-  - `stickshift_ecs::PhysicsBodyComponent`;
-  - `Scene::physics`, `Scene::physics_mut`, `Scene::step_physics`, `Scene::fixed_dt` and
-    `SpawnCtx::physics`;
-  - the loop's physics step after each `Game::update`. The loop no longer records physics time,
-    so `PerfSnapshot::avg_physics_time` stays zero unless the game calls `mark_physics` itself.
-
-  `Scene::despawn` now just despawns the entity. `StaticTag` and `DynamicTag` stay as hints that
-  an entity is fixed or moving. To migrate a game that used physics: depend on `rapier3d` (or
-  another physics library) directly, keep the physics world in your game struct, step it from
-  `Game::update` at `FIXED_DT`, remove an entity's body when you despawn the entity, and shift
-  the physics world by the offset `Scene::maybe_rebase` returns. The playable demo, which only
-  used static bodies to mark obstacles, now tags them with its own `Obstacle` component.
+  of the engine; the engine's tests use its own fixtures.
 
 ## [0.1.0] - 2026-11-15
 

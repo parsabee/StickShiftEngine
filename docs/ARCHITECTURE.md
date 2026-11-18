@@ -15,7 +15,7 @@ code path across both targets, not two, and it gives direct access to TBDR featu
 We deliberately give up portability to Windows/Linux/Android/Web. For an App Store product
 this is the correct trade. If portability is ever required, the `stickshift-render-api` trait
 seam (below) is the single insertion point for an additional backend (e.g. wgpu) without
-touching ECS, scene, or game code.
+touching ECS, physics, scene, or game code.
 
 ## 2. The render seam (blast-radius firewall)
 
@@ -63,9 +63,8 @@ tree) packed onto the render seam's `MeshData`/`VertexLayout`, with a load-once/
 ("upload once, reference by handle", one level up from the renderer's mesh registry) and a `spawn_scene` ECS helper. It
 depends only on `gltf`, `stickshift-math`, `stickshift-render-api`, and (for `spawn_scene`, behind the default
 `ecs` feature) `stickshift-ecs` — the `stickshift-assets → stickshift-ecs` edge stays acyclic (`stickshift-ecs` never
-depends on `stickshift-assets`) and no `metal` enters the tree. The C API uses the crate without the
-`ecs` feature, so its `spawn_scene` glue stays out of `libstickshift`; the library's ECS is the
-engine's own world (§3a). Imported geometry packs onto `[pos,normal,color]` with a default vertex color so it renders
+depends on `stickshift-assets`) and no `metal` enters the tree. A graphics-only consumer turns the
+`ecs` feature off. Imported geometry packs onto `[pos,normal,color]` with a default vertex color so it renders
 through the existing pipeline immediately; parsed UVs are retained on `MeshAsset::uvs` for the
 textured pipeline. A game loads every mesh it draws this way; the import fixtures are in
 `crates/stickshift-assets/tests/fixtures`.
@@ -150,99 +149,73 @@ stickshift-engine/
 │   ├── stickshift-math          # glam re-export + Transform              (reuse)
 │   ├── stickshift-perf          # profiling / frame timing                (reuse)
 │   ├── stickshift-ecs           # hecs wrapper + components               (reuse)
+│   ├── stickshift-physics       # rapier3d wrapper (+ removal API)        (refactor)
 │   ├── stickshift-camera        # camera + controller math                (refactor)
-│   ├── stickshift-scene         # hecs World + streaming + rebase         (refactor)
+│   ├── stickshift-scene         # hecs World + PhysicsWorld + streaming   (refactor)
 │   ├── stickshift-render-api    # RenderDevice/FrameRecorder traits       (new seam)
 │   ├── stickshift-render        # raw-Metal impl of stickshift-render-api      (refactor)
 │   ├── stickshift-core          # app/lifecycle + platform (#[cfg])       (refactor)
 │   ├── stickshift-assets        # glTF + textures                         (new)
-│   ├── stickshift-audio         # kira wrapper: sounds/one-shots/loops    (new)
-│   └── stickshift-capi          # the C API: libstickshift + stickshift.h           (new)
-├── examples/c/             # C programs over libstickshift (an offscreen frame, a small game)
+│   └── stickshift-audio         # kira wrapper: sounds/one-shots/loops    (new)
 ├── docs/                   # architecture, design, guides, roadmap
-├── scripts/                # preflight, release packaging, doc-anchor check
-└── packaging/homebrew/     # the Homebrew formula
+└── scripts/                # preflight, doc-anchor check, GIF assembly
 ```
 
 The Metal shader source lives in `crates/stickshift-render/shaders/`.
 
-Dependency direction is acyclic: `stickshift-math` is a leaf; `stickshift-core` and `stickshift-capi` sit
-at the top. Game concepts (car, road, score) never enter engine crates — the boundary is a
+Dependency direction is acyclic: `stickshift-math` is a leaf; `stickshift-core` sits at the
+top. Game concepts (car, road, score) never enter engine crates — the boundary is a
 `Game` trait + `EngineCtx` seam, and self-scanning guard tests in `stickshift-core`,
 `stickshift-scene`, `stickshift-assets`, `stickshift-audio` and `stickshift-ecs` fail if a game-named symbol appears in
 them.
 
 For standing up a game on it, see [GETTING_STARTED.md](GETTING_STARTED.md).
 
-### 3a. Layers: one engine, two ways in
+### 3a. Layers: the host and the loop
 
-A game reaches the engine in one of two ways, and both run the same loop:
+A game implements `stickshift_core::Game`; the engine runs it the same way under every host:
 
 ```
-  Rust game (its own crate)                      C game (examples/c/engine.c)
-    impl stickshift_core::Game                 StickShiftGame callbacks
-            |                                          |  stickshift.h: API 4, minor 1
-            |                                  crates/stickshift-capi (libstickshift)
-            |                                    StickShiftEngine: the CGame adapter (a Game),
-            |                                    CapiRenderer (a Renderer onto the context),
-            |                                    run-time scopes, world / scene / camera / input /
-            |                                    audio / graphics / menu calls
-  stickshift_core::run (feature `windowed`)            |
-    winit window and event loop,               the host's view and display link:
-    the AppKit Graphics menu                   stickshift_engine_tick, _push_events
-    winit events -> HostEvent                          |
-            \_____________________   _______________/
+  Rust game (its own crate)
+    impl stickshift_core::Game
+            |
+  stickshift_core::run (feature `windowed`)        a host that owns its own view and
+    winit window and event loop,                    display link (an iOS app, say)
+    the AppKit Graphics menu                                 |
+    winit events -> HostEvent                                |
+            \_____________________   _____________________/
                                   \ /
                     stickshift_core::session::Session
         the frame clock, the drawable size, settings restored and saved, menu choices,
         Escape, focus loss and resizes; what only the platform can do comes back as Requests
                                    |
                stickshift_core::driver::Loop and drive_frame
-        Accumulator, InputState, Camera, Audio, GraphicsState, Scene (the hecs World)
+        Accumulator, InputState, Camera, Audio, GraphicsState, Scene (World + PhysicsWorld)
                                    |
                     Renderer (the stickshift-render-api seam)
-         MetalRenderer (stickshift-render)    CapiRenderer -> StickShiftContext -> Metal or null
+                       MetalRenderer (stickshift-render)
 ```
 
 - **One loop, one session.** The winit runner is an adapter: it maps winit's window events to
-  `HostEvent`s and acts on the returned `Requests` (exit, full screen, the native menu). A C host
-  does the same through `stickshift_engine_push_events` and the request bits of each
-  call. Both drive `Session`, which runs `drive_frame`, so the frame cadence, the settings side
-  effects and the clock are one implementation, not two that agree.
+  `HostEvent`s and acts on the returned `Requests` (exit, full screen, the native menu). A host
+  that owns its view does the same. Both drive `Session`, which runs `drive_frame`, so the frame
+  cadence, the settings side effects and the clock are one implementation, not two that agree.
 - **The host drives.** Nothing in the engine owns a thread, a window or a timer. The winit runner
-  calls `Session::frame` on each redraw; a C host calls `stickshift_engine_tick` from its display
-  link, which runs the same `Session::frame` (with nothing to resize before a view is reported).
-  `STICKSHIFT_CLOCK_ENGINE` reads `Instant::now()` where the runner reads it; tools tick with a
-  fixed step, as the headless driver does.
-- **Adapters, not reimplementations.** `CGame` is a `Game` whose hooks call the C callbacks, so
-  `Loop::init_once` and `drive_frame` call a C game exactly where they call a Rust one.
-  `CapiRenderer` is the `Renderer` the loop pushes the camera, render settings and drawable sizes
-  through, onto the attached context; the game itself draws through the C frame the engine opens
-  for its render hook.
-- **Borrows become scopes.** During a tick the loop holds the engine's state mutably, so a C hook
-  reaches it only through the `EngineCtx` the loop passed that hook, and a stream spawn callback
-  only through the world its pass lends it. The C layer records the running hook on a scope stack
-  and refuses, with `STICKSHIFT_ERROR_WRONG_STATE`, any call Rust's borrows would not allow there
-  (`docs/C_API.md`, "Scopes and threads").
-- **The ECS is the engine's own.** C games register components at run time through
-  `stickshift-ecs`'s `dynamic` feature, which gives each one a Rust type of its own, so hecs
-  partitions archetypes, orders queries and reuses ids exactly as for a Rust game's types. The
-  engine components keep their Rust types. Queries copy rows into snapshots, so nothing borrowed
-  from the world crosses the boundary.
-- **No windowing in the library.** `libstickshift` builds `stickshift-core` without `windowed`, so
-  neither winit nor the AppKit menu reaches it (a CI dependency firewall checks), and settings
-  persistence is Foundation only. The library still links AppKit through `stickshift-render`'s
-  `cocoa` dependency; gating that on macOS comes with iOS.
+  calls `Session::frame` on each redraw; another host calls it from its display link.
+- **No windowing without the feature.** `stickshift-core` without `windowed` has neither winit nor
+  the AppKit menu (a CI dependency firewall checks), and settings persistence is Foundation only,
+  so it builds for iOS. `stickshift-render` still links AppKit through its `cocoa` dependency;
+  gating that on macOS comes with iOS.
 
 ## 4. Engine stack
 
 | Concern | Choice | Notes |
 |---|---|---|
 | Rendering | raw Metal (`metal`) | Apple-only; behind `stickshift-render-api` |
-| Windowing | `winit` (macOS, in the Rust runner) | A C host owns its view and display link and drives the same `Session` (§3a); iOS (v0.9) works that way |
+| Windowing | `winit` (macOS, in the Rust runner) | A host that owns its view and display link drives the same `Session` (§3a); iOS (v0.9) works that way |
 | Math | `glam` | leaf crate |
 | ECS | `hecs` | already integrated in the prototype |
-| Physics | none | removed in v0.2; a game brings its own (see §5) |
+| Physics | `rapier3d` | behind `stickshift-physics`, with a body/collider removal API |
 | Audio | `kira` | behind `stickshift-audio`; see §4b |
 | Assets | `gltf` + `image` | static meshes only for v1 |
 
@@ -250,8 +223,8 @@ A game reaches the engine in one of two ways, and both run the same loop:
 
 `stickshift-core` drives simulation on a **fixed timestep decoupled from the display
 rate**. `FIXED_DT = 1/60 s` is the single source of truth (`stickshift-core`'s
-`timestep.rs`); a game that runs its own physics steps it from `update` at that rate, so its
-behavior is deterministic. Each display frame:
+`timestep.rs`); physics (`stickshift-physics`) steps at the same rate so its behavior
+is deterministic. Each display frame:
 
 1. banks the real elapsed time in an `Accumulator`,
 2. calls `Game::update(ctx, FIXED_DT)` a whole number of times (0..N), draining
@@ -318,7 +291,7 @@ the shader's own cluster formula. A GPU test does the same end to end: every pix
 `Light::radiance_at` says is lit is lit, and every pixel out of reach is byte-identical to the frame
 without lights.
 
-**Budget.** 256 lights per frame (`MAX_LIGHTS`; the seam ignores more, and the C API refuses them)
+**Budget.** 256 lights per frame (`MAX_LIGHTS`; the seam ignores more)
 and 32,768 light-to-cluster entries per frame across all lights. A street lamp covering a few tiles
 and slices uses a few dozen entries, so a street's worth fits easily; large lights near the camera
 fill the budget sooner, and a light that no longer fits is dropped whole (earlier lights keep
@@ -337,21 +310,32 @@ cookies, and bloom, which would make bright emitters bleed light onto their surr
 
 ## 5. Physics decision
 
-The engine has **no physics**. v0.1 wrapped `rapier3d` in a `stickshift-physics` crate, and the
-scene owned a `PhysicsWorld` next to its hecs `World`; v0.2 removed both. The demo never needed a
-solver (its car moves kinematically and its collisions are box overlaps), the C API never exposed
-one, and a racing game wants vehicle physics tuned for it rather than a general rigid-body world
-the engine picks. A game that wants physics links a library itself (for example `rapier3d` from
-Rust, or a C library through the C API), steps it from `Game::update` at `FIXED_DT`, and keeps
-its bodies next to its entities however it likes.
+The engine keeps `rapier3d`, wrapped in `stickshift-physics`. The scene owns a `PhysicsWorld` next
+to its hecs `World`, steps it once after every fixed update (`Scene::step_physics`), frees a body
+together with its entity on despawn, and shifts every body on a floating-origin rebase. The wrapper
+adds the **body/collider removal API** an endless world needs to despawn what falls behind, and it
+hides rapier, so replacing it later would not ripple through the engine; no replacement is planned.
+A game's own motion (a car's lane changes, say) can stay kinematic and game-owned next to it.
 
-**Scene.** `crates/stickshift-scene` owns the hecs `World` and adds engine-generic **streaming**
-(spawn-ahead / despawn-behind by focus distance) and **floating-origin rebase**. Rebase shifts
-every ECS transform by the same whole multiple of the threshold and returns that offset, so a game
-that keeps positions outside the ECS (a camera, its own physics bodies) shifts them by the same
-vector; done between physics steps, the solver never sees a mid-step discontinuity.
-`stickshift-core` owns a `Scene` in its loop and exposes it via `EngineCtx`; the dependency
-direction stays acyclic (`stickshift-core → stickshift-scene → {stickshift-ecs, stickshift-math}`).
+**Status:** the wrapper has migrated into `crates/stickshift-physics` and the removal
+API has landed — `PhysicsWorld::remove_body` (removes the body and its attached colliders)
+and `remove_collider`. Both uphold a **stale-handle-safety** invariant: after removal every
+query on the freed handle returns `None` / is a no-op and never derefs freed storage
+(rapier's generational handles + tests enforce this). The companion **handle-ownership**
+invariant — a handle in a `PhysicsBodyComponent` is removed from physics atomically with
+clearing the component — is documented here and in the crate; the despawn orchestration that
+upholds it lives in `stickshift-scene` (below). `PhysicsWorld::step` advances at the crate-local `FIXED_DT`, which
+mirrors `stickshift-core`'s `FIXED_DT` (`stickshift-physics` does **not** depend on `stickshift-core`, to
+avoid a dependency cycle; a test pins the value).
+
+**Status:** `crates/stickshift-scene` now owns the hecs `World` + `PhysicsWorld` and adds
+engine-generic **streaming** (spawn-ahead / despawn-behind by focus distance) and **floating-origin
+rebase**. Despawn is **atomic** — the physics body is removed before the ECS entity, upholding the
+handle-ownership invariant above. Rebase shifts ECS transforms and physics bodies together, only
+**between** physics steps (`stream → step_physics → maybe_rebase`), so relative positions are
+preserved and the solver never sees a mid-step discontinuity. `stickshift-core` owns a `Scene` in its
+loop and exposes it via `EngineCtx`; the dependency direction stays acyclic
+(`stickshift-core → stickshift-scene → {stickshift-ecs, stickshift-physics, stickshift-math}`).
 
 ## 6. Provenance
 

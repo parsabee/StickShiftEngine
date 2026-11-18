@@ -135,8 +135,8 @@
 //! # Non-blocking frames
 //!
 //! The seam's `begin_frame` / `submit` may block (on the semaphore, and on the
-//! GPU for an offscreen `submit`). Hosts that must never wait (the C API) use the
-//! inherent counterparts instead:
+//! GPU for an offscreen `submit`). Hosts that must never wait use the inherent
+//! counterparts instead:
 //!
 //! - [`try_begin_frame`](MetalRenderer::try_begin_frame) takes a permit only if
 //!   one is free and reports a [`FrameSkip`] otherwise;
@@ -1704,7 +1704,7 @@ impl MetalRenderer {
     ///
     /// The seam's `create_mesh` is lenient (an out-of-range index is skipped, a
     /// layout no pipeline can draw yields an undrawable mesh). This is the strict
-    /// path for callers that must report bad input, such as the C API.
+    /// path for callers that must report bad input.
     ///
     /// # Errors
     /// [`RenderError::InvalidMesh`] if the layout is not exactly one of the two
@@ -2966,7 +2966,7 @@ impl FrameRecorder for MetalRenderer {
         }
         // The drawable, command buffer and encoders Metal hands back are
         // autoreleased; drain them here rather than relying on the host's run
-        // loop to have a pool in place (a C host's render thread may not).
+        // loop to have a pool in place (a host's render thread may not).
         autoreleasepool(|| {
             // Secure the target first, then wait for a frame slot, so a skipped
             // frame (no drawable) never takes a permit it would not release.

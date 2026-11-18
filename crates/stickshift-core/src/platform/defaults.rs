@@ -11,8 +11,7 @@
 //!
 //! The settings are stored as the four small integer codes of
 //! [`GraphicsSettings::to_codes`], under the [`DEFAULTS_KEYS`]. Every host of the
-//! engine uses the same keys, so the Rust runner and a game over the C API share
-//! the player's saved settings.
+//! engine uses the same keys, so every host shares the player's saved settings.
 //!
 //! A suite name opens `initWithSuiteName:` instead of the standard user
 //! defaults: an app group that shares settings between apps, or a throwaway

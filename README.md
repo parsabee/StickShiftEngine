@@ -34,23 +34,22 @@ iPhone**. Because both platforms use Metal natively, raw Metal is *one* code pat
 backend-agnostic render seam keeps the door open for a future portable backend without touching
 engine logic.
 
-The engine is **rasterization-only**. For v0.1 it is becoming a lean graphics library with a C
-API, so that any host app (C, C++, Objective-C) can drive it; see the [roadmap](docs/ROADMAP.md).
+The engine is **rasterization-only**. A game is a Rust crate that implements `Game`; the engine runs
+its loop, world, streaming, physics, audio and rendering. See the [roadmap](docs/ROADMAP.md).
 
 > [!NOTE]
 > Stick Shift Engine is **under active development**. The current release is
-> [`v0.1.0`](https://github.com/parsabee/StickShiftEngine/releases/tag/v0.1.0), the first release:
-> each release ships a prebuilt Apple Silicon build (the C library, its header and the engine
-> source), installable with [Homebrew](#install-with-homebrew). The public API may change between
+> [`v0.1.0`](https://github.com/parsabee/StickShiftEngine/releases/tag/v0.1.0), the first release. A
+> game uses the engine from source, as Cargo git dependencies pinned to a release tag (see
+> [Using the engine in a game](#using-the-engine-in-a-game)). The public API may change between
 > releases (see [CHANGELOG.md](CHANGELOG.md)). macOS is the supported platform today; iOS support
 > is planned for v0.9, right before 1.0 ([#2](https://github.com/parsabee/StickShiftEngine/issues/2)).
 
 ## Table of contents
 
 - [Features](#features)
-- [Install with Homebrew](#install-with-homebrew)
 - [Quick start](#quick-start)
-- [Using Stick Shift Engine from C](#using-stick-shift-engine-from-c)
+- [Using the engine in a game](#using-the-engine-in-a-game)
 - [Project status](#project-status)
 - [Documentation](#documentation)
 - [Workspace layout](#workspace-layout)
@@ -59,17 +58,12 @@ API, so that any host app (C, C++, Objective-C) can drive it; see the [roadmap](
 
 ## Features
 
-- **A C API** (`libstickshift` + a generated `stickshift.h`) for hosts in C, Objective-C or C++. It is asynchronous in shape: calls return at once with a handle or a
-  result code, resources become ready later, and completions arrive as events. glTF models load
-  on worker threads, and acquiring a frame never waits. It also runs the whole engine: an engine
-  object runs the game loop for a game written as C callbacks, with the engine's world, scene
-  streaming, camera, input, audio and graphics settings, while the host drives it one tick per
-  display refresh ([`examples/c/engine.c`](examples/c/engine.c)). See [docs/C_API.md](docs/C_API.md).
 - **Raw Metal behind a render seam.** `stickshift-render-api` defines the render contract
   (`RenderDevice` / `FrameRecorder` traits and opaque handles). `stickshift-render` is the only crate
   that depends on `metal`, and CI fails if the seam crate ever gains a `metal` dependency.
 - **ECS** built on [`hecs`](https://crates.io/crates/hecs), with a shared vocabulary of engine
   components.
+- **Physics** via [`rapier3d`](https://rapier.rs), stepped in lockstep with the simulation.
 - **Fixed-timestep game loop** with a clean `Game` / `EngineCtx` boundary. The same loop drives
   both the windowed app and a headless driver.
 - **World streaming** (spawn-ahead / despawn-behind) and a **floating-origin rebase** for endless
@@ -83,49 +77,11 @@ API, so that any host app (C, C++, Objective-C) can drive it; see the [roadmap](
 - **2D HUD overlay** with SDF text rendering.
 - **Audio** built on [`kira`](https://crates.io/crates/kira): load-once sounds, one-shots, looping
   music, and master volume.
-- **Testable by design:** a headless driver that runs a game with no window or GPU, golden pixel-hash tests
-  that pin the renderer's output, a null backend that runs the C API without a GPU, and a C
-  program compiled and run against the header in CI.
+- **Testable by design:** a headless driver that runs a game with no window or GPU, a
+  `NullRenderer` that records what a frame drew, and golden pixel-hash tests that pin the
+  renderer's output.
 - **Fully documented API:** every engine crate compiles under `#![deny(missing_docs)]`, and the
   rustdoc is [published online](https://parsabee.github.io/StickShiftEngine/).
-
-## Install with Homebrew
-
-On an **Apple Silicon** Mac (arm64; Intel Macs are not supported and Homebrew refuses the
-install), install the prebuilt C library and the engine source, with no Rust toolchain needed:
-
-```sh
-brew install parsabee/stickshift/stickshift-engine
-pkg-config --modversion stickshift   # the installed version
-```
-
-If you installed the engine under its former name, `brew update && brew upgrade` moves you to
-`stickshift-engine` (the tap records the rename).
-
-What gets installed:
-
-| Path | Contents |
-|---|---|
-| `$(brew --prefix)/lib/libstickshift.a`, `libstickshift.dylib` | The C library, static and dynamic (install name `@rpath/libstickshift.dylib`) |
-| `$(brew --prefix)/include/stickshift/` | `stickshift.h` |
-| `$(brew --prefix)/lib/pkgconfig/stickshift.pc` | `pkg-config --cflags --libs stickshift` |
-| `$(brew --prefix stickshift-engine)/share/stickshift-engine/src/` | The engine source: the workspace `Cargo.toml` / `Cargo.lock` / `rust-toolchain.toml`, `crates/`, `examples/`, `docs/`, `LICENSE`, `NOTICE` |
-
-To build your own game against the installed engine, use the crates as Cargo path dependencies
-(building needs Rust 1.91 or newer):
-
-```toml
-[dependencies]
-stickshift-core = { path = "/opt/homebrew/opt/stickshift-engine/share/stickshift-engine/src/crates/stickshift-core" }
-stickshift-math = { path = "/opt/homebrew/opt/stickshift-engine/share/stickshift-engine/src/crates/stickshift-math" }
-```
-
-`brew info stickshift-engine` prints these paths for your prefix. The tarball Homebrew downloads is
-attached to each [GitHub release](https://github.com/parsabee/StickShiftEngine/releases) as
-`stickshift-engine-<version>-aarch64-apple-darwin.tar.gz`, with a `.sha256`; it is built by
-[`.github/workflows/release.yml`](.github/workflows/release.yml) via
-[`scripts/package-release.sh`](scripts/package-release.sh), and the formula lives in
-[`packaging/homebrew/stickshift-engine.rb`](packaging/homebrew/stickshift-engine.rb).
 
 ## Quick start
 
@@ -167,67 +123,30 @@ cargo build --workspace
 cargo test  --workspace
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-./scripts/test-c-api.sh                                  # build libstickshift, compile + run the C programs
-./scripts/gen-header.sh --check                          # stickshift.h matches the Rust sources (needs cbindgen 0.29.0)
 ```
 
 A development build compiles the Metal shaders at runtime, so the Command Line Tools are enough.
 Release builds embed shaders compiled ahead of time instead, so nothing is compiled when the
-library starts. To build that way, which needs full Xcode for the Metal compiler:
+game starts: a game forwards `stickshift-render`'s `precompiled-shaders` feature. Building that
+way needs full Xcode for the Metal compiler:
 
 ```sh
-cargo build --release -p stickshift-capi --features precompiled-shaders
+cargo test -p stickshift-render --features precompiled-shaders
 ```
 
-## Using Stick Shift Engine from C
+## Using the engine in a game
 
-Build the library from a checkout (or install it with [Homebrew](#install-with-homebrew)):
+A game is its own crate that depends on the engine's crates, pinned to one commit or release tag
+(every engine crate names the same `rev`):
 
-```sh
-cargo build --release -p stickshift-capi
-# -> target/release/libstickshift.a and target/release/libstickshift.dylib
-# header: crates/stickshift-capi/include/stickshift.h
+```toml
+[dependencies]
+stickshift-core = { git = "https://github.com/parsabee/StickShiftEngine", rev = "<commit or tag>" }
+stickshift-scene = { git = "https://github.com/parsabee/StickShiftEngine", rev = "<commit or tag>" }
 ```
 
-Then include `stickshift.h` and link `libstickshift`:
-
-```sh
-# Installed with Homebrew: pkg-config knows the paths and, with --static, the frameworks.
-cc -std=c11 app.c $(pkg-config --cflags --libs stickshift) -o app
-# From a checkout, linking the static library by hand:
-cc -std=c11 app.c -I crates/stickshift-capi/include target/release/libstickshift.a \
-   -framework Metal -framework QuartzCore -framework Foundation -framework CoreGraphics \
-   -framework AppKit -framework CoreFoundation -framework AudioToolbox -framework CoreAudio \
-   -lobjc -liconv -o app
-```
-
-The exact library list for static linking is what rustc reports
-(`cargo rustc -p stickshift-capi --lib --crate-type staticlib -- --print native-static-libs`);
-[`scripts/test-c-api.sh`](scripts/test-c-api.sh) builds this way.
-
-A frame looks like this; the full contract (handles, events, threading, what may wait) is
-[docs/C_API.md](docs/C_API.md), and [`examples/c/offscreen.c`](examples/c/offscreen.c) is a
-complete program:
-
-```c
-StickShiftContextDesc desc = { STICKSHIFT_API_VERSION, STICKSHIFT_BACKEND_METAL, metal_layer, 1280, 720, 2.0f };
-StickShiftContext *ctx;
-stickshift_context_create(&desc, &ctx);
-
-StickShiftModel car;
-stickshift_model_load_file(ctx, "car.glb", NULL, &car);   /* returns at once; loads off-thread */
-
-/* every display tick */
-StickShiftEvent events[16];
-uint32_t n;
-stickshift_poll_events(ctx, events, 16, &n);              /* housekeeping + completions */
-StickShiftFrame *frame;
-if (stickshift_frame_acquire(ctx, &frame) == STICKSHIFT_OK) {  /* never waits */
-    stickshift_frame_set_camera(frame, &camera);
-    stickshift_frame_draw_model(frame, car, &world, NULL); /* STICKSHIFT_NOT_READY until loaded */
-    stickshift_frame_submit(frame, NULL, NULL);
-}
-```
+[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) goes from an empty crate to a game the engine
+runs, windowed and headless.
 
 ## Project status
 
@@ -241,7 +160,7 @@ and rustdoc. The prototype's provenance is recorded in [docs/ARCHITECTURE.md](do
 | `v0.1.0-beta.1` | The async-shaped C API (`libstickshift`, `stickshift.h`, a Swift module map), sRGB colour textures and correct normals, docs that match the code, and a test and bug-fix pass |
 | `v0.1.0-beta.2` | The rename to Stick Shift Engine: crates, C API, Homebrew, repository and docs; no functional changes |
 | `v0.1.0` (current) | GPU frame timing and a renderer benchmark, release builds with precompiled shaders, and fixes for every bug the beta audit found |
-| `v0.2` | Planned: the whole engine through the C API; many light sources; physics out of the engine |
+| `v0.2` | Planned: many light sources, and the engine as Rust crates only |
 | `v0.3` | Planned: GPU particles and instanced drawing |
 | `v0.9` | Planned: iOS and full Xcode support, right before 1.0 ([#2](https://github.com/parsabee/StickShiftEngine/issues/2)) |
 
@@ -264,7 +183,6 @@ Guides and design docs:
 | Document | What it covers |
 |---|---|
 | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | Build your own game on the engine |
-| [docs/C_API.md](docs/C_API.md) | The C API: concepts, threading, the engine and its scopes, what may wait in v0.1, how the API grows, reference |
 | [docs/DESIGN.md](docs/DESIGN.md) | Diagrams: component, UML class and sequence diagrams (Mermaid) of the layers, the render seam, the frame loop, streaming, and asset load |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Intentional constraints, the render seam, and workspace layout |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What each release contains, up to 1.0 |
@@ -274,12 +192,10 @@ Guides and design docs:
 
 ## Workspace layout
 
-The workspace is the engine's `crates/stickshift-*`; [`examples/c`](examples/c) holds the C
-examples. The layout follows [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §3.
+The workspace is the engine's `crates/stickshift-*`. The layout follows [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §3.
 
 | Crate | Purpose |
 |---|---|
-| [`stickshift-capi`](crates/stickshift-capi) | The C API: `libstickshift` (static and dynamic), the generated `stickshift.h`, over a Metal or a null backend, and the engine object that runs a C game's loop. No windowing: the host owns the view |
 | [`stickshift-core`](crates/stickshift-core) | Application lifecycle and the engine/game boundary: the `Game` trait, `EngineCtx`, the fixed-timestep loop, input, and the windowed (winit) and headless drivers |
 | [`stickshift-render-api`](crates/stickshift-render-api) | Backend-agnostic render seam: `RenderDevice` / `FrameRecorder` traits, opaque handles, descriptors, sun/sky and 2D overlay types, and a `NullRenderer` test double. Never depends on `metal` |
 | [`stickshift-render`](crates/stickshift-render) | Raw-Metal implementation of the seam: rasterization pipeline, look stack, shadow maps, clustered point and spot lights, offscreen rendering and pixel read-back |
@@ -289,7 +205,10 @@ examples. The layout follows [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §3.
 | [`stickshift-ecs`](crates/stickshift-ecs) | `hecs` wrapper and the shared engine components |
 | [`stickshift-math`](crates/stickshift-math) | Shared math layer: `glam` re-export plus the `Transform` (TRS) type |
 | [`stickshift-perf`](crates/stickshift-perf) | Profiling and frame-timing instrumentation with an injectable clock |
-| [`stickshift-scene`](crates/stickshift-scene) | The `Scene`: the ECS world, world streaming, and floating-origin rebase |
+| [`stickshift-physics`](crates/stickshift-physics) | `rapier3d` wrapper with a body/collider removal API |
+| [`stickshift-scene`](crates/stickshift-scene) | The `Scene`: ECS world + physics world, world streaming, and floating-origin rebase |
+
+Physics uses [rapier](https://rapier.rs) through `stickshift-physics`.
 
 ## Contributing
 
@@ -303,7 +222,6 @@ cargo build --workspace
 cargo test  --workspace
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-./scripts/test-c-api.sh
 RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links" \
   cargo doc --workspace --no-deps
 ```

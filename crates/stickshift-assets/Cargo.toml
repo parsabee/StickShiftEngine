@@ -16,9 +16,9 @@ image.workspace = true
 stickshift-math.workspace = true
 stickshift-render-api.workspace = true
 # `stickshift-ecs` powers the ECS spawn helper (`spawn` module), behind the default
-# `ecs` feature so a graphics-only consumer (the C API) can import glTF without
-# pulling in hecs. The dep direction stays acyclic: stickshift-ecs depends only on
-# stickshift-math/hecs, never on stickshift-assets.
+# `ecs` feature so a graphics-only consumer can import glTF without
+# pulling in hecs and rapier. The dep direction stays acyclic: stickshift-ecs depends
+# only on stickshift-math/hecs/rapier, never on stickshift-assets.
 stickshift-ecs = { workspace = true, optional = true }
 
 [features]

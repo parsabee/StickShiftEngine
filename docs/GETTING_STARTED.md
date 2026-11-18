@@ -11,8 +11,7 @@ Prerequisites are the engine's own: macOS, Rust ≥ 1.91, Command Line Tools. Ru
 
 A game is its own crate, in its own repository, that depends on the engine's crates. Take them from
 the engine's repository, pinned to one commit (or a release tag) so every build uses the same
-engine; every engine crate should name the same `rev`. A Homebrew install also ships the source
-for path dependencies (see the README).
+engine; every engine crate should name the same `rev`.
 
 `Cargo.toml`:
 
@@ -51,12 +50,12 @@ Pin the toolchain the engine pins: copy its [rust-toolchain.toml](../rust-toolch
 
 One trait, three hooks: [`stickshift_core::Game`](../crates/stickshift-core/src/game.rs#L96). `init` runs
 once; `update` runs 0..N times per frame with `dt` always equal to
-[`FIXED_DT`](../crates/stickshift-core/src/timestep.rs#L49) (1/60 s); `render` runs exactly once per
+[`FIXED_DT`](../crates/stickshift-core/src/timestep.rs#L50) (1/60 s); `render` runs exactly once per
 frame after that frame's updates. Advance state in `update`, record draws in `render`, and don't
 cross the two — that split is what makes the simulation framerate-independent.
 
 Everything the engine offers arrives through the [`EngineCtx`](../crates/stickshift-core/src/context.rs#L89)
-argument: the `Scene` (ECS world + streaming), the ECS world, the render seam, the
+argument: the `Scene` (ECS world + physics + streaming), the ECS world, the render seam, the
 `Camera`, an input snapshot, frame timing. There is nothing else to reach for, and no way to reach
 past it.
 
@@ -350,7 +349,7 @@ in their source.
 In practice this is not a constraint so much as a filing rule:
 
 - Game-named ECS components go in *your* crate. They ride on the same entities as
-  `TransformComponent` / `RenderComponent` and compose freely.
+  `TransformComponent` / `RenderComponent` / `PhysicsBodyComponent` and compose freely.
 - Tuning constants go in your crate, ideally all in one module.
 - If you find yourself wanting to add a game concept to `stickshift-scene`, `stickshift-ecs`,
   `stickshift-assets` or `stickshift-core`, the generic primitive you actually want is probably already

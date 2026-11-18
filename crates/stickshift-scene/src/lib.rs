@@ -2,31 +2,37 @@
 //
 // This software is released under the Apache-2.0 License.
 
-//! The [`Scene`] — owner of the ECS [`World`] — plus the engine-generic
-//! **world-streaming** layer for Stick Shift Engine.
+//! The [`Scene`] — owner of the ECS [`World`] and the [`PhysicsWorld`], plus the
+//! engine-generic **world-streaming** layer for Stick Shift Engine.
 //!
-//! On top of the [`World`] it provides three things an endless-world game needs,
-//! all **engine-generic** (there are deliberately no game concepts here — no
-//! vehicle, track, tally, hazard, or gameplay-lattice types; a test scans this
-//! crate's source to keep it that way):
+//! A [`Scene`] bundles the two simulation stores a running world needs — a hecs
+//! [`World`] of entities/components and a
+//! [`PhysicsWorld`] of rigid bodies — behind one
+//! type, and drives them in lockstep at the engine's fixed timestep
+//! ([`step_physics`](Scene::step_physics), stepping at
+//! [`stickshift_physics::FIXED_DT`]).
+//!
+//! On top of that it provides three things an endless-world game needs, all
+//! **engine-generic** (there are deliberately no game concepts here — no vehicle,
+//! track, tally, hazard, or gameplay-lattice types; a test scans this crate's
+//! source to keep it that way):
 //!
 //! 1. **Spawn-ahead / despawn-behind streaming** (`stream`(Scene::stream)). The
 //!    *game* supplies a **focus point** (typically the player's position) and a
 //!    **spawn callback** that says *what* to spawn; the *scene* owns the
 //!    bookkeeping — which slots ahead of the focus are already filled and which
 //!    streamed entities have fallen behind the despawn threshold.
-//! 2. **Despawn** ([`despawn`](Scene::despawn), used by streaming).
+//! 2. **Atomic despawn** ([`despawn`](Scene::despawn), used by streaming). Removing
+//!    a streamed entity removes its ECS entity **and** its physics rigid body (via
+//!    [`PhysicsWorld::remove_body`]) together, so no live
+//!    [`PhysicsBodyComponent`] is ever left
+//!    holding a freed handle (the physics/ECS handle-ownership invariant).
 //! 3. **Floating-origin rebase** ([`maybe_rebase`](Scene::maybe_rebase)). When the
-//!    focus drifts past a threshold from the origin, every ECS
-//!    [`TransformComponent`] is shifted by a fixed offset back toward the origin,
-//!    so world coordinates never grow into float-precision error. Relative
-//!    positions are preserved, so gameplay is unaffected. The offset is returned,
-//!    so the game can shift whatever it keeps outside the ECS (a camera, its own
-//!    physics).
-//!
-//! The scene has no physics. A game that wants rigid-body simulation runs its own
-//! (for example `rapier3d`), steps it in its fixed update, and shifts it by the
-//! offset [`maybe_rebase`](Scene::maybe_rebase) returns.
+//!    focus drifts past a threshold from the origin, every position — ECS
+//!    [`TransformComponent`] *and* every physics
+//!    body translation — is shifted by a fixed offset back toward the origin, so
+//!    world coordinates never grow into float-precision error. Relative positions
+//!    are preserved, so gameplay is unaffected.
 //!
 //! # Streaming is deterministic
 //!
@@ -34,12 +40,27 @@
 //! [`StreamingConfig`]: the same focus trajectory always spawns the same slots and
 //! despawns the same entities, and rebase fires at the same crossings. This keeps
 //! a run reproducible (a prerequisite for any future golden test).
+//!
+//! # Rebase-ordering invariant
+//!
+//! A rebase teleports rigid bodies ([`PhysicsWorld::shift_origin`]). To avoid
+//! solver artifacts it must run **between** physics steps, never inside one:
+//! [`step_physics`](Scene::step_physics) completes a full solve, then
+//! [`maybe_rebase`](Scene::maybe_rebase) shifts everything, then the next
+//! [`step_physics`](Scene::step_physics) begins from the shifted (consistent)
+//! state. The recommended per-fixed-update order is therefore
+//! `stream` → `step_physics` → `maybe_rebase`. Driving the shift mid-solve would
+//! feed the constraint solver a discontinuous position within a single step; the
+//! documented order prevents that.
 
 #![deny(missing_docs)]
 
+use std::collections::{HashMap, HashSet};
+
 use stickshift_ecs::hecs::{Entity, World};
-use stickshift_ecs::TransformComponent;
+use stickshift_ecs::{DynamicTag, PhysicsBodyComponent, TransformComponent};
 use stickshift_math::glam::Vec3;
+use stickshift_physics::{PhysicsWorld, RigidBodyHandle, FIXED_DT};
 
 /// Configuration for the [`Scene`]'s spawn-ahead / despawn-behind streaming and
 /// its floating-origin rebase, along a single travel axis.
@@ -121,14 +142,15 @@ impl std::fmt::Display for StreamingConfigError {
 
 impl std::error::Error for StreamingConfigError {}
 
-/// The engine-generic scene: an ECS [`World`], with spawn/despawn streaming and
-/// floating-origin rebase.
+/// The engine-generic simulation scene: an ECS [`World`] plus a
+/// [`PhysicsWorld`], with spawn/despawn streaming and floating-origin rebase.
 ///
 /// Construct with [`new`](Self::new) (default [`StreamingConfig`]) or
-/// [`with_config`](Self::with_config). Access the world through
-/// [`world`](Self::world) / [`world_mut`](Self::world_mut), and drive streaming
-/// each fixed update with `stream`(Self::stream) and
-/// [`maybe_rebase`](Self::maybe_rebase).
+/// [`with_config`](Self::with_config). Access the stores through
+/// [`world`](Self::world) / [`world_mut`](Self::world_mut) and
+/// [`physics`](Self::physics) / [`physics_mut`](Self::physics_mut), advance
+/// physics with [`step_physics`](Self::step_physics), and drive streaming each
+/// fixed update with `stream`(Self::stream) and [`maybe_rebase`](Self::maybe_rebase).
 ///
 /// # Example
 ///
@@ -139,10 +161,12 @@ impl std::error::Error for StreamingConfigError {}
 ///
 /// let mut scene = Scene::new();
 /// scene.world_mut().spawn((TransformComponent::from_position(Vec3::ZERO),));
+/// scene.step_physics();
 /// assert_eq!(scene.world().len(), 1);
 /// ```
 pub struct Scene {
     world: World,
+    physics: PhysicsWorld,
     config: StreamingConfig,
     /// Entities the scene created via `stream`; candidates for despawn-behind.
     /// Ownership: the scene tracks these so it can remove them atomically. Each
@@ -159,6 +183,11 @@ pub struct Scene {
     /// positions would lose precision on a long run, which is exactly what the
     /// floating origin exists to prevent.
     rebase_shift_units: f64,
+    /// Which entity owns which rigid body, as last seen by a
+    /// [`step_physics`](Self::step_physics) or [`stream`](Self::stream) pass.
+    /// Lets the scene free a body whose entity was despawned through
+    /// [`world_mut`](Self::world_mut) instead of [`despawn`](Self::despawn).
+    body_owners: HashMap<Entity, RigidBodyHandle>,
 }
 
 impl Scene {
@@ -173,10 +202,12 @@ impl Scene {
     pub fn with_config(config: StreamingConfig) -> Self {
         Self {
             world: World::new(),
+            physics: PhysicsWorld::new(),
             config,
             streamed: Vec::new(),
             spawn_frontier: None,
             rebase_shift_units: 0.0,
+            body_owners: HashMap::new(),
         }
     }
 
@@ -187,9 +218,29 @@ impl Scene {
     }
 
     /// Mutable access to the ECS [`World`] — spawn, despawn, mutate components.
+    ///
+    /// Prefer [`despawn`](Self::despawn) for an entity that carries a
+    /// [`PhysicsBodyComponent`]: it frees the body in the same call. Despawning
+    /// such an entity here directly is still safe once the scene has seen it in a
+    /// [`step_physics`](Self::step_physics) or [`stream`](Self::stream) pass: the
+    /// next `step_physics` frees the orphaned body before stepping, so no ghost
+    /// collider is left behind. A body created and orphaned before the scene ever
+    /// saw its entity is not tracked and stays in the physics world.
     #[must_use]
     pub fn world_mut(&mut self) -> &mut World {
         &mut self.world
+    }
+
+    /// Shared access to the [`PhysicsWorld`].
+    #[must_use]
+    pub fn physics(&self) -> &PhysicsWorld {
+        &self.physics
+    }
+
+    /// Mutable access to the [`PhysicsWorld`] — create bodies, add colliders.
+    #[must_use]
+    pub fn physics_mut(&mut self) -> &mut PhysicsWorld {
+        &mut self.physics
     }
 
     /// The active [`StreamingConfig`].
@@ -286,11 +337,112 @@ impl Scene {
         self.streamed.len()
     }
 
-    /// Despawns an entity from the ECS world.
+    /// Advances physics by one fixed timestep ([`FIXED_DT`]) and syncs transforms.
+    ///
+    /// Steps the [`PhysicsWorld`] once, then copies each dynamic body's simulated
+    /// transform back into its entity's [`TransformComponent`] (only entities
+    /// carrying a [`PhysicsBodyComponent`] and a
+    /// [`DynamicTag`] are synced; static geometry keeps its
+    /// authored transform). Call this exactly once per fixed engine update so the
+    /// solver stays in lockstep with `stickshift_core`'s fixed-timestep driver.
+    ///
+    /// Only the position and rotation are synced; the entity's authored `scale`
+    /// is kept (rigid bodies have no scale).
+    ///
+    /// Before stepping, any body whose owning entity has been despawned through
+    /// [`world_mut`](Self::world_mut) is freed (see that method), so it cannot
+    /// collide as a ghost.
+    ///
+    /// A stale handle on a component (should not occur under the atomic-despawn
+    /// invariant) is skipped safely — [`PhysicsWorld::get_transform`] returns
+    /// `None` — rather than panicking.
+    pub fn step_physics(&mut self) {
+        self.reclaim_orphaned_bodies();
+        self.physics.step();
+
+        for (_e, (transform, body, _dynamic)) in
+            self.world
+                .query_mut::<(&mut TransformComponent, &PhysicsBodyComponent, &DynamicTag)>()
+        {
+            if let Some(t) = self.physics.get_transform(body.handle) {
+                transform.transform.position = t.position;
+                transform.transform.rotation = t.rotation;
+            }
+        }
+    }
+
+    /// Frees the bodies their owners let go of, then records the current owner
+    /// of every body still attached to a live entity.
+    ///
+    /// An owner lets go of its body when it is despawned, or when its
+    /// [`PhysicsBodyComponent`] is removed or replaced, through
+    /// [`world_mut`](Self::world_mut). The body is freed unless another live
+    /// entity has since taken it over.
+    fn reclaim_orphaned_bodies(&mut self) {
+        let world = &self.world;
+        let let_go = |(&entity, &handle): (&Entity, &RigidBodyHandle)| {
+            world
+                .get::<&PhysicsBodyComponent>(entity)
+                .map_or(true, |body| body.handle != handle)
+        };
+        // The common case: every owner still holds its body. Checking costs one
+        // lookup per owner and allocates nothing.
+        if self.body_owners.iter().any(let_go) {
+            let held: HashSet<RigidBodyHandle> = world
+                .query::<&PhysicsBodyComponent>()
+                .iter()
+                .map(|(_e, b)| b.handle)
+                .collect();
+            let orphans: HashSet<RigidBodyHandle> = self
+                .body_owners
+                .values()
+                .copied()
+                .filter(|handle| !held.contains(handle))
+                .collect();
+            for handle in orphans {
+                self.physics.remove_body(handle);
+            }
+        }
+        self.body_owners.clear();
+        for (entity, body) in self.world.query::<&PhysicsBodyComponent>().iter() {
+            self.body_owners.insert(entity, body.handle);
+        }
+    }
+
+    /// The fixed timestep [`step_physics`](Self::step_physics) advances by.
+    ///
+    /// Re-exported through the scene for callers that drive the loop; equal to
+    /// [`stickshift_physics::FIXED_DT`] (and thus `stickshift_core::FIXED_DT`).
+    #[must_use]
+    pub const fn fixed_dt() -> f32 {
+        FIXED_DT
+    }
+
+    /// Despawns an entity **atomically**: removes it from the ECS world and, if it
+    /// carries a [`PhysicsBodyComponent`], removes that rigid body from the
+    /// physics world in the same call.
+    ///
+    /// This upholds the handle-ownership invariant: the ECS
+    /// entity and its physics body are torn down together, so no live component is
+    /// ever left holding a freed [`RigidBodyHandle`](stickshift_physics::RigidBodyHandle),
+    /// and no rigid body outlives the entity that owned it. The body is removed
+    /// **before** the entity, so even a mid-teardown observer never sees the
+    /// component without its body.
     ///
     /// Returns `true` if the entity existed and was removed, `false` if the handle
     /// was already gone (a safe no-op).
     pub fn despawn(&mut self, entity: Entity) -> bool {
+        if !self.world.contains(entity) {
+            return false;
+        }
+        self.body_owners.remove(&entity);
+        // Remove the physics body first (if any), then the entity — the two
+        // freed together, no stale handle in between.
+        if let Ok(body) = self.world.get::<&PhysicsBodyComponent>(entity) {
+            let handle = body.handle;
+            drop(body);
+            self.physics.remove_body(handle);
+        }
         self.world.despawn(entity).is_ok()
     }
 
@@ -315,9 +467,9 @@ impl Scene {
     ///    over are skipped: filling resumes from the focus, as on the first
     ///    pass, instead of spawning every slot in between at once.
     ///
-    /// The `spawn` closure receives mutable access to the ECS world (through
-    /// [`SpawnCtx`]) plus the world-space slot position, and decides *what* to
-    /// spawn — the scene stays free of game content.
+    /// The `spawn` closure receives mutable access to the ECS world and physics
+    /// world (through [`SpawnCtx`]) plus the world-space slot position, and decides
+    /// *what* to spawn — the scene stays free of game content.
     ///
     /// # Example
     ///
@@ -404,12 +556,18 @@ impl Scene {
             let position = axis * along;
             let mut cx = SpawnCtx {
                 world: &mut self.world,
+                physics: &mut self.physics,
                 position,
                 slot,
                 out: Vec::new(),
             };
             spawn(&mut cx);
             let spawned = cx.out;
+            for &e in &spawned {
+                if let Ok(body) = self.world.get::<&PhysicsBodyComponent>(e) {
+                    self.body_owners.insert(e, body.handle);
+                }
+            }
             self.streamed
                 .extend(spawned.into_iter().map(|e| (e, slot_total)));
             self.spawn_frontier = Some(slot);
@@ -417,8 +575,8 @@ impl Scene {
     }
 
     /// Applies a floating-origin rebase if the focus has drifted past the
-    /// threshold, shifting every ECS transform back toward the origin by a fixed
-    /// offset.
+    /// threshold, shifting **all** positions — ECS transforms *and* physics body
+    /// translations — back toward the origin by a fixed offset.
     ///
     /// The shift is a whole multiple of the focus's distance along the axis,
     /// quantized to [`rebase_threshold`](StreamingConfig::rebase_threshold), so
@@ -427,9 +585,13 @@ impl Scene {
     /// moves by the same vector), so gameplay never notices.
     ///
     /// Every [`TransformComponent`] is shifted, so every transform must be in
-    /// world space. Anything the game keeps outside the ECS in world coordinates
-    /// (a camera, its own physics world) must be shifted by the returned offset
-    /// too; a physics world should be shifted between its steps, not inside one.
+    /// world space. The whole physics world is shifted with
+    /// [`PhysicsWorld::shift_origin`], so every rigid body moves exactly once,
+    /// whether or not an entity holds it.
+    ///
+    /// Must be called **between** physics steps, not inside one (see the crate-
+    /// level rebase-ordering invariant): it teleports rigid bodies via
+    /// [`PhysicsWorld::shift_origin`], which is only safe outside a solve.
     ///
     /// Returns the offset vector actually applied (`Vec3::ZERO` if no rebase was
     /// due this call).
@@ -460,6 +622,12 @@ impl Scene {
             transform.transform.position += offset;
         }
 
+        // Shift the whole physics world to match, between steps. Every body
+        // moves exactly once: also bodies no entity holds (ground made through
+        // `physics_mut()`), and a body several entities share is not moved
+        // once per holder.
+        self.physics.shift_origin(offset);
+
         // Track the shift so slot indexing stays consistent with pre-rebase space.
         self.rebase_shift_units += f64::from(shift_along);
 
@@ -475,15 +643,17 @@ impl Default for Scene {
 
 /// The handle a `stream`(Scene::stream) spawn callback uses to populate one slot.
 ///
-/// It grants mutable access to the scene's ECS [`World`] and carries the
-/// world-space [`position`](Self::position) of the slot being filled. The
-/// callback creates whatever entities it wants and reports each one it
+/// It grants mutable access to the scene's ECS [`World`] and [`PhysicsWorld`] and
+/// carries the world-space [`position`](Self::position) of the slot being filled.
+/// The callback creates whatever entities/bodies it wants and reports each one it
 /// wants the scene to *track* (so it participates in despawn-behind) via
 /// [`spawned`](Self::spawned). Entities the callback creates but does not report
 /// are left untracked (e.g. permanent scenery).
 pub struct SpawnCtx<'a> {
     /// Mutable access to the ECS world for spawning entities.
     pub world: &'a mut World,
+    /// Mutable access to the physics world for creating bodies/colliders.
+    pub physics: &'a mut PhysicsWorld,
     /// World-space position of the slot being filled.
     pub position: Vec3,
     /// The integer slot index being filled (monotonic along the axis).
@@ -492,8 +662,8 @@ pub struct SpawnCtx<'a> {
 }
 
 impl SpawnCtx<'_> {
-    /// Registers `entity` as a streamed entity so the scene despawns it once it
-    /// falls behind the despawn threshold.
+    /// Registers `entity` as a streamed entity so the scene despawns it (with its
+    /// physics body) once it falls behind the despawn threshold.
     pub fn spawned(&mut self, entity: Entity) {
         self.out.push(entity);
     }
@@ -502,14 +672,118 @@ impl SpawnCtx<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stickshift_ecs::TransformComponent;
+    use stickshift_ecs::{DynamicTag, PhysicsBodyComponent, TransformComponent};
     use stickshift_math::glam::Vec3;
 
-    /// Helper: spawn an entity with a transform at `position`.
-    fn spawn_at(scene: &mut Scene, position: Vec3) -> Entity {
+    /// Helper: spawn a dynamic entity with a physics body at `position`.
+    fn spawn_body(scene: &mut Scene, position: Vec3) -> Entity {
+        use stickshift_math::Transform;
+        let handle = scene
+            .physics_mut()
+            .create_dynamic_body(Transform::from_position(position));
         scene
-            .world_mut()
-            .spawn((TransformComponent::from_position(position),))
+            .physics_mut()
+            .add_box_collider(handle, Vec3::new(0.5, 0.5, 0.5));
+        scene.world_mut().spawn((
+            TransformComponent::from_position(position),
+            PhysicsBodyComponent::new(handle),
+            DynamicTag,
+        ))
+    }
+
+    #[test]
+    fn step_physics_syncs_dynamic_transform_from_body() {
+        let mut scene = Scene::new();
+        let pos = Vec3::new(0.0, 10.0, 0.0);
+        let e = spawn_body(&mut scene, pos);
+
+        for _ in 0..30 {
+            scene.step_physics();
+        }
+        let y = scene
+            .world()
+            .get::<&TransformComponent>(e)
+            .unwrap()
+            .transform
+            .position
+            .y;
+        assert!(y < 10.0, "body fell under gravity and synced to ECS: y={y}");
+    }
+
+    /// Rigid bodies have no scale, so syncing a body back must keep the entity's
+    /// authored scale (it used to reset it to 1, halving a scale-2 mesh).
+    #[test]
+    fn step_physics_preserves_authored_scale() {
+        use stickshift_math::glam::Quat;
+        use stickshift_math::Transform;
+        let mut scene = Scene::new();
+        let authored = Transform {
+            position: Vec3::new(0.0, 5.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(2.0),
+        };
+        let h = scene.physics_mut().create_dynamic_body(authored);
+        scene.physics_mut().add_box_collider(h, Vec3::splat(1.0));
+        let e = scene.world_mut().spawn((
+            TransformComponent::new(authored),
+            PhysicsBodyComponent::new(h),
+            DynamicTag,
+        ));
+
+        scene.step_physics();
+
+        let t = scene
+            .world()
+            .get::<&TransformComponent>(e)
+            .unwrap()
+            .transform;
+        assert_eq!(t.scale, Vec3::splat(2.0), "authored scale kept");
+        assert!(t.position.y < 5.0, "position still syncs from the body");
+    }
+
+    /// An entity despawned through `world_mut()` (not `Scene::despawn`) must not
+    /// leave its body behind as a ghost collider.
+    #[test]
+    fn world_mut_despawn_frees_the_orphaned_body() {
+        let mut scene = Scene::new();
+        let e = spawn_body(&mut scene, Vec3::new(0.0, 5.0, 0.0));
+        scene.step_physics();
+        assert_eq!(scene.physics().rigid_body_set.len(), 1);
+
+        scene.world_mut().despawn(e).unwrap();
+        scene.step_physics();
+
+        assert_eq!(
+            scene.physics().rigid_body_set.len(),
+            0,
+            "orphaned body freed"
+        );
+        assert_eq!(scene.physics().collider_set.len(), 0, "and its collider");
+    }
+
+    /// The orphan sweep only frees a body nobody holds: if a live entity took the
+    /// body over before its first owner was despawned, the body stays.
+    #[test]
+    fn orphan_sweep_keeps_a_body_another_entity_took_over() {
+        let mut scene = Scene::new();
+        let first = spawn_body(&mut scene, Vec3::ZERO);
+        scene.step_physics();
+        let handle = scene
+            .world()
+            .get::<&PhysicsBodyComponent>(first)
+            .unwrap()
+            .handle;
+
+        let second = scene.world_mut().spawn((
+            TransformComponent::from_position(Vec3::ZERO),
+            PhysicsBodyComponent::new(handle),
+        ));
+        scene.world_mut().despawn(first).unwrap();
+        scene.step_physics();
+
+        assert_eq!(scene.physics().rigid_body_set.len(), 1, "body kept");
+        assert!(scene.physics().get_transform(handle).is_some());
+        assert!(scene.world().contains(second));
     }
 
     /// Streaming across floating-origin rebases fills every slot exactly once:
@@ -544,13 +818,38 @@ mod tests {
         }
     }
 
-    /// Despawn removes the entity, and despawning it again is a safe no-op.
+    /// Despawn atomicity: after a streamed entity crosses the despawn threshold,
+    /// (a) the ECS entity is gone, (b) its physics body handle is stale, and
+    /// (c) no live `PhysicsBodyComponent` still references that handle.
     #[test]
-    fn despawn_removes_the_entity() {
+    fn despawn_removes_entity_and_physics_body_atomically() {
         let mut scene = Scene::new();
-        let e = spawn_at(&mut scene, Vec3::ZERO);
+        let pos = Vec3::new(0.0, 0.0, 0.0);
+        let e = spawn_body(&mut scene, pos);
+        let handle = scene
+            .world()
+            .get::<&PhysicsBodyComponent>(e)
+            .unwrap()
+            .handle;
+
+        assert!(scene.physics().get_transform(handle).is_some());
+
         assert!(scene.despawn(e));
+
+        // (a) entity gone
         assert!(!scene.world().contains(e));
+        // (b) physics handle stale
+        assert!(scene.physics().get_transform(handle).is_none());
+        // (c) no live component references it
+        let alive = scene
+            .world()
+            .query::<&PhysicsBodyComponent>()
+            .iter()
+            .any(|(_e, b)| b.handle == handle);
+        assert!(
+            !alive,
+            "no live PhysicsBodyComponent may hold a freed handle"
+        );
         // double-despawn is a safe no-op
         assert!(!scene.despawn(e));
     }
@@ -755,30 +1054,43 @@ mod tests {
         let bound = (window / cfg.spawn_interval).ceil() as usize + 3;
 
         let mut max_entities = 0usize;
+        let mut max_bodies = 0usize;
 
         // Advance the focus one interval per "frame" for many frames.
         for frame in 0..2000i64 {
             let focus = Vec3::new(0.0, 0.0, -(frame as f32) * cfg.spawn_interval);
             scene.stream(focus, |cx| {
-                let e = cx
-                    .world
-                    .spawn((TransformComponent::from_position(cx.position),));
+                use stickshift_math::Transform;
+                let h = cx
+                    .physics
+                    .create_dynamic_body(Transform::from_position(cx.position));
+                let e = cx.world.spawn((
+                    TransformComponent::from_position(cx.position),
+                    PhysicsBodyComponent::new(h),
+                ));
                 cx.spawned(e);
             });
             max_entities = max_entities.max(scene.world().len() as usize);
+            max_bodies = max_bodies.max(scene.physics().rigid_body_set.len());
         }
 
         assert!(
             max_entities <= bound,
             "entity count stayed bounded: max={max_entities}, bound={bound}"
         );
-        // And nothing leaked: every live entity is a tracked one.
-        assert_eq!(scene.world().len() as usize, scene.streamed_count());
+        assert!(
+            max_bodies <= bound,
+            "physics body count stayed bounded: max={max_bodies}, bound={bound}"
+        );
+        // And no leaked bodies: live bodies == tracked entities at the end.
+        assert_eq!(scene.physics().rigid_body_set.len(), scene.streamed_count());
     }
 
-    /// Origin rebase preserves relative positions of two entities across the shift.
+    /// Origin rebase preserves relative positions of two entities across the shift,
+    /// for both ECS transforms and physics body translations.
     #[test]
     fn rebase_preserves_relative_positions() {
+        use stickshift_math::Transform;
         let cfg = StreamingConfig {
             axis: Vec3::new(0.0, 0.0, -1.0),
             spawn_interval: 10.0,
@@ -788,11 +1100,23 @@ mod tests {
         };
         let mut scene = Scene::with_config(cfg);
 
-        // Two entities far out along -Z.
+        // Two entities with physics bodies, far out along -Z.
         let a_pos = Vec3::new(1.0, 2.0, -1500.0);
         let b_pos = Vec3::new(4.0, 2.0, -1490.0);
-        let a = spawn_at(&mut scene, a_pos);
-        let b = spawn_at(&mut scene, b_pos);
+        let ha = scene
+            .physics_mut()
+            .create_dynamic_body(Transform::from_position(a_pos));
+        let hb = scene
+            .physics_mut()
+            .create_dynamic_body(Transform::from_position(b_pos));
+        let a = scene.world_mut().spawn((
+            TransformComponent::from_position(a_pos),
+            PhysicsBodyComponent::new(ha),
+        ));
+        let b = scene.world_mut().spawn((
+            TransformComponent::from_position(b_pos),
+            PhysicsBodyComponent::new(hb),
+        ));
 
         let rel_ecs_before = b_pos - a_pos;
 
@@ -815,9 +1139,17 @@ mod tests {
             .position;
         assert!((b_after - a_after - rel_ecs_before).length() < 1e-3);
 
-        // Both moved back toward the origin (smaller |z|), by the returned offset.
+        // Both moved back toward the origin (smaller |z|).
         assert!(a_after.z.abs() < a_pos.z.abs());
-        assert!((a_after - (a_pos + offset)).length() < 1e-3);
+
+        // Physics body relative position preserved and matches ECS.
+        let pa = scene.physics().get_transform(ha).unwrap().position;
+        let pb = scene.physics().get_transform(hb).unwrap().position;
+        assert!((pb - pa - rel_ecs_before).length() < 1e-3);
+        assert!(
+            (pa - a_after).length() < 1e-3,
+            "physics body tracks ECS after rebase"
+        );
     }
 
     /// No rebase fires while the focus stays within the threshold.
@@ -826,6 +1158,57 @@ mod tests {
         let mut scene = Scene::new();
         let offset = scene.maybe_rebase(Vec3::new(0.0, 0.0, -10.0));
         assert_eq!(offset, Vec3::ZERO);
+    }
+
+    /// A rebase moves every physics body, including one no entity holds (such
+    /// as ground made through `physics_mut()`), so it stays where the rendered
+    /// world is.
+    #[test]
+    fn rebase_shifts_a_body_no_entity_holds() {
+        use stickshift_math::Transform;
+        let mut scene = Scene::new();
+        let pos = Vec3::new(0.0, -1.0, -1500.0);
+        let ground = scene
+            .physics_mut()
+            .create_static_body(Transform::from_position(pos));
+        let marker = scene
+            .world_mut()
+            .spawn((TransformComponent::from_position(pos),));
+
+        let offset = scene.maybe_rebase(Vec3::new(0.0, 0.0, -1500.0));
+        assert_ne!(offset, Vec3::ZERO, "a rebase should have occurred");
+
+        let drawn = scene
+            .world()
+            .get::<&TransformComponent>(marker)
+            .unwrap()
+            .transform
+            .position;
+        let body = scene.physics().get_transform(ground).unwrap().position;
+        assert_eq!(drawn, pos + offset);
+        assert_eq!(body, pos + offset, "the body moved with the world");
+    }
+
+    /// A body two entities hold is moved once, not once per holder.
+    #[test]
+    fn rebase_shifts_a_shared_body_once() {
+        use stickshift_math::Transform;
+        let mut scene = Scene::new();
+        let pos = Vec3::new(0.0, 0.0, -1500.0);
+        let handle = scene
+            .physics_mut()
+            .create_dynamic_body(Transform::from_position(pos));
+        for _ in 0..2 {
+            scene.world_mut().spawn((
+                TransformComponent::from_position(pos),
+                PhysicsBodyComponent::new(handle),
+            ));
+        }
+
+        let offset = scene.maybe_rebase(Vec3::new(0.0, 0.0, -1500.0));
+        assert_ne!(offset, Vec3::ZERO, "a rebase should have occurred");
+        let body = scene.physics().get_transform(handle).unwrap().position;
+        assert_eq!(body, pos + offset, "shifted exactly once");
     }
 
     /// Slot positions stay exact however far the world has travelled. A
@@ -924,6 +1307,45 @@ mod tests {
         // Far enough ahead that its slot is behind the despawn threshold.
         scene.stream(Vec3::new(0.0, 0.0, -10.0), |_| {});
         assert!(!scene.world().contains(first), "despawned once behind");
+    }
+
+    /// Removing only the body component (not the entity) frees the body.
+    #[test]
+    fn removing_the_body_component_frees_the_body() {
+        let mut scene = Scene::new();
+        let e = spawn_body(&mut scene, Vec3::ZERO);
+        scene.step_physics();
+        assert_eq!(scene.physics().rigid_body_set.len(), 1);
+
+        scene
+            .world_mut()
+            .remove_one::<PhysicsBodyComponent>(e)
+            .unwrap();
+        scene.step_physics();
+
+        assert!(scene.world().contains(e), "the entity lives on");
+        assert_eq!(scene.physics().rigid_body_set.len(), 0, "its body is freed");
+        assert_eq!(scene.physics().collider_set.len(), 0, "and its collider");
+    }
+
+    /// Replacing an entity's body frees the old one and keeps the new one.
+    #[test]
+    fn replacing_the_body_component_frees_the_old_body() {
+        use stickshift_math::Transform;
+        let mut scene = Scene::new();
+        let e = spawn_body(&mut scene, Vec3::ZERO);
+        scene.step_physics();
+        let new_body = scene
+            .physics_mut()
+            .create_dynamic_body(Transform::from_position(Vec3::ONE));
+        scene
+            .world_mut()
+            .insert_one(e, PhysicsBodyComponent::new(new_body))
+            .unwrap();
+        scene.step_physics();
+
+        assert_eq!(scene.physics().rigid_body_set.len(), 1);
+        assert!(scene.physics().get_transform(new_body).is_some());
     }
 
     /// A focus that jumps far past the frontier spawns only the slots in

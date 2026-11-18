@@ -14,8 +14,8 @@ publish.workspace = true
 # The winit window and the AppKit Graphics menu: the Rust runner (`run`,
 # `run_with_backend`, `run_with_config`). On by default, so a Rust game gets its
 # window with no feature to name. A host that owns its own view and display link
-# (the C API) builds this crate without it and drives the
-# platform-free `Session` instead, so neither winit nor AppKit reaches it.
+# (an iOS app, say) builds this crate without it and drives the platform-free
+# `Session` instead, so neither winit nor AppKit reaches it.
 default = ["windowed"]
 windowed = ["dep:winit", "dep:objc2-app-kit"]
 

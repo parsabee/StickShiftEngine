@@ -5,7 +5,7 @@
 //! Shared math layer for Stick Shift Engine.
 //!
 //! This crate is the zero-coupling leaf that every other engine crate
-//! (`stickshift-ecs`, `stickshift-camera`, `stickshift-scene`, …) builds on
+//! (`stickshift-ecs`, `stickshift-physics`, `stickshift-camera`, `stickshift-scene`, …) builds on
 //! for spatial math. It is a thin layer over [`glam`]: the glam crate is
 //! re-exported here so downstream crates depend on a single, version-pinned
 //! copy, and the engine-specific [`Transform`] type layers a TRS

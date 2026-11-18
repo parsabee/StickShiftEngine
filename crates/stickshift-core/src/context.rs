@@ -60,7 +60,7 @@ impl<T: RenderDevice + FrameRecorder> Renderer for T {}
 /// # What a game may touch
 ///
 /// - The [`Scene`] — [`scene`](Self::scene) / [`scene_mut`](Self::scene_mut),
-///   which owns the ECS [`World`] and drives streaming and
+///   which owns the ECS [`World`] and the physics world and drives streaming and
 ///   the floating-origin rebase.
 /// - The ECS [`World`] — [`world`](Self::world) / [`world_mut`](Self::world_mut),
 ///   convenience accessors that delegate to the scene's world.
@@ -137,11 +137,12 @@ impl<'a> EngineCtx<'a> {
         }
     }
 
-    /// Shared access to the [`Scene`] — the ECS world and the
+    /// Shared access to the [`Scene`] — the ECS world, the physics world, and the
     /// streaming / rebase bookkeeping.
     ///
-    /// Use this to inspect streaming state; use [`scene_mut`](Self::scene_mut) to
-    /// drive [`Scene::stream`] / [`Scene::maybe_rebase`].
+    /// Use this for read-only physics queries or to inspect streaming state; use
+    /// [`scene_mut`](Self::scene_mut) to spawn bodies, step physics, or drive
+    /// [`Scene::stream`] / [`Scene::maybe_rebase`].
     #[must_use]
     pub fn scene(&self) -> &Scene {
         self.scene
@@ -149,10 +150,10 @@ impl<'a> EngineCtx<'a> {
 
     /// Mutable access to the [`Scene`].
     ///
-    /// This is the handle a streaming game drives: call [`Scene::stream`] with the
-    /// current focus and a spawn callback, and [`Scene::maybe_rebase`]. The
-    /// returned borrow lasts only as long as you hold it, so it cannot alias
-    /// another accessor.
+    /// This is the handle a streaming game drives: spawn entities with physics
+    /// bodies, call [`Scene::stream`] with the current focus and a spawn callback,
+    /// [`Scene::step_physics`], and [`Scene::maybe_rebase`]. The returned borrow
+    /// lasts only as long as you hold it, so it cannot alias another accessor.
     #[must_use]
     pub fn scene_mut(&mut self) -> &mut Scene {
         self.scene
