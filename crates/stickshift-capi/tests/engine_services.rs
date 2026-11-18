@@ -21,12 +21,6 @@
 //! the Rust it runs. Which scopes allow which calls is `tests/engine.rs`'s
 //! scope matrix.
 //!
-//! The Swift package ports both probes (`bindings/swift/StickShift/Tests`) and
-//! checks its lines against fixtures made from this file's `rust_run`: after
-//! changing what either probe does or prints, regenerate them with
-//! `bindings/swift/StickShift/Tests/Fixtures/generate-probe-fixtures.sh` and
-//! change the Swift port to match.
-//!
 //! C hooks never assert: a panic cannot unwind out of an `extern "C"`
 //! function. They record what they see, and the tests compare afterwards.
 

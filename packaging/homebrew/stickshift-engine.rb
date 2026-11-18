@@ -4,8 +4,8 @@
 #
 #   brew install parsabee/stickshift/stickshift-engine
 #
-# Installs the prebuilt `stickshift-demo` (the playable demo), the C library (`libstickshift`, its header,
-# Swift module map and pkg-config file) and the engine source, from the Apple Silicon tarball that
+# Installs the prebuilt `stickshift-demo` (the playable demo), the C library (`libstickshift`, its header
+# and pkg-config file) and the engine source, from the Apple Silicon tarball that
 # .github/workflows/release.yml attaches to each GitHub release.
 # Kept current automatically: on every v* tag, release.yml runs scripts/update-homebrew-formula.sh
 # to point `url`/`sha256` at the new tarball, here and in the tap.
@@ -25,8 +25,7 @@ class StickshiftEngine < Formula
     bin.install "bin/stickshift-demo"
     lib.install "lib/libstickshift.a", "lib/libstickshift.dylib"
     (lib/"pkgconfig").install "lib/pkgconfig/stickshift.pc"
-    # In include/stickshift/ so the generic module.modulemap never collides in the shared prefix.
-    (include/"stickshift").install "include/stickshift/stickshift.h", "include/stickshift/module.modulemap"
+    (include/"stickshift").install "include/stickshift/stickshift.h"
     # `stickshift-demo` looks for its assets in <bin>/../share/stickshift-engine/assets, which is
     # exactly pkgshare/"assets" in the keg.
     pkgshare.install "share/stickshift-engine/assets"
@@ -40,7 +39,6 @@ class StickshiftEngine < Formula
 
       The C library: #include "stickshift.h" and link libstickshift, e.g. with pkg-config:
         cc app.c $(pkg-config --cflags --libs stickshift) -o app
-      Swift: add #{opt_include}/stickshift to the import paths and `import StickShift`.
       The API is described in #{opt_pkgshare}/src/docs/C_API.md.
 
       The engine source is installed for use as Cargo path dependencies, e.g.:

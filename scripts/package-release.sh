@@ -25,7 +25,6 @@
 #                                        @rpath install name)
 #     lib/pkgconfig/stickshift.pc             pkg-config file (relocatable)
 #     include/stickshift/stickshift.h              the C header
-#     include/stickshift/module.modulemap     `import StickShift` for Swift
 #     share/stickshift-engine/assets/         the demo's runtime assets
 #     share/stickshift-engine/src/            the engine source (tracked files only)
 #     LICENSE  NOTICE  README.md
@@ -95,11 +94,9 @@ mkdir -p "$stage/bin" "$stage/lib/pkgconfig" "$stage/include/stickshift" \
 cp "$bin" "$stage/bin/stickshift-demo"
 chmod 755 "$stage/bin/stickshift-demo"
 
-# The C library, header, Swift module map and pkg-config file. The header and module map
-# sit in include/stickshift/ so a shared prefix (Homebrew) never sees a bare module.modulemap.
+# The C library, header and pkg-config file.
 cp "$libdir/libstickshift.a" "$libdir/libstickshift.dylib" "$stage/lib/"
-cp "$repo/crates/stickshift-capi/include/stickshift.h" "$repo/crates/stickshift-capi/include/module.modulemap" \
-    "$stage/include/stickshift/"
+cp "$repo/crates/stickshift-capi/include/stickshift.h" "$stage/include/stickshift/"
 cat > "$stage/lib/pkgconfig/stickshift.pc" <<PC
 prefix=\${pcfiledir}/../..
 libdir=\${prefix}/lib

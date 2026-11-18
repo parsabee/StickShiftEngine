@@ -160,10 +160,8 @@ stickshift-engine/
 │   ├── stickshift-assets        # glTF + textures                         (new)
 │   ├── stickshift-audio         # kira wrapper: sounds/one-shots/loops    (new)
 │   └── stickshift-capi          # the C API: libstickshift + stickshift.h           (new)
-├── bindings/
-│   └── swift/StickShift    # Swift package over the C API (SwiftPM)
 ├── games/
-│   └── offramp       # reference title; only uses engine public API
+│   └── offramp             # reference title (rust-impl/) and its assets (shared/); only uses engine public API
 ├── docs/                   # architecture, design, guides, roadmap
 ├── scripts/                # preflight, release packaging, doc-anchor check
 └── packaging/homebrew/     # the Homebrew formula
@@ -186,8 +184,8 @@ For how `games/offramp/rust-impl` sits on that boundary in practice, see
 A game reaches the engine in one of two ways, and both run the same loop:
 
 ```
-  Rust game (games/offramp/rust-impl)            C or Swift game (examples/c/engine.c, a Swift Game)
-    impl stickshift_core::Game                 StickShiftGame callbacks  (Swift: import StickShift)
+  Rust game (games/offramp/rust-impl)            C game (examples/c/engine.c)
+    impl stickshift_core::Game                 StickShiftGame callbacks
             |                                          |  stickshift.h: API 4, minor 1
             |                                  crates/stickshift-capi (libstickshift)
             |                                    StickShiftEngine: the CGame adapter (a Game),
@@ -212,8 +210,8 @@ A game reaches the engine in one of two ways, and both run the same loop:
 ```
 
 - **One loop, one session.** The winit runner is an adapter: it maps winit's window events to
-  `HostEvent`s and acts on the returned `Requests` (exit, full screen, the native menu). A C or
-  Swift host does the same through `stickshift_engine_push_events` and the request bits of each
+  `HostEvent`s and acts on the returned `Requests` (exit, full screen, the native menu). A C host
+  does the same through `stickshift_engine_push_events` and the request bits of each
   call. Both drive `Session`, which runs `drive_frame`, so the frame cadence, the settings side
   effects and the clock are one implementation, not two that agree.
 - **The host drives.** Nothing in the engine owns a thread, a window or a timer. The winit runner
@@ -246,7 +244,7 @@ A game reaches the engine in one of two ways, and both run the same loop:
 | Concern | Choice | Notes |
 |---|---|---|
 | Rendering | raw Metal (`metal`) | Apple-only; behind `stickshift-render-api` |
-| Windowing | `winit` (macOS, in the Rust runner) | A C or Swift host owns its view and display link and drives the same `Session` (§3a); iOS (v0.9) works that way |
+| Windowing | `winit` (macOS, in the Rust runner) | A C host owns its view and display link and drives the same `Session` (§3a); iOS (v0.9) works that way |
 | Math | `glam` | leaf crate |
 | ECS | `hecs` | already integrated in the prototype |
 | Physics | none | removed in v0.2; a game brings its own (see §5) |
@@ -349,7 +347,7 @@ scene owned a `PhysicsWorld` next to its hecs `World`; v0.2 removed both. The de
 solver (its car moves kinematically and its collisions are box overlaps), the C API never exposed
 one, and a racing game wants vehicle physics tuned for it rather than a general rigid-body world
 the engine picks. A game that wants physics links a library itself (for example `rapier3d` from
-Rust, or a Swift library over the C API), steps it from `Game::update` at `FIXED_DT`, and keeps
+Rust, or a C library through the C API), steps it from `Game::update` at `FIXED_DT`, and keeps
 its bodies next to its entities however it likes.
 
 **Scene.** `crates/stickshift-scene` owns the hecs `World` and adds engine-generic **streaming**

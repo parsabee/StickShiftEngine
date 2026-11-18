@@ -127,7 +127,7 @@ platform can do comes back as `Requests`: `EXIT`, `TOGGLE_FULLSCREEN`,
 The winit runner is an adapter over it: winit's window events become
 `HostEvent`s and the requests become `event_loop.exit()`, a full-screen toggle and
 the AppKit menu's refresh. A host that owns its own view and display link (the C
-API, and Swift over it) drives the same `Session`, so every host shares one
+API) drives the same `Session`, so every host shares one
 implementation of the clock and the settings side effects. The Graphics menu's
 model (`settings_menu`: layout, labels, checks, tags) is public for such a host to
 build its native menu from.

@@ -53,7 +53,7 @@
 //!
 //! - **`windowed`** (default): the winit runner ([`run`], [`run_with_backend`],
 //!   [`run_with_config`]) and its AppKit Graphics menu. A host that owns its own
-//!   view and display link (the C API, and Swift over it, on macOS or iOS)
+//!   view and display link (the C API, on macOS or iOS)
 //!   builds this crate with `default-features = false` and drives a [`Session`]
 //!   itself, so neither `winit` nor AppKit reaches it. Settings persistence
 //!   (`NSUserDefaults`, Foundation only) stays on every Apple target either

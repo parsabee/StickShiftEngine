@@ -24,8 +24,8 @@
 //! - **The winit runner** ([`run`](crate::run), feature `windowed`) maps winit's
 //!   window events to [`HostEvent`]s and acts on the [`Requests`] with
 //!   `event_loop.exit()`, a full-screen toggle and the AppKit menu.
-//! - **A host that owns its own view and display link** (the C API, and Swift
-//!   over it, on macOS or iOS) builds this crate without the `windowed` feature
+//! - **A host that owns its own view and display link** (the C API, on macOS
+//!   or iOS) builds this crate without the `windowed` feature
 //!   and calls the same methods.
 //!
 //! So the Rust demo's window and every other host share one implementation of

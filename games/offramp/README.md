@@ -1,22 +1,17 @@
 # Offramp
 
-Offramp is Stick Shift Engine's playable demo: an endless three-lane freeway runner. It is built
-twice, once in each of the engine's two APIs, and the two builds play the same game frame for
-frame.
+Offramp is Stick Shift Engine's playable demo and reference game: an endless three-lane freeway
+runner that uses nothing but the engine's public API.
 
 | Folder | What it is |
 |---|---|
-| [`rust-impl`](rust-impl) | The game in Rust, over the engine crates (the `offramp` crate), with its trace and recorder examples and the `offramp-goldens` crate |
-| [`swift-impl`](swift-impl) | The game in Swift, over the C API through the [`StickShift` Swift package](../../bindings/swift/StickShift) (a SwiftPM package) |
-| [`shared`](shared) | What both load at run time: the models, textures, sounds and font in `shared/assets` |
+| [`rust-impl`](rust-impl) | The game, the `offramp` crate, with its asset bakers and its recorder |
+| [`shared`](shared) | What the game loads at run time: the models, textures, sounds and font in `shared/assets` |
 
 ```sh
-cargo run -p offramp                                        # the Rust build, windowed
-cargo build -p stickshift-capi                              # SwiftPM cannot run cargo
-swift run --package-path games/offramp/swift-impl offramp   # the Swift build, windowed
-./scripts/offramp-parity.sh                                 # the two, compared frame by frame
+cargo run -p offramp              # windowed, Metal (macOS)
+cargo run -p offramp -- --smoke   # headless oracle: 120 frames, prints "smoke: 120 frames OK"
 ```
 
-[`scripts/offramp-parity.sh`](../../scripts/offramp-parity.sh) checks that the Swift build's
-`--smoke` output and its smoke, autopilot and long traces are byte-identical to the Rust
-build's, and that the 80 recorded frames are pixel-identical. Each folder's README says more.
+[`rust-impl/README.md`](rust-impl/README.md) has the controls, the code layout, the asset
+bakers and the asset licences.

@@ -113,23 +113,6 @@ jobs:
       - name: C API smoke test and sample (Metal)
         run: ./scripts/test-c-api.sh
 
-      # Build the Swift package (bindings/swift/StickShift) over libstickshift and run its
-      # tests: the null backend everywhere, and Metal on the runner's device.
-      - name: Swift package tests
-        run: ./scripts/test-swift.sh
-
-      # Offramp (games/offramp): the playable demo as a Swift game on the engine,
-      # through the package. Its tests check it against the Rust demo's golden
-      # values, the null backend everywhere and Metal on the runner's device.
-      - name: Offramp tests
-        run: ./scripts/test-offramp.sh
-
-      # Run Offramp and the Rust demo side by side: the --smoke output and exit
-      # status, the smoke, autopilot and long traces byte for byte, and all 80
-      # recorder frames pixel for pixel on the runner's GPU.
-      - name: Offramp parity with the Rust demo
-        run: ./scripts/offramp-parity.sh
-
       - name: Clippy (deny warnings)
         run: cargo clippy --workspace --all-targets -- -D warnings
 

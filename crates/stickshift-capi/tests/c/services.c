@@ -40,7 +40,7 @@
     } while (0)
 
 /* The volume constants are floats, as the parameters they are passed to are (an unsuffixed
- * decimal would be a double, which Swift then cannot pass). */
+ * decimal would be a double). */
 _Static_assert(_Generic(STICKSHIFT_VOLUME_UNCHANGED_DB, float: 1, default: 0), "a float");
 _Static_assert(_Generic(STICKSHIFT_VOLUME_SILENT_DB, float: 1, default: 0), "a float");
 
