@@ -147,7 +147,14 @@ const HEIGHT: u32 = 64;
 // the box does not shadow itself anywhere (no acne) and the whole change is the blob
 // removal. Geometry, camera, sun and transform are untouched; OVERLAY_REFERENCE_HASH
 // and SUN_REFERENCE_HASH reprinted unchanged in the same run.
-const REFERENCE_HASH: u64 = 0xbb6d718f1804993d;
+//
+// re-bless REQUIRED (intended look change): 0xbb6d718f1804993d ->
+// 0x1163250bcb4f3a58. The sky behind the box now grades by the view ray's
+// elevation instead of by screen height (this level camera puts the horizon across
+// the middle: flat horizon colour below it, deepening toward the zenith above). The
+// change is confined to the sky pass, which draws only where no geometry is; the
+// box's shading is untouched.
+const REFERENCE_HASH: u64 = 0x1163250bcb4f3a58;
 
 /// Committed baseline hash of the **reference overlay**'s pixels (FNV-1a 64-bit).
 ///
@@ -190,7 +197,18 @@ const REFERENCE_HASH: u64 = 0xbb6d718f1804993d;
 ///
 /// If this hash moves, one of those three claims is false: look for lighting state
 /// bleeding into the overlay pass rather than re-blessing it.
-const OVERLAY_REFERENCE_HASH: u64 = 0x2b3859048070b2b6;
+///
+/// # Re-blessed: the sky grades by elevation (value CHANGES, on purpose)
+///
+/// `0x2b3859048070b2b6` → `0xb6ded33de3240e33`. The second claim above is the one
+/// that changed, deliberately: the sky now grades from its horizon colour to its
+/// zenith colour by the view ray's *elevation*, not by the pixel's height on
+/// screen, so it meets fogged geometry at the horizon without a seam. With no
+/// camera pushed, every pixel's view ray is the level `(0, 0, 1)`, so the sky
+/// behind the quads is now the horizon colour throughout instead of a
+/// top-to-bottom gradient. The other two claims still hold: this reference draws
+/// no shaded geometry, and the sun term is still exactly zero here.
+const OVERLAY_REFERENCE_HASH: u64 = 0xb6ded33de3240e33;
 
 /// Committed baseline hash of the **sun-disc reference**'s pixels (FNV-1a 64-bit).
 ///
@@ -216,7 +234,15 @@ const OVERLAY_REFERENCE_HASH: u64 = 0x2b3859048070b2b6;
 /// - **The hash actually depends on the disc.** Setting `SUN_DISC_GAIN` to `0` in
 ///   the shader moved this hash to `0x79a74f9a300fd87d`; restoring it brought
 ///   `0x93bf3a3f86062cbd` back. The guard is live, not decorative.
-const SUN_REFERENCE_HASH: u64 = 0x93bf3a3f86062cbd;
+///
+/// # Re-blessed: the sky grades by elevation
+///
+/// `0x93bf3a3f86062cbd` → `0x07835fffa45da565`. The gradient behind the disc now
+/// follows the view ray's elevation instead of the pixel's height on screen: this
+/// level camera's lower half, below the horizon, is the flat horizon colour, and
+/// the upper half deepens toward the zenith colour by elevation. The disc and glow
+/// terms are untouched and still sit where the sun is.
+const SUN_REFERENCE_HASH: u64 = 0x07835fffa45da565;
 
 /// The 9-float-per-vertex layout used by `stickshift-ecs` meshes, packed as raw bytes
 /// for the seam: `[pos_xyz, normal_xyz, color_rgb]` == 36-byte stride.
@@ -569,6 +595,108 @@ fn reference_sun_matches_committed_hash() {
     common::bless_or_assert(&pixels, SUN_REFERENCE_HASH, "SUN_REFERENCE_HASH");
 }
 
+/// The horizon check's frame size: tall enough to give the stretch just below
+/// the horizon, where the ground is fully fogged, a few rows of its own.
+const HORIZON_SIZE: u32 = 128;
+
+/// How far the horizon check's camera looks down, in degrees.
+const HORIZON_PITCH_DEG: f32 = 10.0;
+
+/// Render the reference afternoon sky, with the sun behind the camera, as a
+/// chase camera sees it over a road: 6 above the ground, looking
+/// [`HORIZON_PITCH_DEG`] down. With `ground`, a flat ground runs out 600 ahead,
+/// far past the fog's draw distance. Returns the pixels, or `None` without a
+/// Metal device.
+fn render_fogged_horizon(ground: bool) -> Option<Vec<u8>> {
+    let mut renderer = MetalRenderer::new_offscreen(HORIZON_SIZE, HORIZON_SIZE)?;
+    let mut camera = Camera::new(1.0);
+    camera.set_clip_planes(0.3, 700.0);
+    camera.set_position(Vec3::new(0.0, 6.0, 0.0));
+    camera.set_target(Vec3::new(
+        0.0,
+        6.0 - HORIZON_PITCH_DEG.to_radians().tan(),
+        -1.0,
+    ));
+
+    // A flat ground out to 600 ahead: fully fogged at its far end.
+    let c = [0.35, 0.4, 0.3];
+    let v = |x: f32, z: f32| [x, 0.0, z, 0.0, 1.0, 0.0, c[0], c[1], c[2]];
+    let vertices = [
+        v(-600.0, 10.0),
+        v(600.0, 10.0),
+        v(600.0, -600.0),
+        v(-600.0, -600.0),
+    ];
+    let mesh = renderer.create_mesh(&MeshData {
+        vertices: &pack_vertices(&vertices),
+        indices: &[0, 1, 2, 0, 2, 3],
+        layout: vertex_layout(),
+    });
+    let pipeline = renderer.create_pipeline(&stickshift_render_api::PipelineDescriptor::new(
+        stickshift_render_api::PipelineKind::VertexColor,
+    ));
+
+    renderer.set_sun_sky(&stickshift_render_api::SunSky {
+        sun_azimuth_deg: 180.0,
+        sun_elevation_deg: 40.0,
+        ..reference_sun_sky()
+    });
+    renderer.set_view_projection(camera.view_projection_matrix());
+    renderer.set_camera_position(camera.position());
+    renderer.begin_frame();
+    renderer.set_pipeline(pipeline);
+    if ground {
+        renderer.draw_mesh(mesh, &Transform::identity(), &MaterialParams::default());
+    }
+    renderer.submit();
+    renderer.read_pixels()
+}
+
+#[test]
+fn the_sky_meets_the_fogged_ground_without_a_seam() {
+    // Fog fades far geometry to the horizon colour. The sky is that same colour
+    // at the horizon and everywhere below it, so where the world runs out into
+    // the fog it cannot be told from the sky behind it: no seam. A sky graded by
+    // screen height instead is most of the way to its zenith colour by the time
+    // the horizon is this high in a downward-looking frame, and the fogged edge
+    // of the ground stands out against it as a hard line.
+    let (Some(sky), Some(world)) = (render_fogged_horizon(false), render_fogged_horizon(true))
+    else {
+        common::no_gpu();
+        return;
+    };
+    let size = HORIZON_SIZE as usize;
+    let at = |pixels: &[u8], row: usize| {
+        let i = (row * size + size / 2) * 4;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    };
+    let differ = |a: [u8; 3], b: [u8; 3]| (0..3).map(|c| a[c].abs_diff(b[c])).max().unwrap_or(0);
+
+    // The row the horizon crosses: a level ray, `HORIZON_PITCH_DEG` above the
+    // middle of a 45° frame.
+    let ndc = HORIZON_PITCH_DEG.to_radians().tan() / 22.5f32.to_radians().tan();
+    let horizon = ((1.0 - ndc) / 2.0 * HORIZON_SIZE as f32).ceil() as usize;
+
+    // 1. Below the horizon, the sky alone is one colour: its horizon colour.
+    let below = at(&sky, horizon + 1);
+    for row in horizon + 1..size {
+        assert!(
+            differ(at(&sky, row), below) <= 1,
+            "the sky below the horizon changes colour at row {row}"
+        );
+    }
+
+    // 2. Just below the horizon the ground lies 230 to 700 away, far past the
+    //    fog's 165: there the world is the sky's colour exactly.
+    for row in horizon + 1..=horizon + 4 {
+        let (world, sky) = (at(&world, row), at(&sky, row));
+        assert!(
+            differ(world, sky) <= 1,
+            "row {row}: the fogged ground {world:?} stands out against the sky {sky:?}"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Shadow reference
 // ---------------------------------------------------------------------------
@@ -598,6 +726,15 @@ fn reference_sun_matches_committed_hash() {
 ///   instead — the guard is live, not decorative.
 /// - **The other baselines behave.** The same blessing run reprinted
 ///   `OVERLAY_REFERENCE_HASH` and `SUN_REFERENCE_HASH` unchanged.
+///
+/// # Re-blessed: the sky grades by elevation
+///
+/// `0x0ccf8b7def1b32b8` → `0x7a953a7bfa46588c`. This camera looks about 39° down,
+/// so all the sky in its frame lies below the horizon, where the sky is now the
+/// flat horizon colour instead of a screen-height gradient. 1038 of 4096 pixels
+/// changed, all in rows 0–24 beyond the ground's far edge: 966 of them are that
+/// one horizon colour, and the rest are the antialiased pixels where the ground's
+/// edge meets it. The ground, the cube and the shadow are untouched.
 ///
 /// # Re-blessed: the sun's highlights follow its intensity
 ///
@@ -639,7 +776,7 @@ fn reference_sun_matches_committed_hash() {
 /// the exact frame this hash was taken of — within tolerances; see there.
 /// Re-blessing rewrites both (`BLESS=1` writes the image file too), and
 /// [`shadow_reference_image_matches_committed_hash`] keeps them in lockstep.
-const SHADOW_REFERENCE_HASH: u64 = 0x0ccf8b7def1b32b8;
+const SHADOW_REFERENCE_HASH: u64 = 0x7a953a7bfa46588c;
 
 /// The committed shadow reference frame itself: `WIDTH x HEIGHT` BGRA8 pixels
 /// (16 KiB), byte-identical to the frame [`SHADOW_REFERENCE_HASH`] pins (a GPU-free

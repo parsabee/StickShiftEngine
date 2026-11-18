@@ -76,7 +76,10 @@ ACES filmic tonemap + sRGB encode in the fragment shaders (`present_color`), so 
 and not washed out even though both render targets are `*Unorm`. Colour textures are uploaded as
 `RGBA8Unorm_sRGB` (`ColorSpace::Srgb`), so sampling decodes them to linear before lighting;
 data textures such as the SDF font atlas stay `RGBA8Unorm` (`ColorSpace::Linear`); (2) a **gradient sky** fullscreen
-triangle replaces the flat clear, drawn depth-test/write-disabled; (3) **distance fog** blends far
+triangle replaces the flat clear, drawn depth-test/write-disabled and graded by each pixel's view-ray
+**elevation** (not its height on screen): it is the horizon colour at the horizon and below, deepening
+to the zenith colour above, so far geometry fogged to the horizon colour meets it without a seam
+whatever the camera's pitch; (3) **distance fog** blends far
 geometry into the sky horizon color, hiding the streaming spawn edge (pairs with world streaming);
 (4) **real sun shadows** (which replaced an earlier fake blob shadow) — see below. **MSAA**
 (4x) wraps all of it: the scene renders into a multisampled color + depth attachment

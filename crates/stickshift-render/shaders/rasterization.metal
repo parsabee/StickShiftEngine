@@ -10,8 +10,10 @@
 //   * Linear-space lighting presented through an explicit sRGB encode + ACES
 //     tonemap (colors correct, not washed out) — see `present_color`.
 //   * A gradient sky drawn as a fullscreen pass (`sky_vertex_main` /
-//     `sky_fragment_main`) instead of a flat clear, carrying the **sun disc and
-//     its glow** at the direction the light actually comes from.
+//     `sky_fragment_main`) instead of a flat clear, graded by each pixel's view
+//     ray elevation so it is the fog's colour at the horizon and below it, and
+//     carrying the **sun disc and its glow** at the direction the light actually
+//     comes from.
 //   * Distance fog that blends far geometry into the sky/horizon color, hiding
 //     the streaming spawn edge (`apply_fog`).
 //   * Real sun shadows: a depth-only pass from the sun
@@ -136,6 +138,11 @@ constant float SUN_GLOW_COS = 0.95106;
 constant float SUN_DISC_GAIN = 12.0;
 /// Peak brightness of the glow, as a fraction of the sun colour.
 constant float SUN_GLOW_GAIN = 0.55;
+
+/// How quickly the sky gives way from its horizon colour to its zenith colour
+/// with height above the horizon, as the sine of the elevation (about 8°) at
+/// which it is 63% of the way. A real sky is palest in a band along the horizon.
+constant float SKY_HORIZON_BAND = 0.14;
 
 // ============================================================================
 // Color management: linear -> ACES tonemap -> sRGB encode
@@ -494,7 +501,7 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
 
 struct SkyOut {
     float4 position [[position]];
-    float2 ndc;                        // -1..1 clip position, for the vertical gradient
+    float2 ndc;                        // -1..1 clip position, unprojected to the view ray
 };
 
 /// Fullscreen triangle (three verts covering the viewport, no vertex buffer).
@@ -521,21 +528,26 @@ inline float3 sky_view_ray(float2 ndc, constant Light& light) {
     return normalize(farH.xyz / farH.w - nearH.xyz / nearH.w);
 }
 
-/// Vertical gradient sky **plus the sun disc and its glow**, tonemapped
+/// Gradient sky, graded by elevation, **plus the sun disc and its glow**, tonemapped
 /// + sRGB-encoded like the rest of the scene — so a blazing disc clips to white
 /// through the same ACES curve as everything else instead of blowing out.
 fragment float4 sky_fragment_main(SkyOut in [[stage_in]],
                                   constant Light& light [[buffer(0)]]) {
-    float t = clamp(in.ndc.y * 0.5 + 0.5, 0.0, 1.0);
-    // Smooth the horizon->zenith transition a touch.
-    t = t * t * (3.0 - 2.0 * t);
+    float3 rayDir = sky_view_ray(in.ndc, light);
+
+    // The gradient follows the view ray's elevation, not the pixel's height on
+    // screen. So the horizon colour lies along the real horizon, and below it,
+    // which is the colour distance fog fades far geometry to: wherever the world
+    // ends, it meets sky of its own colour, with no seam, whatever the camera's
+    // pitch. Above the horizon the sky deepens to the zenith colour over a band
+    // of a few degrees (`SKY_HORIZON_BAND`).
+    float t = 1.0 - exp(-max(rayDir.y, 0.0) / SKY_HORIZON_BAND);
     float3 sky = mix(light.skyHorizonColor, light.skyTopColor, t);
 
     // The sun: one dot product between this pixel's view ray and the direction the
     // sunlight arrives *from*. `light.direction` is the direction it travels, so
     // the sun is at its negation — the same single source of truth the shading
     // uses, which is what keeps the disc and the highlights on the same sun.
-    float3 rayDir = sky_view_ray(in.ndc, light);
     float cosToSun = dot(rayDir, normalize(-light.direction));
 
     // Core disc, antialiased over the rim by the smoothstep, and a halo that falls

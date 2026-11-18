@@ -17,6 +17,17 @@ API**.
   material is unnamed. It is a new public field, so code that builds a `MeshAsset` with a struct
   literal must now set it. The `gltf` dependency gains its `names` feature, which adds no crates.
 
+### Changed
+
+- **The sky grades by elevation, so the world meets it without a seam.** The Metal renderer's sky
+  gradient followed each pixel's height on screen, so with a camera looking down (a chase camera
+  over a road) the sky just above the horizon was already most of the way to its zenith colour,
+  while distance fog fades far geometry to the horizon colour: where the world ran out, its fogged
+  edge stood against the sky as a hard line. The sky now grades by each pixel's view-ray
+  elevation: the horizon colour at the horizon and below it, deepening to the zenith colour over
+  the first few degrees above it. A camera that sees only a little sky now sees mostly the horizon
+  colour. All six golden images are re-blessed; only sky pixels changed.
+
 ### Fixed
 
 - **The sun's highlights follow its intensity.** The Metal renderer scaled the sun's specular term
