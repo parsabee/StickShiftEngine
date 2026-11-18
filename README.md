@@ -62,8 +62,10 @@ reference title is the [playable demo](#the-playable-demo), an endless car runne
 
 ## Features
 
-- **A Swift package** ([`bindings/swift/StickShift`](bindings/swift/StickShift)) over the C API:
-  resource classes, `throws`, `async` model loads, `simd`, and an `NSView` host.
+- **A Swift package** ([`bindings/swift/StickShift`](bindings/swift/StickShift)) over the C API: a
+  game is a `Game` with plain-struct `Component`s, and the engine runs it (the loop, the world and
+  its queries, scene streaming, the camera, input, audio and graphics settings). Resources are
+  classes, errors `throws`, model loads `async`; `StickShiftAppKit` is the macOS window and menu.
 - **A C API** (`libstickshift` + a generated `stickshift.h`, with a Swift module map) for hosts in C,
   Objective-C, Swift or C++. It is asynchronous in shape: calls return at once with a handle or a
   result code, resources become ready later, and completions arrive as events. glTF models load
@@ -218,10 +220,15 @@ The exact library list for static linking is what rustc reports
 (`cargo rustc -p stickshift-capi --lib --crate-type staticlib -- --print native-static-libs`);
 [`scripts/test-c-api.sh`](scripts/test-c-api.sh) builds this way.
 
-**From Swift**, use the [`StickShift` Swift package](bindings/swift/StickShift): classes that own
-the engine's resources, `throws` for errors, `async` model loading, `simd` types, a closure-scoped
-frame and an `NSView` that hosts the renderer. Build the library with cargo first; then depend on
-the package by path. [`scripts/test-swift.sh`](scripts/test-swift.sh) does both and runs its
+**From Swift**, use the [`StickShift` Swift package](bindings/swift/StickShift). A game conforms to
+`Game` and keeps its data in `Component` structs. The engine runs the fixed-step loop, calls the
+game's `initialize`, `update` and `render`, and gives it the world (spawns, and queries in the
+engine's order), scene streaming, the camera, input, audio and graphics settings; the game keeps
+only its own rules and drawing. Resources are classes that own the engine's handles, with `throws`
+for errors and `async` model loading. `StickShiftAppKit` is the macOS host:
+`StickShiftApp.run { MyGame() }` opens the window with the Graphics menu, and
+[`examples/swift/Cubes`](examples/swift/Cubes) is a complete small game. Build the library with
+cargo first; then depend on the package by path. [`scripts/test-swift.sh`](scripts/test-swift.sh) does both and runs its
 tests. The raw C API is also importable from Swift: put the include directory on the import paths
 (`SWIFT_INCLUDE_PATHS` in Xcode, or `-I`), link `libstickshift`, and `import StickShift`.
 
