@@ -112,7 +112,10 @@ a game still just draws meshes and sets a `SunSky`. The light's orthographic pro
 every frame to the slab of camera frustum the fog leaves visible (the draw distance, 165 units by
 default; a backend-level shadow-distance override may shorten it), enclosed in a sphere and **snapped
 to whole shadow texels** so it follows the camera without shimmering, and its direction is the
-seam-driven sun's — one source of truth for shading, sun disc and shadows. On a TBDR GPU the map is the
+seam-driven sun's — one source of truth for shading, sun disc and shadows. Each fit **carries the last
+frame's orientation over**, turned by the light's own turn, so a sun that moves (a day/night cycle) turns
+the map without rolling it about the light's axis, which would re-rasterise every shadow edge each
+frame; a sun that stands still keeps its map bit for bit. On a TBDR GPU the map is the
 one depth attachment that must be **stored** (the MSAA scene targets are resolved in-tile and
 discarded), which the backend asserts. Receivers are biased by their own triangle's plane plus a
 constant 2 cm, and filtered with 4×4 tent PCF. The fitting and bias math is GPU-free and unit-tested

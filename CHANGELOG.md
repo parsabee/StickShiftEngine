@@ -17,6 +17,22 @@ API**.
   material is unnamed. It is a new public field, so code that builds a `MeshAsset` with a struct
   literal must now set it. The `gltf` dependency gains its `names` feature, which adds no crates.
 
+### Fixed
+
+- **The sun's highlights follow its intensity.** The Metal renderer scaled the sun's specular term
+  by a constant rather than by `SunSky::sun_intensity`, so a dim sun (or a moon standing in for it)
+  had highlights as bright as noon's, and a sun at zero intensity still put highlights on every face
+  turned toward it. Moving such a sun made its highlights jump. Now a sun at zero lights nothing,
+  so its direction can change while it is dark without anything on screen changing. The night
+  street, shadow and textured-quad golden images are re-blessed: each change is darker highlights
+  and nothing else.
+- **Shadows no longer shimmer when the sun moves.** Each shadow-map fit chose a fresh up vector,
+  so a change in the sun's bearing rolled the map about the light and every shadow edge
+  rasterised on a turned grid each frame. Fits now carry the previous frame's orientation over,
+  turned by the light's own turn (`ShadowFit` gains `direction` and `up`; `fit_shadow_frustum`
+  takes the previous fit and `light_view` an up vector). A still sun's map is unchanged, bit for
+  bit, so no golden image moved for this.
+
 ## [0.2.0] - 2026-11-17
 
 ### Added

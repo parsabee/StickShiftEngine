@@ -449,7 +449,9 @@ inline float3 lit_linear(float3 albedo, float3 emissive, float3 worldNormal, flo
     // away from the sun but toward the camera would otherwise pick up a spurious
     // one.
     spec *= step(1e-4, diff);
-    float3 specular = light.specularIntensity * spec * light.color;
+    // Scaled by the sun's intensity, like its diffuse light and its disc, so a
+    // dimmer sun (or the moon standing in for it) has dimmer highlights.
+    float3 specular = light.specularIntensity * light.diffuseIntensity * spec * light.color;
 
     float3 lit = (ambient + (diffuse + specular) * shadow) * albedo;
     // With no lights and no emission both terms are exactly zero, so a frame

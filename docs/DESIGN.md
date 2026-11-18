@@ -409,7 +409,8 @@ frustum cut at the draw distance, where the fog goes opaque (165 units by defaul
 renderer-level override (`MetalRenderer::set_shadow_distance`) can shorten it but never extend it
 past the fog. The frustum slice is enclosed in a sphere and snapped to whole shadow texels (~6.9 cm at the
 default fit on the 4096² map), so it
-follows the camera without shimmering; its direction is the seam-driven sun's. Receivers are biased by
+follows the camera without shimmering; its direction is the seam-driven sun's, and each frame's fit
+carries the last one's orientation over, so a moving sun turns the map without rolling it. Receivers are biased by
 their own triangle's plane plus a constant 2 cm (see `stickshift-render/src/shadow.rs`). Bloom is
 not implemented.
 

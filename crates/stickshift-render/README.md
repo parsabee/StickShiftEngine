@@ -165,7 +165,10 @@ anchored at the world origin — so as the fit slides with the camera every worl
 point stays on the same sub-texel position and static shadow edges cannot shimmer.
 Unit-tested GPU-free in `src/shadow.rs`. The light direction is the
 `SunSky::direction()` already in the light block — there is no second source of
-truth — so turning the sun turns the shadows.
+truth — so turning the sun turns the shadows. Each fit carries the previous frame's
+orientation over, turned by exactly the light's own turn, so a moving sun turns the
+map without rolling it about the light's axis (a roll re-rasterises every shadow
+edge, and they shimmer); a still sun keeps its map bit for bit.
 
 **Bias and filtering.** Each map texel the filter reads is compared against the
 depth the **receiver's own triangle** has at that texel's centre (the plane is
