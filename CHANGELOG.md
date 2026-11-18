@@ -257,7 +257,8 @@ contract. The C API keeps `STICKSHIFT_API_VERSION` 3: its additions (`STICKSHIFT
 
 The project takes the name **Stick Shift Engine**. Every public name changes (crates, the C API,
 environment variables, Homebrew, the repository and the docs site); there are no functional
-changes. The known limitations of 0.1.0-beta.1 still apply.
+changes. The known limitations of 0.1.0-beta.1 still apply. This beta was not published as a
+separate release; it shipped as part of 0.1.0.
 
 ### Changed
 
@@ -599,8 +600,8 @@ workspace version and are not published to crates.io.
   `games/playable-demo/README.md`.
 
 [Unreleased]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0-beta.2...v0.1.0
-[0.1.0-beta.2]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0-beta.1...v0.1.0-beta.2
+[0.1.0]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0-beta.1...v0.1.0
+[0.1.0-beta.2]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0-beta.1...f48f44a
 [0.1.0-beta.1]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0-alpha.2...v0.1.0-beta.1
 [0.1.0-alpha.2]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0-alpha.1...v0.1.0-alpha.2
 [0.1.0-alpha.1]: https://github.com/parsabee/StickShiftEngine/releases/tag/v0.1.0-alpha.1

@@ -116,11 +116,6 @@ jobs:
       # that one repo (secret HOMEBREW_TAP_DEPLOY_KEY); main is pushed with this run's token
       # (pushes made with GITHUB_TOKEN don't re-trigger workflows). Without the secret the step
       # warns and skips, so forks and first-time setups still release.
-      #
-      # The project was renamed to Stick Shift Engine: the tap repository must be renamed on GitHub
-      # to parsabee/homebrew-stickshift before the first release after the rename, or the clone
-      # below fails. The step also records the formula rename in the tap's formula_renames.json,
-      # so `brew upgrade` moves existing installs to stickshift-engine.
       - name: Update Homebrew tap + canonical formula
         env:
           TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
