@@ -74,8 +74,7 @@ that shades:
 - `set_sun_sky(&SunSky)` — the sun's **elevation and azimuth in degrees**, its
   colour and intensity, the ambient sky-fill level, and the sky gradient's
   zenith/horizon colours. Physical parameters only: the seam has no notion of time
-  of day, so "a summer 4pm sun" is a game's policy (see `games/offramp/rust-impl`'s
-  `config.rs`), expressed as angles.
+  of day, so "a summer 4pm sun" is a game's policy, expressed as angles.
 
 The light direction is derived **once**, from `SunSky::direction()`, and that single
 vector both shades the geometry and places the **sun disc + glow** the sky pass

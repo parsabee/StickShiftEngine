@@ -1,52 +1,49 @@
 # Build your own game on Stick Shift Engine
 
-The minimal path from an empty crate to a game the engine drives, windowed and headless. Each
-step names the file in [`games/offramp/rust-impl`](../games/offramp/rust-impl) that is the worked example
-for it; for the full walkthrough of that demo see [PLAYABLE_DEMO.md](PLAYABLE_DEMO.md).
+The minimal path from an empty crate to a game the engine drives, windowed and headless.
 
 Prerequisites are the engine's own: macOS, Rust ≥ 1.91, Command Line Tools. Run
 `./scripts/preflight.sh` if you haven't.
 
 ---
 
-## 1. A new crate in the workspace
+## 1. A new crate
 
-Games live under `games/`. Add the directory, then add it to the workspace `members` list in the
-root [Cargo.toml](../Cargo.toml#L3).
+A game is its own crate, in its own repository, that depends on the engine's crates. Take them from
+the engine's repository, pinned to one commit (or a release tag) so every build uses the same
+engine; every engine crate should name the same `rev`. A Homebrew install also ships the source
+for path dependencies (see the README).
 
-`games/my-game/Cargo.toml`:
+`Cargo.toml`:
 
 ```toml
 [package]
 name = "my-game"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
 
 [[bin]]
 name = "my-game"
 path = "src/main.rs"
 
 [dependencies]
-stickshift-assets.workspace = true
-stickshift-core.workspace = true
-stickshift-ecs.workspace = true
-stickshift-math.workspace = true
-stickshift-render-api.workspace = true
-stickshift-scene.workspace = true
+stickshift-assets = { git = "https://github.com/parsabee/StickShiftEngine", rev = "<commit>" }
+stickshift-core = { git = "https://github.com/parsabee/StickShiftEngine", rev = "<commit>" }
+stickshift-ecs = { git = "https://github.com/parsabee/StickShiftEngine", rev = "<commit>" }
+stickshift-math = { git = "https://github.com/parsabee/StickShiftEngine", rev = "<commit>" }
+stickshift-render-api = { git = "https://github.com/parsabee/StickShiftEngine", rev = "<commit>" }
+stickshift-scene = { git = "https://github.com/parsabee/StickShiftEngine", rev = "<commit>" }
 
 # The Metal backend lives below the render seam. Only the game binary depends on
 # `stickshift-render` (and thus `metal`); it builds the backend and injects it, so
 # `stickshift-core` stays metal-free (ARCHITECTURE §2).
 [target.'cfg(target_os = "macos")'.dependencies]
-stickshift-render.workspace = true
+stickshift-render = { git = "https://github.com/parsabee/StickShiftEngine", rev = "<commit>" }
 ```
 
-Every dependency is `*.workspace = true`, so versions come from
-[the workspace dependency table](../Cargo.toml#L33) — never pin them per-crate. Take only the
-crates you use; `stickshift-camera` (for a follow camera) and `clap` (for CLI flags) are the usual
-additions. Worked example: [games/offramp/rust-impl/Cargo.toml](../games/offramp/rust-impl/Cargo.toml).
+Take only the crates you use; `stickshift-camera` (for a follow camera) is the usual addition.
+Pin the toolchain the engine pins: copy its [rust-toolchain.toml](../rust-toolchain.toml).
 
 ---
 
@@ -151,9 +148,6 @@ impl Game for MyGame {
 }
 ```
 
-Worked example: [game.rs](../games/offramp/rust-impl/src/game.rs) — the same three hooks, with lane
-input, a state machine, streaming and collision hung off them.
-
 ---
 
 ## 3. Load an asset
@@ -164,19 +158,14 @@ path, so one file parses and uploads exactly once no matter how many entities dr
 back is a `CachedAsset`: `mesh_handles` (one per mesh, already uploaded through the render seam)
 and `scene`, the parsed node tree with per-mesh positions, UVs and any decoded base-color image.
 
-Two rules the demo follows and you should too:
+Two rules to follow:
 
 - **Never upload on the per-frame path.** Create meshes, textures and pipelines in `init`; `render`
   only references handles.
 - **Keep asset tools out of the runtime.** If an asset is *derived* (baked from a photo, a font, a
   generator), write the baker as a one-shot `examples/gen_*.rs`, commit its output, and keep its
-  crates in `[dev-dependencies]`. The demo bakes its road, skyline and font atlas this way, which
-  is why `image` and `fontdue` never reach the shipped binary
-  ([Cargo.toml](../games/offramp/rust-impl/Cargo.toml#L15)).
-
-Worked example: [assets.rs](../games/offramp/rust-impl/src/assets.rs) (the two load paths plus the
-fit transforms that place a model on the ground) and
-[examples/](../games/offramp/rust-impl/examples).
+  crates in `[dev-dependencies]`, so an image codec or a font parser never reaches the shipped
+  binary.
 
 ---
 
@@ -202,10 +191,6 @@ Group draws by pipeline and texture so each switch happens once per group rather
 entity. For a HUD, record [`OverlayQuad`](../crates/stickshift-render-api/src/overlay.rs#L71)s — the
 backend flushes them in its own orthographic pass after every 3D draw, so they always composite
 on top.
-
-Worked example: [render.rs](../games/offramp/rust-impl/src/render.rs) (grouped passes) and
-[hud.rs](../games/offramp/rust-impl/src/hud.rs) (SDF text, safe-area insets, no per-frame
-allocation).
 
 ---
 
@@ -243,9 +228,6 @@ fn main() {
 cargo run -p my-game             # windowed, Metal backend
 cargo run -p my-game -- --smoke  # headless: 120 frames, exits 0
 ```
-
-Worked example: [main.rs](../games/offramp/rust-impl/src/main.rs), which does this with `clap` for
-argument parsing and asserts the stdout contract line in a unit test.
 
 The windowed runner quits on Escape, the close button and Cmd-Q. To use Escape in the game (a
 pause menu, closing a dialog), run it through `run_with_config` with `quit_on_escape: false`; the
@@ -312,11 +294,10 @@ Whichever path requests a change, the engine applies it identically:
 Two things to know:
 
 - **Draw distance scales *your* reach.** The engine records the scene's `spawn_ahead` as it stands
-  at the end of `init` as 100%. Set your reach with `Scene::set_config` in `init`, as the demo does,
-  and don't change it later yourself.
+  at the end of `init` as 100%. Set your reach with `Scene::set_config` in `init`, and don't change
+  it later yourself.
 - **Author HUD sizes in points.** Multiply them by `renderer.surface_scale()` (drawable pixels per
-  window point) so text keeps its size at every render scale. See
-  [hud.rs](../games/offramp/rust-impl/src/hud.rs).
+  window point) so text keeps its size at every render scale.
 
 Settings are testable headlessly too. `Headless::set_graphics_settings` queues a change exactly as
 the menu would, and the `NullRenderer` records the `RenderSettings` it received. Nothing is ever
@@ -356,34 +337,30 @@ camera — which means even *view* behaviour is testable with no display.
 
 For any of this to be reproducible, keep two rules: never read wall-clock time in `update` (the
 engine's fixed `dt` is the only clock you need), and drive every random choice from a seeded PRNG.
-Worked example: [rng.rs](../games/offramp/rust-impl/src/rng.rs), and the test module at
-[game.rs:741](../games/offramp/rust-impl/src/game.rs#L741).
 
 ---
 
 ## 7. Stay on the right side of the boundary
 
-Game concepts must not appear in engine crates — and that is enforced, not merely requested: four
-`stickshift-*` crates carry self-scanning guard tests that fail if a game-named token appears anywhere
-in their source (listed in [PLAYABLE_DEMO.md §7](PLAYABLE_DEMO.md#7-the-boundary-and-what-enforces-it)).
+Game concepts must not appear in engine crates — and that is enforced, not merely requested: five
+`stickshift-*` crates (`stickshift-core`, `stickshift-scene`, `stickshift-assets`, `stickshift-audio` and
+`stickshift-ecs`) carry self-scanning guard tests that fail if a game-named token appears anywhere
+in their source.
 
 In practice this is not a constraint so much as a filing rule:
 
 - Game-named ECS components go in *your* crate. They ride on the same entities as
-  `TransformComponent` / `RenderComponent` and compose freely — see
-  [components.rs](../games/offramp/rust-impl/src/components.rs).
-- Tuning constants go in your crate, ideally all in one module — see
-  [config.rs](../games/offramp/rust-impl/src/config.rs).
+  `TransformComponent` / `RenderComponent` and compose freely.
+- Tuning constants go in your crate, ideally all in one module.
 - If you find yourself wanting to add a game concept to `stickshift-scene`, `stickshift-ecs`,
   `stickshift-assets` or `stickshift-core`, the generic primitive you actually want is probably already
-  there (a callback, a config field, a tag component). The demo needed none.
+  there (a callback, a config field, a tag component).
 - Only the game binary may depend on `stickshift-render`, and only to build the backend it injects.
 
 ---
 
 ## See also
 
-- [PLAYABLE_DEMO.md](PLAYABLE_DEMO.md) — the demo walked through in full.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — the constraints behind these seams. ·
   [DESIGN.md](DESIGN.md) — diagrams of the loop, the seam, streaming and asset load.
 - Inline API docs: `cargo doc --workspace --no-deps --open`.

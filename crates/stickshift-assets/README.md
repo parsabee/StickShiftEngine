@@ -80,9 +80,10 @@ so the box scene's pixel hash is unchanged.
 
 ## Regenerating the fixture
 
-The committed cube fixture (`games/offramp/shared/assets/cube.gltf`, and the test copy
-`tests/fixtures/cube.gltf`) is produced by:
+The committed cube fixtures (`tests/fixtures/cube.gltf` and `tests/fixtures/textured_cube.gltf`)
+are produced by:
 
 ```sh
-cargo run -p stickshift-assets --example gen_cube -- games/offramp/shared/assets/cube.gltf
+cargo run -p stickshift-assets --example gen_cube -- crates/stickshift-assets/tests/fixtures/cube.gltf
+cargo run -p stickshift-assets --example gen_textured_cube -- crates/stickshift-assets/tests/fixtures/textured_cube.gltf
 ```

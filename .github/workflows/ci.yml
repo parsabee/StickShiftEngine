@@ -72,7 +72,7 @@ jobs:
       - name: Core without a platform has no winit or AppKit dependency
         run: "! cargo tree -p stickshift-core --no-default-features -e normal | grep -qiE 'winit|objc2-app-kit'"
 
-      # The workspace doc build turns `windowed` back on (offramp needs it), so document
+      # The workspace doc build has `windowed` on (stickshift-core's default), so document
       # the no-platform configuration on its own. Its links to the winit runner are allowed to
       # dangle there (lib.rs says why); everything else must resolve.
       - name: Core docs build without a platform
@@ -81,10 +81,10 @@ jobs:
         run: cargo doc -p stickshift-core --no-deps --no-default-features
 
       # De-brand guard. No prototype identifiers may appear in
-      # shipped engine code; provenance lives in docs/ only. Scans crates/ and games/; grep exits
+      # shipped engine code; provenance lives in docs/ only. Scans crates/; grep exits
       # 0 on a match, so the negation fails the step when an identifier is found.
       - name: No prototype identifiers in shipped code
-        run: "! grep -rniI projectrigor crates games"
+        run: "! grep -rniI projectrigor crates"
 
       # Rename guard: the project's previous name must not appear anywhere in the repository.
       - name: No pre-rename names
@@ -123,14 +123,6 @@ jobs:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links -A rustdoc::redundant_explicit_links"
         run: cargo doc --workspace --no-deps
 
-      # Headless smoke oracle: runs the demo's game loop for 120 frames against the CPU-only
-      # NullRenderer, so it needs no GPU. Metal API Validation stays on so any Metal use on this
-      # path is validated.
-      - name: Smoke oracle (Metal API Validation on)
-        env:
-          METAL_DEVICE_WRAPPER_TYPE: "1"
-        run: cargo run -p offramp -- --smoke
-
   # The same renderer with its shaders compiled ahead of time and embedded (the
   # `precompiled-shaders` feature, what release builds ship): it must build with the Metal
   # toolchain, load the .metallib, and pass the GPU tests (pixel hashes included) unchanged.
@@ -160,8 +152,8 @@ jobs:
           xcrun -sdk macosx metal --version
           ./scripts/preflight.sh --ios || true
 
-      - name: Test the renderer, C API and demo with precompiled shaders
-        run: cargo test -p stickshift-render -p stickshift-capi -p offramp --features stickshift-render/precompiled-shaders
+      - name: Test the renderer and C API with precompiled shaders
+        run: cargo test -p stickshift-render -p stickshift-capi --features stickshift-render/precompiled-shaders
 
       # The release library must carry the compiled .metallib, not the shader source: the
       # source's header comment is in a runtime-compiling build and absent from this one.

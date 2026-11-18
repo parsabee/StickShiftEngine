@@ -113,7 +113,7 @@ fn base64(bytes: &[u8]) -> String {
 fn main() {
     let out = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "games/offramp/shared/assets/cube.gltf".to_string());
+        .unwrap_or_else(|| "crates/stickshift-assets/tests/fixtures/cube.gltf".to_string());
 
     let (positions, normals, indices) = cube();
 

@@ -556,22 +556,6 @@ fn malformed_position_accessors_are_errors_not_panics() {
 }
 
 #[test]
-fn committed_game_asset_imports_from_path() {
-    // The asset the game loads is a real file on disk (not gitignored).
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../games/offramp/shared/assets/cube.gltf"
-    );
-    let scene = import_gltf(path).expect("committed cube.gltf imports");
-    assert_eq!(scene.meshes[0].vertex_count(), 24);
-    // the committed game asset is now textured (base-color checkerboard).
-    assert!(
-        scene.meshes[0].is_textured(),
-        "the committed game asset carries a base-color texture"
-    );
-}
-
-#[test]
 fn parses_material_base_color_texture() {
     // The textured fixture's primitive references a material with a base-color
     // texture; the importer decodes it to RGBA8 and attaches it to the mesh.

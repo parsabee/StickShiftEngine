@@ -17,7 +17,7 @@ seam**; nothing above it may import `metal`.
 
 ```mermaid
 graph TD
-    subgraph Game["Game (games/offramp/rust-impl)"]
+    subgraph Game["Game (its own crate)"]
         CR["CarRunner : Game"]
     end
     subgraph Core["stickshift-core — lifecycle & loop"]
@@ -56,7 +56,7 @@ graph TD
     class SEAM seam;
 ```
 
-The `offramp` **binary** is the only thing that both implements `Game` *and* constructs the
+A game's **binary** is the only thing that both implements `Game` *and* constructs the
 Metal backend — it injects the backend into `stickshift-core` through a factory, so `stickshift-core` itself
 never depends on `metal`.
 
@@ -65,7 +65,7 @@ never depends on `metal`.
 ## 2. Crate dependency graph
 
 Acyclic, leaf-first (`stickshift-math` at the bottom). `metal` is reachable **only** through
-`stickshift-render` and the `offramp` binary — the CI firewall asserts it never enters `stickshift-core`
+`stickshift-render` and a game's binary — the CI firewall asserts it never enters `stickshift-core`
 or `stickshift-render-api`.
 
 ```mermaid
@@ -80,7 +80,7 @@ graph LR
     audio["stickshift-audio"]
     render["stickshift-render"]
     core["stickshift-core"]
-    game["games/offramp/rust-impl"]
+    game["a game crate"]
     metal(["metal (extern)"])
 
     ecs --> math
@@ -426,14 +426,13 @@ before they existed (every pre-existing pixel hash is unchanged). See
 | Light binning never misses a lit pixel | `stickshift-render` | CPU property test against the shader's cluster formula; GPU test comparing every pixel with `Light::radiance_at` |
 | Lights are per frame, never sticky | `stickshift-render-api`, `stickshift-render` | `NullRenderer` and GPU tests: the frame after a lit one renders unlit |
 | Simulation is framerate-independent | `stickshift-core` | fixed `FIXED_DT`; 60 vs 120 Hz step-count tests |
-| No prototype identifiers ship | `crates/`, `games/` | CI de-brand grep |
+| No prototype identifiers ship | `crates/` | CI de-brand grep |
 
 ---
 
 ## See also
 
-- [PLAYABLE_DEMO.md](PLAYABLE_DEMO.md) — these seams as the demo actually uses them, with pointers
-  into its code. · [GETTING_STARTED.md](GETTING_STARTED.md) — build your own game on them.
+- [GETTING_STARTED.md](GETTING_STARTED.md) — build your own game on these seams.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — authoritative constraints (the *why*).
 - [ROADMAP.md](ROADMAP.md) — what each release contains, up to 1.0. · [INTEGRATION.md](INTEGRATION.md) — test/migration discipline.
 - Inline API docs: `cargo doc --workspace --no-deps --open`.

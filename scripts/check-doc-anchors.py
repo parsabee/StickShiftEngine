@@ -38,8 +38,6 @@ DOCS = [
     "docs/ARCHITECTURE.md",
     "docs/DESIGN.md",
     "docs/GETTING_STARTED.md",
-    "docs/PLAYABLE_DEMO.md",
-    "games/offramp/rust-impl/README.md",
     "crates/stickshift-render/README.md",
 ]
 

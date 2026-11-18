@@ -40,10 +40,10 @@ Everything in the betas, plus:
   with results recorded in [BENCHMARKS.md](BENCHMARKS.md). They called for no fixes.
 - **Every bug from the beta audit fixed** (#22–#43).
 
-## v0.2 — Offramp
+## v0.2 — the whole engine through the C API
 
-The playable demo becomes **Offramp**, the open-source reference for building a game on Stick
-Shift Engine, and the whole engine becomes reachable through the C API.
+The whole engine becomes reachable through the C API, a frame can carry many lights, and physics
+leaves the engine.
 [Milestone](https://github.com/parsabee/StickShiftEngine/milestone/1)
 
 Engine:
@@ -51,37 +51,27 @@ Engine:
 - **The whole engine through the C API:** an engine object runs a C game's loop, with the
   engine's world and its queries, scene streaming and the floating-origin rebase, the camera,
   input, audio and graphics settings, while the host drives it one tick per display refresh.
-- **Many light sources:** point and spot lights and emissive materials ([#82](https://github.com/parsabee/StickShiftEngine/issues/82)), which the
-  day/night cycle needs at night.
-- **Physics leaves the engine** ([#81](https://github.com/parsabee/StickShiftEngine/issues/81)). The C API has never exposed physics, and the playable
-  demo only uses it to tag obstacles. The release removes `stickshift-physics` (and `rapier3d`),
-  `PhysicsBodyComponent` and the loop's physics step. The scene keeps streaming and the
+- **Many light sources:** point and spot lights and emissive materials ([#82](https://github.com/parsabee/StickShiftEngine/issues/82)), for scenes
+  at night.
+- **Physics leaves the engine** ([#81](https://github.com/parsabee/StickShiftEngine/issues/81)). The C API has never exposed physics. The
+  release removes `stickshift-physics` (and `rapier3d`), `PhysicsBodyComponent` and the loop's
+  physics step. The scene keeps streaming and the
   floating-origin rebase, and passes the rebase offset to the game. A game that wants physics
   uses `rapier3d` directly.
 
-Offramp:
-
-- **The playable demo is Offramp** ([#75](https://github.com/parsabee/StickShiftEngine/issues/75)): it lives in [`games/offramp`](../games/offramp)
-  (the game in `rust-impl/`, its assets in `shared/`), and its crate and binary are `offramp`.
-- **Its presentation:** name, logo, font and menus ([#77](https://github.com/parsabee/StickShiftEngine/issues/77)).
-- **A day/night cycle** ([#78](https://github.com/parsabee/StickShiftEngine/issues/78)), **curved roads** ([#79](https://github.com/parsabee/StickShiftEngine/issues/79)) and **car physics** ([#80](https://github.com/parsabee/StickShiftEngine/issues/80)),
-  written as game code.
-
-## v0.3 — Offramp grows
+## v0.3 — particles and instancing
 
 [Milestone](https://github.com/parsabee/StickShiftEngine/milestone/2)
 
 - **GPU particles** in the engine and the C API, used for sparks, tyre smoke and weather
   ([#85](https://github.com/parsabee/StickShiftEngine/issues/85)).
 - **Instanced drawing** for dense scenes ([#89](https://github.com/parsabee/StickShiftEngine/issues/89)).
-- **Traffic AI** ([#86](https://github.com/parsabee/StickShiftEngine/issues/86)), **diverging roads** ([#87](https://github.com/parsabee/StickShiftEngine/issues/87)) and **procedurally generated city
-  textures** ([#88](https://github.com/parsabee/StickShiftEngine/issues/88)).
 
 ## v0.9 — iOS and full Xcode, right before 1.0
 
-Release the library for iOS as well as macOS: iOS build targets, an XCFramework, Offramp on iOS,
-tile-memory (TBDR) tuning, compressed textures, precompiled shaders for the iOS SDKs, on-device
-performance validation and App Store readiness, plus building and debugging from Xcode. Tracked
+Release the library for iOS as well as macOS: iOS build targets, an XCFramework, tile-memory
+(TBDR) tuning, compressed textures, precompiled shaders for the iOS SDKs, on-device performance
+validation and App Store readiness, plus building and debugging from Xcode. Tracked
 in [#2 iOS support](https://github.com/parsabee/StickShiftEngine/issues/2) and its sub-issues. [Milestone](https://github.com/parsabee/StickShiftEngine/milestone/3)
 
 ## v1.0 — the goal
