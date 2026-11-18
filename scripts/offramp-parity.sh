@@ -48,7 +48,7 @@ fi
 
 out="${OFFRAMP_PARITY_DIR:-$root/target/offramp-parity}"
 mkdir -p "$out"
-package="games/offramp"
+package="games/offramp/swift-impl"
 
 # Where cargo builds: target/ unless $CARGO_TARGET_DIR or a build.target-dir
 # setting moves it.

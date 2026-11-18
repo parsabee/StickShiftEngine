@@ -2,7 +2,7 @@
 # Record the playable demo and write docs/images/demo.gif, the README's GIF.
 #
 # Runs the real game offscreen through the Metal backend with a scripted autopilot
-# (games/playable-demo/examples/record_demo.rs), so no window or screen capture is
+# (games/offramp/rust-impl/examples/record_demo.rs), so no window or screen capture is
 # involved, then assembles the frames with macOS's ImageIO (scripts/frames-to-gif.swift).
 # Traffic is seeded, so a run records the same clip. macOS only.
 #

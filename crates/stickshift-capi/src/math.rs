@@ -576,7 +576,7 @@ mod tests {
         assert_eq!(ours, v(documented, documented, documented));
     }
 
-    // The demo's inputs (games/playable-demo/src/config.rs).
+    // The demo's inputs (games/offramp/rust-impl/src/config.rs).
     const CAR_LEN: f32 = 2.85;
     const CAR_BOTTOM: f32 = -0.4;
     const CAR_YAW: f32 = PI;
@@ -585,10 +585,10 @@ mod tests {
     const AXIS: Vec3 = Vec3::new(0.0, 0.0, -1.0);
 
     /// The demo's own models: the car, traffic and building prefabs, the road
-    /// tile and the skyline (games/playable-demo/assets).
+    /// tile and the skyline (games/offramp/shared/assets).
     fn demo_models() -> Vec<(String, stickshift_assets::SceneAsset)> {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../games/playable-demo/assets");
+            .join("../../games/offramp/shared/assets");
         let mut paths: Vec<_> = std::fs::read_dir(&dir)
             .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
             .map(|entry| entry.expect("a directory entry").path())
@@ -613,7 +613,7 @@ mod tests {
     }
 
     /// The demo's fit math (`fit_transform` and `building_fit`,
-    /// games/playable-demo/src/assets.rs:84-143), done once with glam and
+    /// games/offramp/rust-impl/src/assets.rs:84-143), done once with glam and
     /// once through the helpers, step by step: the baked vertices, the
     /// pivots, the car's yaw, the fitted transforms, their matrices, and each
     /// node's local matrix.

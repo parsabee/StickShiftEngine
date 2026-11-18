@@ -1,6 +1,6 @@
 # The Playable Demo — a guided walkthrough
 
-`games/playable-demo` is Stick Shift Engine's first title (an endless runner) and the **reference
+`games/offramp/rust-impl` is Stick Shift Engine's first title (an endless runner) and the **reference
 example** for building a game on this engine. It is a plain workspace member that depends only
 on the engine's published crates: it implements one trait, receives one context type, and
 reaches every engine service through that context. Nothing in it reaches past the public API.
@@ -23,9 +23,9 @@ The engine owns the loop. A game is any type implementing
 
 | Hook | Called | The demo's implementation |
 |---|---|---|
-| `init(&mut EngineCtx)` | exactly once, before the first `update` | [game.rs:464](../games/playable-demo/src/game.rs#L464) |
-| `update(&mut EngineCtx, dt)` | 0..N times per frame, `dt` always `FIXED_DT` | [game.rs:614](../games/playable-demo/src/game.rs#L614) |
-| `render(&mut EngineCtx)` | exactly once per frame, after that frame's updates | [game.rs:735](../games/playable-demo/src/game.rs#L735) → [render.rs:38](../games/playable-demo/src/render.rs#L38) |
+| `init(&mut EngineCtx)` | exactly once, before the first `update` | [game.rs:464](../games/offramp/rust-impl/src/game.rs#L464) |
+| `update(&mut EngineCtx, dt)` | 0..N times per frame, `dt` always `FIXED_DT` | [game.rs:614](../games/offramp/rust-impl/src/game.rs#L614) |
+| `render(&mut EngineCtx)` | exactly once per frame, after that frame's updates | [game.rs:735](../games/offramp/rust-impl/src/game.rs#L735) → [render.rs:38](../games/offramp/rust-impl/src/render.rs#L38) |
 
 [`EngineCtx`](../crates/stickshift-core/src/context.rs#L89) is the only channel into the engine. It
 is built fresh by the driver for each hook call and dropped immediately after, so a game cannot
@@ -39,22 +39,22 @@ is no accessor for a window, a platform handle, a Metal device, or game state �
 **What the engine owns.** The event loop and the clock; the `Scene` (ECS `World` + streaming
 bookkeeping); the `Camera`; input collection; the render backend; the frame cadence.
 The demo's own struct holds none of these — see the field list on
-[`CarRunner`](../games/playable-demo/src/game.rs#L53): it holds lane, travel, score, best, PRNG,
+[`CarRunner`](../games/offramp/rust-impl/src/game.rs#L53): it holds lane, travel, score, best, PRNG,
 game state, and the resource *handles* it created in `init`. That is all.
 
 **What the game owns.** Its rules and its vocabulary. Lanes, obstacles, score, the state machine,
 the collision test, the difficulty ramp, and the game-side ECS components
-([components.rs](../games/playable-demo/src/components.rs)) all live in the game crate. See
+([components.rs](../games/offramp/rust-impl/src/components.rs)) all live in the game crate. See
 [§7](#7-the-boundary-and-what-enforces-it) for why they cannot live anywhere else.
 
 **Backend injection.** `stickshift-core` must not depend on `metal`, so it does not construct the
 renderer. The *game binary* does: `main.rs` calls
 [`run_with_backend`](../crates/stickshift-core/src/app.rs#L158) with a factory closure that builds a
 `stickshift_render::MetalRenderer` and boxes it as `dyn Renderer`
-([main.rs:144](../games/playable-demo/src/main.rs#L144)). `metal` therefore reaches the process
+([main.rs:144](../games/offramp/rust-impl/src/main.rs#L144)). `metal` therefore reaches the process
 through `stickshift-render` and the game binary only, never through `stickshift-core` (ARCHITECTURE §2).
 The `stickshift-render` dependency is even `cfg`-gated to macOS in
-[Cargo.toml](../games/playable-demo/Cargo.toml#L35).
+[Cargo.toml](../games/offramp/rust-impl/Cargo.toml#L35).
 
 ---
 
@@ -77,7 +77,7 @@ is the only place game state advances, so the amount of simulation per second of
 independent of how fast the display is. `render` is the only place draws are recorded, so it can
 run once per *displayed* frame regardless of how many steps preceded it. The demo respects the
 split strictly: `update` moves the car, streams, and resolves collisions and records nothing;
-[render.rs](../games/playable-demo/src/render.rs) reads state and records draws and mutates
+[render.rs](../games/offramp/rust-impl/src/render.rs) reads state and records draws and mutates
 nothing. (`EngineCtx::alpha`, the interpolation factor for lerping between fixed states inside
 `render`, exists and is wired through; the demo does not use it — at 60 Hz fixed and a 60 Hz
 display there is nothing visible to gain, and ignoring it keeps the render pass a pure read.)
@@ -105,9 +105,9 @@ and a **spawn callback**; the scene owns the bookkeeping (which slots ahead are 
 streamed entities have fallen behind).
 
 The demo's focus is the player's position
-([`player_position`](../games/playable-demo/src/game.rs#L166)) and its callback is
-[`spawn_slot`](../games/playable-demo/src/game.rs#L370), called from `update` at
-[game.rs:724](../games/playable-demo/src/game.rs#L724). Per slot it spawns a road tile, an
+([`player_position`](../games/offramp/rust-impl/src/game.rs#L166)) and its callback is
+[`spawn_slot`](../games/offramp/rust-impl/src/game.rs#L370), called from `update` at
+[game.rs:724](../games/offramp/rust-impl/src/game.rs#L724). Per slot it spawns a road tile, an
 obstacle on a cadence, two roadside buildings and two guardrail segments — reporting each via
 [`SpawnCtx::spawned`](../crates/stickshift-scene/src/lib.rs#L497) so the scene despawns it once it
 falls behind ([`Scene::despawn`](../crates/stickshift-scene/src/lib.rs#L293)).
@@ -127,8 +127,8 @@ authored size so it frames the view exactly as it did at 45), and the renderer's
 clear to 105 view-depth units, ~98% opaque at 165 — dissolves everything short of it into the
 horizon, so nothing is ever seen popping in. Road tiles and the guardrail
 mesh are sized from `ctx.scene().config().spawn_interval` rather than a literal
-([game.rs:514](../games/playable-demo/src/game.rs#L514),
-[game.rs:590](../games/playable-demo/src/game.rs#L590)), so streamed segments abut flush whatever
+([game.rs:514](../games/offramp/rust-impl/src/game.rs#L514),
+[game.rs:590](../games/offramp/rust-impl/src/game.rs#L590)), so streamed segments abut flush whatever
 the interval is.
 
 ### The rebase, and what the game must carry through it
@@ -146,31 +146,31 @@ demo holds two such things.
 
 1. **`travel`**, the monotonic along-axis distance the player's transform is rebuilt from. The
    demo folds the offset into it: `self.travel += offset.dot(axis)`
-   ([game.rs:674](../games/playable-demo/src/game.rs#L674)). Without this the player would be
+   ([game.rs:674](../games/offramp/rust-impl/src/game.rs#L674)). Without this the player would be
    rebuilt at its old coordinate in a world that has moved.
 2. **The camera.** The engine owns the `Camera`, but its position and target are world
    coordinates, so a rebase strands it a full threshold away. The demo translates both by the
-   same offset — [game.rs:676–691](../games/playable-demo/src/game.rs#L676), which carries a
+   same offset — [game.rs:676–691](../games/offramp/rust-impl/src/game.rs#L676), which carries a
    worked comment on exactly this. Note *why* it translates rather than re-deriving the pose from
    the car: a smoothed follow always trails its desired pose slightly, and snapping to the
    desired pose would erase that lag in one frame — a visible jolt. Shifting preserves the lag
    exactly, so the rebase is invisible.
 
 The demo's ordering within `update` is: **rebase → write the player transform → follow the camera
-→ stream** ([game.rs:669](../games/playable-demo/src/game.rs#L669) onward). Everything downstream
+→ stream** ([game.rs:669](../games/offramp/rust-impl/src/game.rs#L669) onward). Everything downstream
 of the rebase therefore sees one consistent coordinate space for the whole step.
 
 A third pattern worth noting: content that should *not* move with the world at all is drawn
 **camera-locked** instead of streamed — the ground terrain
-([render.rs:177](../games/playable-demo/src/render.rs#L177)) and the skyline backdrop
-([render.rs:186](../games/playable-demo/src/render.rs#L186)) are positioned from the player's `Z`
+([render.rs:177](../games/offramp/rust-impl/src/render.rs#L177)) and the skyline backdrop
+([render.rs:186](../games/offramp/rust-impl/src/render.rs#L186)) are positioned from the player's `Z`
 every frame, so neither a stream nor a rebase can slide them.
 
 Two headless tests pin all of this: `a_dodging_run_never_ends_without_an_actual_collision`
-([game.rs:1036](../games/playable-demo/src/game.rs#L1036)) drives far enough to cross the rebase
+([game.rs:1036](../games/offramp/rust-impl/src/game.rs#L1036)) drives far enough to cross the rebase
 threshold while steering clear of traffic and asserts the run never ends, and
 `the_camera_stays_with_the_car_across_a_rebase`
-([game.rs:1091](../games/playable-demo/src/game.rs#L1091)) asserts the camera's pose *relative to
+([game.rs:1091](../games/offramp/rust-impl/src/game.rs#L1091)) asserts the camera's pose *relative to
 the car* changes no more on a rebase step than on an ordinary one. Both fail if the rebase
 bookkeeping above is dropped.
 
@@ -180,30 +180,30 @@ bookkeeping above is dropped.
 
 Every model the demo draws is a committed glTF file imported exactly once through
 `stickshift-assets` and thereafter referenced by handle. The two load paths are in
-[assets.rs](../games/playable-demo/src/assets.rs):
+[assets.rs](../games/offramp/rust-impl/src/assets.rs):
 
-- [`load_model`](../games/playable-demo/src/assets.rs#L42) — a multi-part model. Returns one
+- [`load_model`](../games/offramp/rust-impl/src/assets.rs#L42) — a multi-part model. Returns one
   `(fitted transform, MeshHandle, Option<TextureHandle>)` per mesh-bearing node. Parts whose
   material carries a base-color image get a texture and draw on the textured pipeline; parts
   without one draw on the Phong pipeline with the material color the importer packed as vertex
   color.
-- [`load_textured_mesh`](../games/playable-demo/src/assets.rs#L153) — a single always-textured
+- [`load_textured_mesh`](../games/offramp/rust-impl/src/assets.rs#L153) — a single always-textured
   mesh (the road tile, the skyline billboard).
 
 Both go through [`AssetCache::load`](../crates/stickshift-assets/src/lib.rs), which dedups by path so
 one file is parsed and uploaded once (the engine's "upload once, reference by handle" rule). The *fit*
 functions turn a model's authored bounds into a placement transform:
-[`fit_transform`](../games/playable-demo/src/assets.rs#L114) scales a car so its longer horizontal
+[`fit_transform`](../games/offramp/rust-impl/src/assets.rs#L114) scales a car so its longer horizontal
 extent is `CAR_LEN`, yaws it to face `-Z`, and lifts its underside to the road;
-[`building_fit`](../games/playable-demo/src/assets.rs#L84) scales a prefab to a common footprint
+[`building_fit`](../games/offramp/rust-impl/src/assets.rs#L84) scales a prefab to a common footprint
 (heights preserved) with its base at the model origin. Both work from baked world-space bounds, so
 they are robust to whatever scale and orientation a model was authored at.
 
 ### Committed assets
 
-All of these live in [`games/playable-demo/assets/`](../games/playable-demo/assets) and are
+All of these live in [`games/offramp/shared/assets/`](../games/offramp/shared/assets) and are
 committed, so a clean checkout runs with no asset build step. `config.rs` names them relative to
-an asset root that [`asset_root.rs`](../games/playable-demo/src/asset_root.rs) resolves once at
+an asset root that [`asset_root.rs`](../games/offramp/rust-impl/src/asset_root.rs) resolves once at
 startup (`$STICKSHIFT_DEMO_ASSETS`, an installed `share/stickshift-engine/assets` beside the binary, or this
 directory for `cargo run`), so the paths hold regardless of the process working directory or where
 the binary is installed.
@@ -222,7 +222,7 @@ the binary is installed.
 ### Derived assets are baked by `examples/`, not at runtime
 
 Three assets are *derived* — a PNG-carrying glTF and a font atlas — and each has a one-shot
-generator under [`examples/`](../games/playable-demo/examples):
+generator under [`examples/`](../games/offramp/rust-impl/examples):
 
 ```sh
 cargo run -p playable-demo --example gen_asphalt   # → assets/road.gltf
@@ -232,10 +232,10 @@ cargo run -p playable-demo --example gen_font      # → assets/font.bin
 
 The deliverable is the committed output, not the tool: a normal build never runs these. That is
 the point of shipping them as examples — `image` and `fontdue` stay **dev-dependencies**
-([Cargo.toml:18](../games/playable-demo/Cargo.toml#L18)), so the shipped binary gains neither an
+([Cargo.toml:18](../games/offramp/rust-impl/Cargo.toml#L18)), so the shipped binary gains neither an
 image codec nor a font parser. At runtime the embedded road/skyline PNGs are decoded by
 `stickshift-assets`, and `font.bin` is a self-contained `KFNT` blob of metrics plus a single-channel
-distance field that [`load_font`](../games/playable-demo/src/hud.rs#L101) parses by hand.
+distance field that [`load_font`](../games/offramp/rust-impl/src/hud.rs#L101) parses by hand.
 
 ---
 
@@ -258,9 +258,9 @@ The seam is two traits in `stickshift-render-api`, bundled for the game as one
 The demo creates everything in `init`: two pipelines (`vertex_main`/`fragment_main` on the
 `[pos,normal,color]` layout, `textured_vertex_main`/`textured_fragment_main` on
 `[pos,normal,uv]`), the imported meshes and textures, the two procedural meshes, and the font
-atlas — [game.rs:464–612](../games/playable-demo/src/game.rs#L464). It keeps only the handles.
+atlas — [game.rs:464–612](../games/offramp/rust-impl/src/game.rs#L464). It keeps only the handles.
 
-[`render_frame`](../games/playable-demo/src/render.rs#L38) then records a frame with **no
+[`render_frame`](../games/offramp/rust-impl/src/render.rs#L38) then records a frame with **no
 allocation of GPU resources and no pipeline thrash**: it first gathers this frame's transforms out
 of the ECS world by role (road tiles, guardrails, model placements), then draws them grouped so
 each pipeline switch and texture bind happens once per group:
@@ -281,7 +281,7 @@ The engine has no idea what time of day it is. It accepts a
 colour, intensity, an ambient sky-fill level, and the sky gradient's zenith/horizon colours — and
 derives the light direction from the angles. Choosing *which* sun is the game's job, so the demo's
 answer lives in its own config as named constants (`SUN_*` / `SKY_*` in
-[config.rs](../games/playable-demo/src/config.rs)) and is pushed once through the seam in `init`,
+[config.rs](../games/offramp/rust-impl/src/config.rs)) and is pushed once through the seam in `init`,
 where the sticky seam value then lights every frame:
 
 **A summer afternoon, about 4pm** — 32° above the horizon at a bearing of 284° (a touch north of
@@ -313,7 +313,7 @@ shading round together, since the two share one direction vector.
 
 ### The HUD
 
-[hud.rs](../games/playable-demo/src/hud.rs) is the worked example of a game drawing its UI
+[hud.rs](../games/offramp/rust-impl/src/hud.rs) is the worked example of a game drawing its UI
 through the engine. It owns no game logic — it reads `CarRunner`'s state and turns it into
 overlay quads.
 
@@ -323,7 +323,7 @@ The seam is the **2D overlay**
 `draw_overlay_quad`, and the backend batches them and flushes them at `submit` in its own
 orthographic, depth-disabled, alpha-blended pass **after** every 3D draw. So the HUD composites
 on top regardless of record order — which is why
-[`draw_hud`](../games/playable-demo/src/hud.rs#L174) can simply be the last thing
+[`draw_hud`](../games/offramp/rust-impl/src/hud.rs#L174) can simply be the last thing
 `render_frame` records. Coordinates are pixels with the origin top-left. A quad's fill is
 `Solid`, `Textured`, or `Sdf`.
 
@@ -336,7 +336,7 @@ centering. Because the metrics are in em units, one atlas serves any pixel size 
 the score at 30 px and the banner headline at 64 px from the same texture.
 
 **Allocation-free.** `layout` allocates nothing, and the demo formats its numbers into
-[`StackStr`](../games/playable-demo/src/hud.rs#L52), a fixed-capacity `fmt::Write` buffer on the
+[`StackStr`](../games/offramp/rust-impl/src/hud.rs#L52), a fixed-capacity `fmt::Write` buffer on the
 stack (overflow is dropped rather than panicking — HUD text is short and cosmetic). So the whole
 per-frame HUD path is heap-free.
 
@@ -345,7 +345,7 @@ per-frame HUD path is heap-free.
 in pixels), so the HUD stays clear of notches, rounded corners and home indicators. A desktop
 window reports zeros; an iOS host (planned for v0.9) would report real insets. The score sits at
 `inset + HUD_MARGIN`, and the game-over banner is centered in the *safe* rectangle, not the raw
-drawable ([hud.rs:256](../games/playable-demo/src/hud.rs#L256)).
+drawable ([hud.rs:253](../games/offramp/rust-impl/src/hud.rs#L253)).
 
 The HUD also carries the demo's full-screen washes, recorded first so everything composites over
 them: opaque black on `Ready` (the title screen), that black retiring over `HUD_FADE_SECONDS`
@@ -379,7 +379,7 @@ the sound already looping starts nothing.
 live→ended transition, rather than from anything that notices `GameOver` is the current state —
 which would re-fire it every frame the banner is up.
 
-Levels are three named constants in [config.rs](../games/playable-demo/src/config.rs) (`MASTER_`,
+Levels are three named constants in [config.rs](../games/offramp/rust-impl/src/config.rs) (`MASTER_`,
 `MUSIC_`, `IMPACT_VOLUME`), in decibels relative to each file's recorded level: the music sits ~11 dB
 under the impact so the effect cuts through, and the master keeps a little headroom because the two
 land on top of each other at the exact moment a run ends.
@@ -394,13 +394,13 @@ sits in `GameOver` for 500 frames and asserts the one-shot count did not climb.
 
 ## 6. Determinism and testing
 
-**The seeded PRNG.** [rng.rs](../games/playable-demo/src/rng.rs) holds two deliberately separate
+**The seeded PRNG.** [rng.rs](../games/offramp/rust-impl/src/rng.rs) holds two deliberately separate
 sources of randomness, and neither reads wall-clock time:
 
-- [`Rng`](../games/playable-demo/src/rng.rs#L32), a SplitMix64 seeded once from
-  [`config::SEED`](../games/playable-demo/src/config.rs#L55), advanced *only* when `spawn_slot`
+- [`Rng`](../games/offramp/rust-impl/src/rng.rs#L32), a SplitMix64 seeded once from
+  [`config::SEED`](../games/offramp/rust-impl/src/config.rs#L55), advanced *only* when `spawn_slot`
   picks an obstacle lane. This is the sequence tests depend on.
-- [`hash_u64`](../games/playable-demo/src/rng.rs#L61) and the `*_for_slot` helpers, which derive
+- [`hash_u64`](../games/offramp/rust-impl/src/rng.rs#L61) and the `*_for_slot` helpers, which derive
   **cosmetic** choices (traffic-car variant, building prefab, lateral jitter) straight from the
   streaming slot index without touching `Rng`.
 
@@ -411,12 +411,12 @@ building is drawn beside them.
 **The `--smoke` oracle.** `cargo run -p playable-demo -- --smoke` boots the same `Game` under the
 headless driver, runs **120 frames** against a `NullRenderer` with no GPU and no Metal device,
 asserts the driver ran exactly that many frames, prints `smoke: 120 frames OK`, and exits 0
-([main.rs:161](../games/playable-demo/src/main.rs#L161)). It taps `Space` on the first frame —
+([main.rs:161](../games/offramp/rust-impl/src/main.rs#L161)). It taps `Space` on the first frame —
 without that it would replay 120 frames of a motionless title screen and assert nothing — then
 releases it, so the car runs straight down the middle lane on empty input. It is the workspace's
 continuous oracle: CI runs it on every push with Metal API Validation enabled
 (`.github/workflows/ci.yml`), and two unit tests pin both the run and the exact stdout contract
-line ([main.rs:193](../games/playable-demo/src/main.rs#L193)).
+line ([main.rs:193](../games/offramp/rust-impl/src/main.rs#L193)).
 
 **The headless harness.** [`Headless`](../crates/stickshift-core/src/headless.rs#L92) is what makes
 gameplay testable at all. It owns the engine state a `Game` runs against — scene, input, perf,
@@ -427,7 +427,7 @@ game asked to hear** (`audio`). Those last two accessors are why the demo can te
 behaviour with no GPU and no speakers — `the_camera_stays_with_the_car_across_a_rebase` asserts on
 real camera poses, and the two audio tests on real play requests, in a plain `cargo test`.
 
-The demo's own suite ([game.rs:741](../games/playable-demo/src/game.rs#L741) onward) covers, all
+The demo's own suite ([game.rs:741](../games/offramp/rust-impl/src/game.rs#L741) onward) covers, all
 headlessly: lane geometry and edge clamping, edge-triggered input (a held key moves exactly one
 lane), the frozen title state and the opening fade retiring on the fixed timestep, the difficulty
 ramp and its cap (including that the cap keeps per-step motion below the AABB overlap window, so
@@ -437,7 +437,7 @@ two long-run rebase tests from [§3](#3-scene-streaming-and-the-floating-origin-
 
 Two things the demo deliberately does *not* do, so you don't go looking for them: collision is a
 game-side AABB test over entity transforms
-([`overlaps`](../games/playable-demo/src/game.rs#L258)), since the engine has no physics; and
+([`overlaps`](../games/offramp/rust-impl/src/game.rs#L258)), since the engine has no physics; and
 player motion is **kinematic**, its transform written directly, never solved (ARCHITECTURE §5).
 
 ---
@@ -465,7 +465,7 @@ incidental substring inside a larger identifier does not trip the guard.
 
 The practical consequence for a game author: **if a concept has a game name, it belongs in your
 crate.** The demo's per-entity variant tags are the clearest illustration —
-[components.rs](../games/playable-demo/src/components.rs) defines `TrafficVariant`,
+[components.rs](../games/offramp/rust-impl/src/components.rs) defines `TrafficVariant`,
 `BuildingVariant`, `GuardrailTag` and `Obstacle` as ordinary hecs components that ride on the *same* entities
 as the engine-generic `TransformComponent` / `RenderComponent`. They
 compose freely; they just cannot be *defined* in `stickshift-ecs`, because the guard would reject them
@@ -499,13 +499,13 @@ cargo run -p playable-demo -- --smoke # headless oracle: 120 frames, prints "smo
 | `Space` | Start the run from the title screen; replay after a crash |
 | `Escape` | Quit |
 
-Controls are handled at [game.rs:242](../games/playable-demo/src/game.rs#L242) (lanes) and
-[game.rs:619](../games/playable-demo/src/game.rs#L619) (`Space`, per state); `Escape` is handled
+Controls are handled at [game.rs:242](../games/offramp/rust-impl/src/game.rs#L242) (lanes) and
+[game.rs:619](../games/offramp/rust-impl/src/game.rs#L619) (`Space`, per state); `Escape` is handled
 by the engine's windowed entry.
 
 The **Graphics** menu in the macOS menu bar adjusts shadows, shadow distance, draw distance and
 resolution. It comes from the engine's windowed entry, not the demo. The only demo-side
-code is the HUD's UI scale in [hud.rs](../games/playable-demo/src/hud.rs), which keeps the text the
+code is the HUD's UI scale in [hud.rs](../games/offramp/rust-impl/src/hud.rs), which keeps the text the
 same size at every resolution. Draw distance scales the demo's 180-unit reach and its fog together
 (0.5× / 0.75× / 1×). See [GETTING_STARTED.md](GETTING_STARTED.md#graphics-settings-the-built-in-menu-or-your-own-ui).
 
@@ -514,7 +514,7 @@ same size at every resolution. Draw distance scales the demo's 180-unit reach an
 ## See also
 
 - [GETTING_STARTED.md](GETTING_STARTED.md) — the minimal steps to stand up your own game.
-- [games/playable-demo/README.md](../games/playable-demo/README.md) — the demo's own README:
+- [games/offramp/rust-impl/README.md](../games/offramp/rust-impl/README.md) — the demo's own README:
   how to run it, the module map, and the asset licences.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — authoritative constraints (the *why*).
 - [DESIGN.md](DESIGN.md) — diagrams. · [INTEGRATION.md](INTEGRATION.md) — test/doc discipline.

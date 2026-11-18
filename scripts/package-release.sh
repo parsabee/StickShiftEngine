@@ -116,7 +116,7 @@ PC
 # Runtime assets: every file the demo loads, plus licence text. Generator-only inputs
 # (the *_src.jpg photos, font.ttf) and the cube.gltf test fixture stay in the source
 # copy below but are not needed at runtime.
-assets_src="$repo/games/playable-demo/assets"
+assets_src="$repo/games/offramp/shared/assets"
 runtime_assets=(
     sports_car.glb car.glb car2.glb police_car.glb
     skyscraper_a.glb skyscraper_b.glb large_a.glb large_b.glb large_c.glb

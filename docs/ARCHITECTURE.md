@@ -177,7 +177,7 @@ the top. Game concepts (car, road, score) never enter engine crates — the boun
 `stickshift-scene`, `stickshift-assets`, `stickshift-audio` and `stickshift-ecs` fail if a game-named symbol appears in
 them.
 
-For how `games/playable-demo` sits on that boundary in practice, see
+For how `games/offramp/rust-impl` sits on that boundary in practice, see
 [PLAYABLE_DEMO.md](PLAYABLE_DEMO.md); for standing up a new game on it, see
 [GETTING_STARTED.md](GETTING_STARTED.md).
 
@@ -186,7 +186,7 @@ For how `games/playable-demo` sits on that boundary in practice, see
 A game reaches the engine in one of two ways, and both run the same loop:
 
 ```
-  Rust game (games/playable-demo)            C or Swift game (examples/c/engine.c, a Swift Game)
+  Rust game (games/offramp/rust-impl)            C or Swift game (examples/c/engine.c, a Swift Game)
     impl stickshift_core::Game                 StickShiftGame callbacks  (Swift: import StickShift)
             |                                          |  stickshift.h: API 4, minor 1
             |                                  crates/stickshift-capi (libstickshift)

@@ -17,7 +17,7 @@ seam**; nothing above it may import `metal`.
 
 ```mermaid
 graph TD
-    subgraph Game["Game (games/playable-demo)"]
+    subgraph Game["Game (games/offramp/rust-impl)"]
         CR["CarRunner : Game"]
     end
     subgraph Core["stickshift-core — lifecycle & loop"]
@@ -80,7 +80,7 @@ graph LR
     audio["stickshift-audio"]
     render["stickshift-render"]
     core["stickshift-core"]
-    game["games/playable-demo"]
+    game["games/offramp/rust-impl"]
     metal(["metal (extern)"])
 
     ecs --> math

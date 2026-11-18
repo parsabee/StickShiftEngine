@@ -15,7 +15,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
-package="games/offramp"
+package="games/offramp/swift-impl"
 
 cargo build --quiet -p stickshift-capi --features "${STICKSHIFT_FEATURES:-}"
 # Link the library just built, wherever cargo builds: target/ unless

@@ -258,7 +258,7 @@ if (stickshift_frame_acquire(ctx, &frame) == STICKSHIFT_OK) {  /* never waits */
 
 ## The playable demo
 
-[`games/playable-demo`](games/playable-demo) is the first title, an endless 3-lane freeway runner.
+[`games/offramp/rust-impl`](games/offramp/rust-impl) is the first title, an endless 3-lane freeway runner.
 It is also the **reference example** for building a game on this engine: it touches nothing but
 the engine's public API.
 
@@ -281,7 +281,7 @@ Graphics settings (shadows, shadow distance, draw distance, resolution, full scr
   loading, the render seam, the HUD, and determinism/testing.
 - [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md): **build your own game**. The minimal steps
   to stand up a new `Game`, load an asset, record a draw, and run it windowed and headless.
-- [games/playable-demo/README.md](games/playable-demo/README.md): the demo's own README, with the
+- [games/offramp/rust-impl/README.md](games/offramp/rust-impl/README.md): the demo's own README, with the
   code layout, the asset bakers, and asset licences.
 
 ### Offramp, the demo in Swift
@@ -296,13 +296,13 @@ becomes the v0.2 reference game ([roadmap](docs/ROADMAP.md)).
 
 ```sh
 cargo build -p stickshift-capi                            # SwiftPM cannot run cargo
-swift run --package-path games/offramp offramp            # windowed, Metal (macOS 14+)
-swift run --package-path games/offramp offramp --smoke    # the same oracle as the Rust demo's
+swift run --package-path games/offramp/swift-impl offramp            # windowed, Metal (macOS 14+)
+swift run --package-path games/offramp/swift-impl offramp --smoke    # the same oracle as the Rust demo's
 ./scripts/test-offramp.sh                                 # its tests
 ./scripts/offramp-parity.sh                               # run both games and compare traces and frames
 ```
 
-Its [README](games/offramp/README.md) has its architecture and explains how parity is checked.
+Its [README](games/offramp/swift-impl/README.md) has its architecture and explains how parity is checked.
 
 ## Project status
 
@@ -350,7 +350,7 @@ Guides and design docs:
 
 ## Workspace layout
 
-The workspace is `crates/stickshift-*` (the engine) plus `games/playable-demo` (the first title and the
+The workspace is `crates/stickshift-*` (the engine) plus `games/offramp/rust-impl` (the first title and the
 smoke oracle). Next to it are the Swift package (`bindings/swift/StickShift`) and Offramp
 (`games/offramp`), which SwiftPM builds. The layout follows [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §3.
 
@@ -367,7 +367,7 @@ smoke oracle). Next to it are the Swift package (`bindings/swift/StickShift`) an
 | [`stickshift-math`](crates/stickshift-math) | Shared math layer: `glam` re-export plus the `Transform` (TRS) type |
 | [`stickshift-perf`](crates/stickshift-perf) | Profiling and frame-timing instrumentation with an injectable clock |
 | [`stickshift-scene`](crates/stickshift-scene) | The `Scene`: the ECS world, world streaming, and floating-origin rebase |
-| [`games/playable-demo`](games/playable-demo) | The reference example game (an endless runner) and host of the headless smoke oracle |
+| [`games/offramp/rust-impl`](games/offramp/rust-impl) | The reference example game (an endless runner) and host of the headless smoke oracle |
 | [`games/offramp`](games/offramp) | Offramp: the playable demo as a Swift game on the engine, through the Swift package and its macOS host (a SwiftPM package, not a crate) |
 
 ## Contributing
@@ -400,4 +400,4 @@ Licensed under the [Apache License, Version 2.0](LICENSE). See [LICENSE](LICENSE
 
 You are free to use, modify and distribute Stick Shift Engine, including commercially, as long as you
 retain the copyright and attribution notices the license requires. Third-party demo assets carry
-their own licences, listed in [games/playable-demo/README.md](games/playable-demo/README.md).
+their own licences, listed in [games/offramp/rust-impl/README.md](games/offramp/rust-impl/README.md).

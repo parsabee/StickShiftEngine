@@ -103,7 +103,7 @@ API**.
   `record_demo`, and `offramp --trace <smoke|autopilot|long>` prints one JSON line of game state
   per frame, as the new `trace` example of `playable-demo` does. The Rust demo's tests are
   ported under their Rust names, and golden values from the Rust demo are checked bit for bit;
-  the new `playable-demo-goldens` crate (`games/playable-demo/goldens`) regenerates those
+  the new `playable-demo-goldens` crate (`games/offramp/rust-impl/goldens`) regenerates those
   fixtures from the demo's own modules. `scripts/test-offramp.sh` builds `libstickshift` and
   runs them. `scripts/offramp-parity.sh` runs both games side by side: it checks that both
   builds resolve the same glam and hecs, then compares `--smoke` and the three traces byte for

@@ -1,7 +1,7 @@
 # Build your own game on Stick Shift Engine
 
 The minimal path from an empty crate to a game the engine drives, windowed and headless. Each
-step names the file in [`games/playable-demo`](../games/playable-demo) that is the worked example
+step names the file in [`games/offramp/rust-impl`](../games/offramp/rust-impl) that is the worked example
 for it; for the full walkthrough of that demo see [PLAYABLE_DEMO.md](PLAYABLE_DEMO.md).
 
 Prerequisites are the engine's own: macOS, Rust ≥ 1.91, Command Line Tools. Run
@@ -46,7 +46,7 @@ stickshift-render.workspace = true
 Every dependency is `*.workspace = true`, so versions come from
 [the workspace dependency table](../Cargo.toml#L33) — never pin them per-crate. Take only the
 crates you use; `stickshift-camera` (for a follow camera) and `clap` (for CLI flags) are the usual
-additions. Worked example: [games/playable-demo/Cargo.toml](../games/playable-demo/Cargo.toml).
+additions. Worked example: [games/offramp/rust-impl/Cargo.toml](../games/offramp/rust-impl/Cargo.toml).
 
 ---
 
@@ -151,7 +151,7 @@ impl Game for MyGame {
 }
 ```
 
-Worked example: [game.rs](../games/playable-demo/src/game.rs) — the same three hooks, with lane
+Worked example: [game.rs](../games/offramp/rust-impl/src/game.rs) — the same three hooks, with lane
 input, a state machine, streaming and collision hung off them.
 
 ---
@@ -172,11 +172,11 @@ Two rules the demo follows and you should too:
   generator), write the baker as a one-shot `examples/gen_*.rs`, commit its output, and keep its
   crates in `[dev-dependencies]`. The demo bakes its road, skyline and font atlas this way, which
   is why `image` and `fontdue` never reach the shipped binary
-  ([Cargo.toml](../games/playable-demo/Cargo.toml#L15)).
+  ([Cargo.toml](../games/offramp/rust-impl/Cargo.toml#L15)).
 
-Worked example: [assets.rs](../games/playable-demo/src/assets.rs) (the two load paths plus the
+Worked example: [assets.rs](../games/offramp/rust-impl/src/assets.rs) (the two load paths plus the
 fit transforms that place a model on the ground) and
-[examples/](../games/playable-demo/examples).
+[examples/](../games/offramp/rust-impl/examples).
 
 ---
 
@@ -203,8 +203,8 @@ entity. For a HUD, record [`OverlayQuad`](../crates/stickshift-render-api/src/ov
 backend flushes them in its own orthographic pass after every 3D draw, so they always composite
 on top.
 
-Worked example: [render.rs](../games/playable-demo/src/render.rs) (grouped passes) and
-[hud.rs](../games/playable-demo/src/hud.rs) (SDF text, safe-area insets, no per-frame
+Worked example: [render.rs](../games/offramp/rust-impl/src/render.rs) (grouped passes) and
+[hud.rs](../games/offramp/rust-impl/src/hud.rs) (SDF text, safe-area insets, no per-frame
 allocation).
 
 ---
@@ -244,7 +244,7 @@ cargo run -p my-game             # windowed, Metal backend
 cargo run -p my-game -- --smoke  # headless: 120 frames, exits 0
 ```
 
-Worked example: [main.rs](../games/playable-demo/src/main.rs), which does this with `clap` for
+Worked example: [main.rs](../games/offramp/rust-impl/src/main.rs), which does this with `clap` for
 argument parsing and asserts the stdout contract line in a unit test.
 
 The windowed runner quits on Escape, the close button and Cmd-Q. To use Escape in the game (a
@@ -316,7 +316,7 @@ Two things to know:
   and don't change it later yourself.
 - **Author HUD sizes in points.** Multiply them by `renderer.surface_scale()` (drawable pixels per
   window point) so text keeps its size at every render scale. See
-  [hud.rs](../games/playable-demo/src/hud.rs).
+  [hud.rs](../games/offramp/rust-impl/src/hud.rs).
 
 Settings are testable headlessly too. `Headless::set_graphics_settings` queues a change exactly as
 the menu would, and the `NullRenderer` records the `RenderSettings` it received. Nothing is ever
@@ -356,8 +356,8 @@ camera — which means even *view* behaviour is testable with no display.
 
 For any of this to be reproducible, keep two rules: never read wall-clock time in `update` (the
 engine's fixed `dt` is the only clock you need), and drive every random choice from a seeded PRNG.
-Worked example: [rng.rs](../games/playable-demo/src/rng.rs), and the test module at
-[game.rs:741](../games/playable-demo/src/game.rs#L741).
+Worked example: [rng.rs](../games/offramp/rust-impl/src/rng.rs), and the test module at
+[game.rs:741](../games/offramp/rust-impl/src/game.rs#L741).
 
 ---
 
@@ -371,9 +371,9 @@ In practice this is not a constraint so much as a filing rule:
 
 - Game-named ECS components go in *your* crate. They ride on the same entities as
   `TransformComponent` / `RenderComponent` and compose freely — see
-  [components.rs](../games/playable-demo/src/components.rs).
+  [components.rs](../games/offramp/rust-impl/src/components.rs).
 - Tuning constants go in your crate, ideally all in one module — see
-  [config.rs](../games/playable-demo/src/config.rs).
+  [config.rs](../games/offramp/rust-impl/src/config.rs).
 - If you find yourself wanting to add a game concept to `stickshift-scene`, `stickshift-ecs`,
   `stickshift-assets` or `stickshift-core`, the generic primitive you actually want is probably already
   there (a callback, a config field, a tag component). The demo needed none.
