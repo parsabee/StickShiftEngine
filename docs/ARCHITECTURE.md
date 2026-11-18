@@ -34,7 +34,7 @@ frame before `Game::render`, and the backend forms `mvp = view_proj * model` per
 sticky (retained until replaced) so the engine's push survives the game's `begin_frame`. This
 **replaced and deleted** the minimal camera that was temporarily inlined into `stickshift-render`
 (`stickshift-render/src/camera.rs`); the real camera now lives in `stickshift-camera`, which also provides the
-`ChaseController` follow camera the `playable-demo` uses. `stickshift-core → stickshift-camera → stickshift-math` keeps
+`ChaseController` follow camera the `offramp` uses. `stickshift-core → stickshift-camera → stickshift-math` keeps
 the dependency direction acyclic and `stickshift-core` metal-free.
 
 The concrete backend lives **below** this seam: `stickshift-render` provides
@@ -42,7 +42,7 @@ The concrete backend lives **below** this seam: `stickshift-render` provides
 therefore `stickshift-core`'s `Renderer` marker). `stickshift-render` is the *only* crate that depends on
 `metal`. Crucially, `stickshift-core` does **not** depend on `stickshift-render`: the windowed entry
 `stickshift-core::run_with_backend` takes a backend **factory**
-(`FnOnce(&Window, u32, u32) -> Box<dyn Renderer>`), and the game binary (`playable-demo`, which does
+(`FnOnce(&Window, u32, u32) -> Box<dyn Renderer>`), and the game binary (`offramp`, which does
 depend on `stickshift-render`) constructs the Metal backend and injects it. So `metal` reaches the
 process only through `stickshift-render` and the game binary — never through `stickshift-core` — and the CI
 `cargo tree -p stickshift-core` shows no `metal` (CI enforces the stricter rule on `stickshift-render-api`
@@ -67,7 +67,7 @@ depends on `stickshift-assets`) and no `metal` enters the tree. The C API uses t
 `ecs` feature, so its `spawn_scene` glue stays out of `libstickshift`; the library's ECS is the
 engine's own world (§3a). Imported geometry packs onto `[pos,normal,color]` with a default vertex color so it renders
 through the existing pipeline immediately; parsed UVs are retained on `MeshAsset::uvs` for the
-textured pipeline. `playable-demo` loads every mesh it draws this way: the player and
+textured pipeline. `offramp` loads every mesh it draws this way: the player and
 traffic are real committed CC0 car models (`assets/*.glb`), and the road, skyline, and scenery come
 from committed glTF too — see the [demo guide](PLAYABLE_DEMO.md). The earlier placeholder,
 `assets/cube.gltf`, is retained only as a `stickshift-assets` import fixture.
@@ -163,7 +163,7 @@ stickshift-engine/
 ├── bindings/
 │   └── swift/StickShift    # Swift package over the C API (SwiftPM)
 ├── games/
-│   └── playable-demo       # reference title; only uses engine public API
+│   └── offramp       # reference title; only uses engine public API
 ├── docs/                   # architecture, design, guides, roadmap
 ├── scripts/                # preflight, release packaging, doc-anchor check
 └── packaging/homebrew/     # the Homebrew formula
@@ -177,7 +177,7 @@ the top. Game concepts (car, road, score) never enter engine crates — the boun
 `stickshift-scene`, `stickshift-assets`, `stickshift-audio` and `stickshift-ecs` fail if a game-named symbol appears in
 them.
 
-For how `games/playable-demo` sits on that boundary in practice, see
+For how `games/offramp/rust-impl` sits on that boundary in practice, see
 [PLAYABLE_DEMO.md](PLAYABLE_DEMO.md); for standing up a new game on it, see
 [GETTING_STARTED.md](GETTING_STARTED.md).
 
@@ -186,7 +186,7 @@ For how `games/playable-demo` sits on that boundary in practice, see
 A game reaches the engine in one of two ways, and both run the same loop:
 
 ```
-  Rust game (games/playable-demo)            C or Swift game (examples/c/engine.c, a Swift Game)
+  Rust game (games/offramp/rust-impl)            C or Swift game (examples/c/engine.c, a Swift Game)
     impl stickshift_core::Game                 StickShiftGame callbacks  (Swift: import StickShift)
             |                                          |  stickshift.h: API 4, minor 1
             |                                  crates/stickshift-capi (libstickshift)

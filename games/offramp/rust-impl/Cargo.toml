@@ -1,0 +1,44 @@
+[package]
+name = "offramp"
+description = "Playable Demo — Stick Shift Engine's reference example game (an endless runner). Also hosts the headless smoke oracle."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "offramp"
+path = "src/main.rs"
+
+# `image` is a **dev-dependency only** (the `gen_asphalt` example uses it to bake
+# the committed asphalt PNG). The runtime never gains an `image` dep — it decodes
+# the embedded PNG through `stickshift-assets` at import time.
+[dev-dependencies]
+image.workspace = true
+fontdue.workspace = true
+
+[features]
+# Embed precompiled Metal shaders instead of compiling them at runtime (needs full
+# Xcode to build; see stickshift-render's feature of the same name). The release
+# binary turns it on.
+precompiled-shaders = ["stickshift-render/precompiled-shaders"]
+
+[dependencies]
+clap.workspace = true
+stickshift-assets.workspace = true
+stickshift-camera.workspace = true
+stickshift-core.workspace = true
+stickshift-ecs.workspace = true
+stickshift-math.workspace = true
+stickshift-render-api.workspace = true
+stickshift-scene.workspace = true
+
+# The Metal backend lives below the render seam. Only the game binary depends on
+# `stickshift-render` (and thus `metal`); it constructs the backend and hands it to
+# the engine via a factory, so `stickshift-core` stays metal-free (ARCHITECTURE §2).
+[target.'cfg(target_os = "macos")'.dependencies]
+stickshift-render.workspace = true

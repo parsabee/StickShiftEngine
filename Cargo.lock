@@ -1493,6 +1493,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "offramp"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "fontdue",
+ "image",
+ "stickshift-assets",
+ "stickshift-camera",
+ "stickshift-core",
+ "stickshift-ecs",
+ "stickshift-math",
+ "stickshift-render",
+ "stickshift-render-api",
+ "stickshift-scene",
+]
+
+[[package]]
+name = "offramp-goldens"
+version = "0.1.0"
+dependencies = [
+ "stickshift-assets",
+ "stickshift-camera",
+ "stickshift-core",
+ "stickshift-ecs",
+ "stickshift-math",
+ "stickshift-render-api",
+ "stickshift-scene",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1578,23 +1608,6 @@ name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
-
-[[package]]
-name = "playable-demo"
-version = "0.1.0"
-dependencies = [
- "clap",
- "fontdue",
- "image",
- "stickshift-assets",
- "stickshift-camera",
- "stickshift-core",
- "stickshift-ecs",
- "stickshift-math",
- "stickshift-render",
- "stickshift-render-api",
- "stickshift-scene",
-]
 
 [[package]]
 name = "png"

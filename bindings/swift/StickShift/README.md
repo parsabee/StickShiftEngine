@@ -274,8 +274,8 @@ the screen sees is checked by hand, with the Cubes example, before a release:
    Screen, and leaving it restores the window.
 4. **Settings persist:** change Resolution and Draw Distance, quit, relaunch: they are restored
    (`defaults read Cubes`). They are the Rust runner's keys (`StickShiftEngine.graphics.*`), but an
-   unbundled executable's standard defaults are its own (`Cubes`, `playable-demo`): run Cubes with
-   `STICKSHIFT_SETTINGS_SUITE=playable-demo` and `cargo run -p playable-demo` sees its choices,
+   unbundled executable's standard defaults are its own (`Cubes`, `offramp`): run Cubes with
+   `STICKSHIFT_SETTINGS_SUITE=offramp` and `cargo run -p offramp` sees its choices,
    and the other way round.
 5. **Escape** quits, and so do closing the window and ⌘Q.
 6. **The loop keeps ticking while a menu is open:** open the Graphics menu and hold it open; the

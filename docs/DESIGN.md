@@ -17,7 +17,7 @@ seam**; nothing above it may import `metal`.
 
 ```mermaid
 graph TD
-    subgraph Game["Game (games/playable-demo)"]
+    subgraph Game["Game (games/offramp/rust-impl)"]
         CR["CarRunner : Game"]
     end
     subgraph Core["stickshift-core — lifecycle & loop"]
@@ -56,7 +56,7 @@ graph TD
     class SEAM seam;
 ```
 
-The `playable-demo` **binary** is the only thing that both implements `Game` *and* constructs the
+The `offramp` **binary** is the only thing that both implements `Game` *and* constructs the
 Metal backend — it injects the backend into `stickshift-core` through a factory, so `stickshift-core` itself
 never depends on `metal`.
 
@@ -65,7 +65,7 @@ never depends on `metal`.
 ## 2. Crate dependency graph
 
 Acyclic, leaf-first (`stickshift-math` at the bottom). `metal` is reachable **only** through
-`stickshift-render` and the `playable-demo` binary — the CI firewall asserts it never enters `stickshift-core`
+`stickshift-render` and the `offramp` binary — the CI firewall asserts it never enters `stickshift-core`
 or `stickshift-render-api`.
 
 ```mermaid
@@ -80,7 +80,7 @@ graph LR
     audio["stickshift-audio"]
     render["stickshift-render"]
     core["stickshift-core"]
-    game["games/playable-demo"]
+    game["games/offramp/rust-impl"]
     metal(["metal (extern)"])
 
     ecs --> math
