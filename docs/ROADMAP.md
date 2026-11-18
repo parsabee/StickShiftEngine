@@ -57,6 +57,19 @@ Engine:
 - **The C API and its release packaging are retired:** the engine is used from source, as Rust
   crates.
 
+### `v0.2.1`
+
+A patch release.
+
+Engine:
+
+- **Imported glTF material names:** `MeshAsset::material_name` carries each primitive's material
+  name, so a game can pick out a model's parts (its windows, its lamps) and treat them on their own.
+- **A moving sun keeps steady highlights and shadows:** the sun's specular term now follows its
+  intensity (a dim or zero-intensity sun no longer puts noon-bright highlights on every face), and
+  shadow-map fits carry their orientation across frames so a turning sun's shadow edges no longer
+  shimmer.
+
 ## v0.3 — particles and instancing
 
 [Milestone](https://github.com/parsabee/StickShiftEngine/milestone/2)
