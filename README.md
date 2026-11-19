@@ -78,7 +78,8 @@ its loop, world, streaming, physics, audio and rendering. See the [roadmap](docs
   the ground, up to 65,536 alive.
 - **2D HUD overlay** with SDF text rendering.
 - **Audio** built on [`kira`](https://crates.io/crates/kira): load-once sounds, one-shots, looping
-  music, and master volume.
+  music, layers of more loops under it that fade on their own (ambience, an engine's drone), and
+  master volume.
 - **Testable by design:** a headless driver that runs a game with no window or GPU, a
   `NullRenderer` that records what a frame drew, and golden pixel-hash tests that pin the
   renderer's output.

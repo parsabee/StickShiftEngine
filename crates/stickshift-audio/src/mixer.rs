@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
 use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Tween};
@@ -14,7 +15,7 @@ use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Tween};
 /// The id the next [`Audio`] takes, so its handles name it.
 static NEXT_OWNER: AtomicU32 = AtomicU32::new(1);
 
-use crate::handle::SoundHandle;
+use crate::handle::{LayerHandle, SoundHandle};
 use crate::volume::Volume;
 
 /// One loaded sound's bookkeeping.
@@ -29,6 +30,24 @@ struct Sound {
     data: Option<StaticSoundData>,
     /// How many one-shots of this sound have been requested.
     one_shots: u32,
+}
+
+/// One playing layer's bookkeeping.
+struct Layer {
+    /// The sound it loops.
+    sound: SoundHandle,
+    /// The level it was last set to (or is fading to).
+    volume: Volume,
+    /// Its `kira` handle, on a device and when the sound decoded.
+    playing: Option<StaticSoundHandle>,
+}
+
+/// A fade of `duration`, from now, along a straight line.
+fn fade(duration: Duration) -> Tween {
+    Tween {
+        duration,
+        ..Tween::default()
+    }
 }
 
 /// Where playback actually goes.
@@ -82,15 +101,29 @@ struct Device {
 /// The engine's audio layer: load sounds, play them once or looping, set the
 /// master level.
 ///
-/// # The five operations
+/// # The operations
 ///
 /// [`load`](Self::load) a file into a [`SoundHandle`] (once per path);
 /// [`play_once`](Self::play_once) for a discrete event;
 /// [`play_looping`](Self::play_looping) and [`stop_looping`](Self::stop_looping)
-/// for the one continuous bed, typically background music; and
-/// [`set_master_volume`](Self::set_master_volume) for everything at once. There is
-/// deliberately nothing else — no mixer graph, no effects, no spatialisation
-/// (all out of scope for this crate).
+/// for the one continuous bed, typically background music;
+/// [`play_layer`](Self::play_layer), [`set_layer_volume`](Self::set_layer_volume)
+/// and [`stop_layer`](Self::stop_layer) for more loops under it, each faded on
+/// its own; and [`set_master_volume`](Self::set_master_volume) for everything at
+/// once. There is deliberately nothing else — no mixer graph, no effects, no
+/// spatialisation (all out of scope for this crate).
+///
+/// # Layers
+///
+/// A **layer** is a sound looping on its own, alongside the loop channel and any
+/// other layers: an ambient bed under the music, an engine's drone, a second
+/// drone faded in and out over it. [`play_layer`](Self::play_layer) starts one
+/// and hands back a [`LayerHandle`]; [`set_layer_volume`](Self::set_layer_volume)
+/// moves its level, over a fade of any length, while it plays; and
+/// [`stop_layer`](Self::stop_layer) fades it out and ends it. Unlike the loop
+/// channel, layers are not idempotent: each `play_layer` starts a new one, since
+/// the caller holds the handle that says which is which. A stopped layer's
+/// handle is ignored from then on.
 ///
 /// # One loop channel
 ///
@@ -155,6 +188,12 @@ pub struct Audio {
     one_shots_played: u32,
     /// The current master level.
     master: Volume,
+    /// The layer table: a slot per layer playing, `None` once it stopped.
+    layers: Vec<Option<Layer>>,
+    /// Each slot's generation, bumped as its layer stops.
+    layer_generations: Vec<u32>,
+    /// How many layers have been started.
+    layer_starts: u32,
 }
 
 impl Audio {
@@ -206,6 +245,9 @@ impl Audio {
             loop_starts: 0,
             one_shots_played: 0,
             master: Volume::UNCHANGED,
+            layers: Vec::new(),
+            layer_generations: Vec::new(),
+            layer_starts: 0,
         }
     }
 
@@ -360,6 +402,123 @@ impl Audio {
                 playing.stop(Tween::default());
             }
         }
+    }
+
+    /// Start `sound` looping as a new **layer** at `volume`, alongside the loop
+    /// channel and any other layers, and return the handle that controls it.
+    ///
+    /// The whole sound is the loop region, so it repeats seamlessly until
+    /// [`stop_layer`](Self::stop_layer). Each call starts a new layer, even of a
+    /// sound already layered. In silent mode, and for a sound that failed to
+    /// load, nothing is heard but the layer is still kept, so its volume can be
+    /// set and asserted like any other. An unknown sound handle starts nothing
+    /// and returns a handle that names no layer.
+    pub fn play_layer(&mut self, sound: SoundHandle, volume: Volume) -> LayerHandle {
+        let Some(index) = self.index_of(sound) else {
+            return LayerHandle::new(self.owner, u32::MAX, 0);
+        };
+        let playing = match (&mut self.output, &self.sounds[index].data) {
+            (Output::Device(device), Some(data)) => {
+                let looped = data.loop_region(..).volume(Decibels(volume.0));
+                match device.manager.play(looped) {
+                    Ok(playing) => Some(playing),
+                    Err(error) => {
+                        eprintln!("stickshift-audio: could not start a layer ({error})");
+                        None
+                    }
+                }
+            }
+            _ => None,
+        };
+        let layer = Layer {
+            sound,
+            volume,
+            playing,
+        };
+        let slot = match self.layers.iter().position(Option::is_none) {
+            Some(slot) => {
+                self.layers[slot] = Some(layer);
+                slot
+            }
+            None => {
+                self.layers.push(Some(layer));
+                self.layer_generations.push(0);
+                self.layers.len() - 1
+            }
+        };
+        self.layer_starts += 1;
+        LayerHandle::new(self.owner, slot as u32, self.layer_generations[slot])
+    }
+
+    /// Move `layer` to `volume` over a fade of `fade` (zero for at once).
+    ///
+    /// A fade already under way is taken over from wherever it has got to.
+    /// The new level is remembered (see [`layer_volume`](Self::layer_volume))
+    /// in silent mode too. A stopped or unknown layer is ignored.
+    pub fn set_layer_volume(&mut self, layer: LayerHandle, volume: Volume, fade_over: Duration) {
+        let Some(slot) = self.layer_slot(layer) else {
+            return;
+        };
+        let Some(playing) = self.layers[slot].as_mut() else {
+            return;
+        };
+        playing.volume = volume;
+        if let Some(sound) = &mut playing.playing {
+            sound.set_volume(Decibels(volume.0), fade(fade_over));
+        }
+    }
+
+    /// Fade `layer` out over `fade` and end it. Its handle is ignored from then
+    /// on. A stopped or unknown layer is ignored.
+    pub fn stop_layer(&mut self, layer: LayerHandle, fade_over: Duration) {
+        let Some(slot) = self.layer_slot(layer) else {
+            return;
+        };
+        if let Some(Layer {
+            playing: Some(mut sound),
+            ..
+        }) = self.layers[slot].take()
+        {
+            sound.stop(fade(fade_over));
+        }
+        self.layer_generations[slot] = self.layer_generations[slot].wrapping_add(1);
+    }
+
+    /// The level `layer` was last set to, or `None` if it has stopped (or never
+    /// was).
+    #[must_use]
+    pub fn layer_volume(&self, layer: LayerHandle) -> Option<Volume> {
+        let slot = self.layer_slot(layer)?;
+        self.layers[slot].as_ref().map(|playing| playing.volume)
+    }
+
+    /// The sound `layer` loops, or `None` if it has stopped (or never was).
+    #[must_use]
+    pub fn layer_sound(&self, layer: LayerHandle) -> Option<SoundHandle> {
+        let slot = self.layer_slot(layer)?;
+        self.layers[slot].as_ref().map(|playing| playing.sound)
+    }
+
+    /// How many layers are playing.
+    #[must_use]
+    pub fn layer_count(&self) -> usize {
+        self.layers.iter().filter(|slot| slot.is_some()).count()
+    }
+
+    /// How many layers have been started in all.
+    #[must_use]
+    pub fn layer_starts(&self) -> u32 {
+        self.layer_starts
+    }
+
+    /// Validate a layer handle: this layer's, and the start of its slot that is
+    /// playing now.
+    fn layer_slot(&self, layer: LayerHandle) -> Option<usize> {
+        let slot = layer.index() as usize;
+        (layer.owner() == self.owner
+            && self.layer_generations.get(slot) == Some(&layer.generation())
+            && self.layers[slot].is_some())
+        .then_some(slot)
     }
 
     /// Set the level everything is mixed through.
@@ -632,6 +791,98 @@ mod tests {
         audio.play_looping(broken, Volume::UNCHANGED);
         assert_eq!(audio.looping(), Some(music), "the music keeps playing");
         assert_eq!(audio.loop_starts(), 1, "and nothing else started");
+    }
+
+    #[test]
+    fn layers_play_alongside_the_loop_channel_and_each_other() {
+        let mut audio = Audio::silent();
+        let (music, drone) = (audio.load(A), audio.load(B));
+        audio.play_looping(music, Volume(-14.0));
+        let low = audio.play_layer(drone, Volume(-20.0));
+        let high = audio.play_layer(drone, Volume::SILENT);
+        assert_ne!(low, high, "each play starts a layer of its own");
+        assert_eq!(audio.layer_count(), 2);
+        assert_eq!(
+            audio.looping(),
+            Some(music),
+            "the loop channel is untouched"
+        );
+        assert_eq!(audio.layer_sound(high), Some(drone));
+
+        audio.set_layer_volume(high, Volume(-6.0), Duration::from_millis(250));
+        assert_eq!(audio.layer_volume(high), Some(Volume(-6.0)));
+        assert_eq!(
+            audio.layer_volume(low),
+            Some(Volume(-20.0)),
+            "the other is not"
+        );
+
+        audio.stop_looping();
+        assert_eq!(
+            audio.layer_count(),
+            2,
+            "stopping the music leaves the layers"
+        );
+        audio.stop_layer(low, Duration::from_millis(500));
+        assert_eq!(audio.layer_count(), 1);
+        assert_eq!(audio.layer_volume(low), None, "a stopped layer is gone");
+        assert_eq!(audio.layer_starts(), 2);
+    }
+
+    #[test]
+    fn a_stopped_layers_handle_never_reaches_the_next_layer_in_its_slot() {
+        let mut audio = Audio::silent();
+        let a = audio.load(A);
+        let first = audio.play_layer(a, Volume(-10.0));
+        audio.stop_layer(first, Duration::ZERO);
+        let second = audio.play_layer(a, Volume(-30.0));
+        assert_ne!(first, second);
+        audio.set_layer_volume(first, Volume::UNCHANGED, Duration::ZERO);
+        audio.stop_layer(first, Duration::ZERO);
+        assert_eq!(audio.layer_volume(second), Some(Volume(-30.0)), "untouched");
+        assert_eq!(audio.layer_count(), 1);
+    }
+
+    #[test]
+    fn layers_of_an_unknown_or_foreign_sound_or_handle_are_ignored() {
+        let mut audio = Audio::silent();
+        let alien = Audio::silent().load(A);
+        let nothing = audio.play_layer(alien, Volume::UNCHANGED);
+        assert_eq!(audio.layer_count(), 0);
+        assert_eq!(audio.layer_volume(nothing), None);
+
+        let mine = audio.load(B);
+        let layer = audio.play_layer(mine, Volume(-12.0));
+        let mut other = Audio::silent();
+        other.set_layer_volume(layer, Volume::UNCHANGED, Duration::ZERO);
+        other.stop_layer(layer, Duration::ZERO);
+        assert_eq!(audio.layer_volume(layer), Some(Volume(-12.0)));
+        assert_eq!(other.layer_count(), 0);
+    }
+
+    #[test]
+    fn layers_play_fade_and_stop_on_a_device() {
+        let mut audio = mock_device();
+        let drone = add_sound(&mut audio, A, true);
+        let broken = add_sound(&mut audio, B, false);
+        let layer = audio.play_layer(drone, Volume(-18.0));
+        assert!(
+            matches!(
+                &audio.layers[0],
+                Some(Layer {
+                    playing: Some(_),
+                    ..
+                })
+            ),
+            "a decoded sound plays"
+        );
+        audio.set_layer_volume(layer, Volume(-3.0), Duration::from_millis(300));
+        assert_eq!(audio.layer_volume(layer), Some(Volume(-3.0)));
+        let quiet = audio.play_layer(broken, Volume(-18.0));
+        assert_eq!(audio.layer_count(), 2, "a broken sound is kept, silent");
+        audio.stop_layer(layer, Duration::from_millis(100));
+        audio.stop_layer(quiet, Duration::ZERO);
+        assert_eq!(audio.layer_count(), 0);
     }
 
     #[test]

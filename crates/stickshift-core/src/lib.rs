@@ -120,7 +120,7 @@ pub use settings_menu::MenuCommand;
 // Re-exported for the same reason `Scene` is: these are the types a game names
 // when it uses `EngineCtx::audio`, so it should not have to add a second
 // dependency to spell them.
-pub use stickshift_audio::{Audio, SoundHandle, Volume};
+pub use stickshift_audio::{Audio, LayerHandle, SoundHandle, Volume};
 pub use stickshift_scene::{Scene, SpawnCtx, StreamingConfig, StreamingConfigError};
 pub use timestep::{Accumulator, FIXED_DT, FIXED_DT_DURATION, MAX_STEPS_PER_FRAME};
 
