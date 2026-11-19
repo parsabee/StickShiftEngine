@@ -20,9 +20,10 @@ touching ECS, physics, scene, or game code.
 ## 2. The render seam (blast-radius firewall)
 
 `stickshift-render-api` defines only:
-- Opaque resource handles (`MeshHandle`, `TextureHandle`, `PipelineHandle`).
+- Opaque resource handles (`MeshHandle`, `TextureHandle`, `PipelineHandle`, `EmitterHandle`).
 - `RenderDevice` — resource create/destroy, called at load time.
 - `FrameRecorder` — per-frame `set_view_projection` / `set_pipeline` / `bind` / `draw` / `submit`.
+- `ParticleSystem` — particle emitters: create, place, `emit` bursts, at any time (§4d).
 
 No crate above the seam may import `metal` types. This is enforced by crate boundaries so a
 full renderer rewrite is provably contained.
@@ -313,6 +314,52 @@ bring theirs from the material's `emissiveFactor` (and `KHR_materials_emissive_s
 
 **Not yet:** shadows from local lights (a shadowed spot for headlights is the likely first), light
 cookies, and bloom, which would make bright emitters bleed light onto their surroundings.
+
+### 4d. Particles
+
+Particle effects cross the seam as **emitters, never particles**. A game creates an emitter from
+plain data (`stickshift_render_api::EmitterParams`: how particles leave it, how they move, how they
+look over their lives), places it each frame with `ParticleSystem::place_emitter` (a transform and
+a velocity), and fires bursts with `emit` or lets a continuous `rate` run. Every call is allowed at
+any time, frame open or not, because effects are fired where they happen: in a fixed update. The
+particles are drawn with every frame's scene without the game recording anything.
+
+**Simulated on the GPU.** The particles live only in one `Private` ring buffer of `MAX_PARTICLES`
+slots that the CPU never reads back. At `submit`, ahead of the shadow and scene passes, a compute
+encoder runs `particle_update` over the particles already there (drag, gravity, the floor, and any
+floating-origin shift) and `particle_spawn` over the frame's new ones. The scene pass then draws
+the live slots as one instanced six-vertex quad each, per blend in use, after the geometry and
+before the overlay: depth-tested against the scene but never writing depth, fogged like it, and
+either camera-facing or stretched into a streak along the particle's motion. Additive particles need
+no ordering; alpha particles draw in spawn order, unsorted.
+
+**Planned on the CPU.** What the CPU does is plain arithmetic in `stickshift-render/src/particles.rs`,
+tested without a device: the emitter table (generational handles; a destroyed emitter's slot is
+kept until its last particle dies, since the draw reads its params), turning bursts and rates into
+spawn batches (a rate carries its fractional particle to the next frame, and its particles are
+spread over the frame's time and along the emitter's path from its last placement, so a fast
+emitter leaves a trail), and the **live window**. Particles are written into the ring in order, so
+the live ones are always the newest; per batch the planner keeps the latest any of its particles can
+live, and the kernels and the draw cover only the slots from the oldest batch still alive to the
+newest. Work follows the particles alive, not the ring's size; past `MAX_PARTICLES` the newest
+replace the oldest. Each particle's random numbers are hashed from its batch's seed and its index,
+so the same calls give the same particles, and a GPU test checks two runs draw identical frames.
+
+**Time.** `advance_particles(dt)` moves everything on. The engine loop calls it once per frame with
+the fixed steps that frame ran (`steps * FIXED_DT`), right where it pushes the camera, so particles
+move on simulated time: a stalled frame clamped to `MAX_STEPS_PER_FRAME` moves them only as far as
+the game moved, and they keep falling while a game holds its own state still. A spawn batch records
+how far into the frame its particles were born, and the spawn kernel moves each one on by the rest
+of it. A game that rebases its floating origin passes the same offset to `shift_particles`.
+
+**Budget.** 65,536 particles and 256 emitters (`MAX_PARTICLES`, `MAX_EMITTERS`), and 4,096 spawn
+batches a frame (bursts past that are dropped and counted by `MetalRenderer::dropped_burst_count`).
+The ring is 3 MB; the emitter table and spawn batches each have one region per in-flight frame,
+written once per frame like the light ring, so particles add no per-frame allocation. On an M3 Max,
+60,000 live particles add about 0.23 ms of GPU time to a 1080p frame ([BENCHMARKS.md](BENCHMARKS.md)).
+
+**Not yet:** depth-sorted alpha particles, soft particles (fading where they meet geometry), and
+textured or flipbook particles.
 
 ## 5. Physics decision
 

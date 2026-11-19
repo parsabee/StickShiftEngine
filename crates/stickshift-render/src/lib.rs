@@ -81,6 +81,16 @@
 //! [`backend`]. Nothing about shadows crosses the seam: a game gets them by
 //! drawing and setting a sun.
 //!
+//! # Particles
+//!
+//! [`ParticleSystem`](stickshift_render_api::ParticleSystem) is implemented on
+//! the GPU. The particles live only in one ring buffer; each frame's command
+//! buffer runs two compute kernels before its render passes (move the particles
+//! there, spawn the new ones), and the scene pass draws the live slots as
+//! instanced quads after its geometry. What to spawn and which slots are live
+//! is planned on the CPU in [`particles`], with no Metal and unit-tested; the
+//! pass wiring is in [`backend`].
+//!
 //! # Shader compilation
 //!
 //! By default shaders compile at runtime via `include_str!` + `new_library_with_source`,
@@ -97,6 +107,7 @@ pub mod deindex;
 pub mod error;
 pub mod frame_sync;
 pub mod lights;
+pub mod particles;
 pub mod registry;
 pub mod shadow;
 pub mod vertex;

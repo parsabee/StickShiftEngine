@@ -717,9 +717,9 @@ mod tests {
     use stickshift_math::glam::{Mat4, Vec3};
     use stickshift_math::Transform;
     use stickshift_render_api::{
-        FrameRecorder, Light, MaterialParams, MeshData, MeshHandle, NullRenderer, OverlayQuad,
-        PipelineDescriptor, PipelineHandle, RenderDevice, RenderSettings, SunSky, TextureData,
-        TextureHandle,
+        EmitterHandle, EmitterParams, FrameRecorder, Light, MaterialParams, MeshData, MeshHandle,
+        NullRenderer, OverlayQuad, ParticleSystem, PipelineDescriptor, PipelineHandle,
+        RenderDevice, RenderSettings, SunSky, TextureData, TextureHandle,
     };
 
     use super::*;
@@ -859,6 +859,30 @@ mod tests {
         }
         fn submit(&mut self) {
             self.inner.submit();
+        }
+    }
+
+    impl ParticleSystem for Recording {
+        fn create_emitter(&mut self, params: &EmitterParams) -> EmitterHandle {
+            self.inner.create_emitter(params)
+        }
+        fn set_emitter(&mut self, emitter: EmitterHandle, params: &EmitterParams) {
+            self.inner.set_emitter(emitter, params);
+        }
+        fn destroy_emitter(&mut self, emitter: EmitterHandle) {
+            self.inner.destroy_emitter(emitter);
+        }
+        fn place_emitter(&mut self, emitter: EmitterHandle, transform: &Transform, velocity: Vec3) {
+            self.inner.place_emitter(emitter, transform, velocity);
+        }
+        fn emit(&mut self, emitter: EmitterHandle, count: u32) {
+            self.inner.emit(emitter, count);
+        }
+        fn advance_particles(&mut self, dt: f32) {
+            self.inner.advance_particles(dt);
+        }
+        fn shift_particles(&mut self, offset: Vec3) {
+            self.inner.shift_particles(offset);
         }
     }
 

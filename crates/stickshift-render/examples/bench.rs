@@ -9,8 +9,11 @@
 //! by pipeline as a game would) under the default sun, with shadows on or off,
 //! into a 1920 x 1080 offscreen target with 4x MSAA. The light scenarios also
 //! add point lights spread over the grid every frame, each reaching a few
-//! cubes around it, so their CPU time includes binning the lights. After a
-//! warm-up, every frame records:
+//! cubes around it, so their CPU time includes binning the lights. The particle
+//! scenarios keep a steady number of particles alive over the grid: one emitter
+//! emitting continuously, each particle living a second, so the warm-up fills
+//! it. Their CPU time includes advancing the particles. After a warm-up, every
+//! frame records:
 //!
 //! - **CPU time:** `begin_frame` through `submit_async`, the cost of recording
 //!   and encoding the frame on the calling thread;
@@ -34,8 +37,9 @@ use stickshift_math::glam::{Mat4, Quat, Vec3};
 use stickshift_math::Transform;
 use stickshift_render::MetalRenderer;
 use stickshift_render_api::{
-    ColorSpace, FrameRecorder, Light, MaterialParams, MeshData, MeshHandle, PipelineDescriptor,
-    PipelineHandle, PipelineKind, RenderDevice, RenderSettings, ShadowQuality, TextureData,
+    ColorSpace, EmitterParams, FrameRecorder, Light, MaterialParams, MeshData, MeshHandle,
+    ParticleBlend, ParticleSystem, PipelineDescriptor, PipelineHandle, PipelineKind, RenderDevice,
+    RenderSettings, ShadowQuality, TextureData,
 };
 
 const WIDTH: u32 = 1920;
@@ -60,6 +64,9 @@ struct Scenario {
     shadows: ShadowQuality,
     /// Point lights added every frame.
     lights: u32,
+    /// Particles kept alive, and how they blend.
+    particles: u32,
+    blend: ParticleBlend,
 }
 
 const SCENARIOS: &[Scenario] = &[
@@ -69,6 +76,8 @@ const SCENARIOS: &[Scenario] = &[
         shape: Shape::Cube,
         shadows: ShadowQuality::High,
         lights: 0,
+        particles: 0,
+        blend: ParticleBlend::Additive,
     },
     Scenario {
         name: "1,000 cubes",
@@ -76,6 +85,8 @@ const SCENARIOS: &[Scenario] = &[
         shape: Shape::Cube,
         shadows: ShadowQuality::High,
         lights: 0,
+        particles: 0,
+        blend: ParticleBlend::Additive,
     },
     Scenario {
         name: "1,000 cubes, shadows off",
@@ -83,6 +94,8 @@ const SCENARIOS: &[Scenario] = &[
         shape: Shape::Cube,
         shadows: ShadowQuality::Off,
         lights: 0,
+        particles: 0,
+        blend: ParticleBlend::Additive,
     },
     Scenario {
         name: "1,000 cubes, 64 lights",
@@ -90,6 +103,8 @@ const SCENARIOS: &[Scenario] = &[
         shape: Shape::Cube,
         shadows: ShadowQuality::High,
         lights: 64,
+        particles: 0,
+        blend: ParticleBlend::Additive,
     },
     Scenario {
         name: "1,000 cubes, 256 lights",
@@ -97,6 +112,35 @@ const SCENARIOS: &[Scenario] = &[
         shape: Shape::Cube,
         shadows: ShadowQuality::High,
         lights: 256,
+        particles: 0,
+        blend: ParticleBlend::Additive,
+    },
+    Scenario {
+        name: "1,000 cubes, 10,000 particles",
+        draws: 1_000,
+        shape: Shape::Cube,
+        shadows: ShadowQuality::High,
+        lights: 0,
+        particles: 10_000,
+        blend: ParticleBlend::Additive,
+    },
+    Scenario {
+        name: "1,000 cubes, 60,000 particles",
+        draws: 1_000,
+        shape: Shape::Cube,
+        shadows: ShadowQuality::High,
+        lights: 0,
+        particles: 60_000,
+        blend: ParticleBlend::Additive,
+    },
+    Scenario {
+        name: "1,000 cubes, 60,000 alpha particles",
+        draws: 1_000,
+        shape: Shape::Cube,
+        shadows: ShadowQuality::High,
+        lights: 0,
+        particles: 60_000,
+        blend: ParticleBlend::Alpha,
     },
     Scenario {
         name: "5,000 cubes",
@@ -104,6 +148,8 @@ const SCENARIOS: &[Scenario] = &[
         shape: Shape::Cube,
         shadows: ShadowQuality::High,
         lights: 0,
+        particles: 0,
+        blend: ParticleBlend::Additive,
     },
     Scenario {
         name: "16 dense spheres (1M triangles)",
@@ -111,6 +157,8 @@ const SCENARIOS: &[Scenario] = &[
         shape: Shape::Sphere { segments: 256 },
         shadows: ShadowQuality::High,
         lights: 0,
+        particles: 0,
+        blend: ParticleBlend::Additive,
     },
 ];
 
@@ -239,6 +287,28 @@ fn run(renderer: &mut MetalRenderer, scenario: &Scenario) -> Result {
         })
         .collect();
 
+    // Particles over the grid: sparks thrown up and falling back, streaked
+    // along their motion, each living a second, so the emitter's rate is the
+    // number alive once the warm-up has filled it.
+    let emitter = (scenario.particles > 0).then(|| {
+        let emitter = renderer.create_emitter(&EmitterParams {
+            rate: scenario.particles as f32,
+            lifetime: [1.0, 1.0],
+            speed: [2.0, 6.0],
+            spread_deg: 60.0,
+            radius: extent * 0.4,
+            gravity: Vec3::new(0.0, -9.8, 0.0),
+            drag: 0.5,
+            size: [0.08, 0.03],
+            color: [[3.0, 1.6, 0.5, 1.0], [1.2, 0.3, 0.05, 0.0]],
+            stretch: 0.03,
+            blend: scenario.blend,
+            ..EmitterParams::default()
+        });
+        renderer.place_emitter(emitter, &Transform::identity(), Vec3::ZERO);
+        emitter
+    });
+
     let dropped_before = renderer.dropped_light_count();
     let half = transforms.len() / 2;
     let material = MaterialParams::default();
@@ -254,6 +324,9 @@ fn run(renderer: &mut MetalRenderer, scenario: &Scenario) -> Result {
             wall_start = Instant::now();
         }
         let start = Instant::now();
+        if emitter.is_some() {
+            renderer.advance_particles(1.0 / 60.0);
+        }
         renderer.begin_frame();
         for light in &lights {
             renderer.add_light(light);
@@ -298,6 +371,13 @@ fn run(renderer: &mut MetalRenderer, scenario: &Scenario) -> Result {
         );
     }
 
+    if let Some(emitter) = emitter {
+        renderer.destroy_emitter(emitter);
+        // Let its last particles die before the next scenario.
+        renderer.advance_particles(2.0);
+        renderer.begin_frame();
+        renderer.submit();
+    }
     renderer.destroy_mesh(untextured_mesh);
     renderer.destroy_mesh(textured_mesh);
     renderer.destroy_texture(texture);

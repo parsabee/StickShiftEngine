@@ -198,9 +198,10 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use stickshift_math::glam::{Mat4, Vec3};
 use stickshift_math::Transform;
 use stickshift_render_api::{
-    ColorSpace, FrameRecorder, GpuFrameTime, Light, MaterialParams, MeshData, MeshHandle,
-    OverlayFill, OverlayQuad, PipelineDescriptor, PipelineHandle, PipelineKind, RenderDevice,
-    RenderSettings, SunSky, TextureData, TextureHandle, VertexFormat, VertexLayout, MAX_LIGHTS,
+    ColorSpace, EmitterHandle, EmitterParams, FrameRecorder, GpuFrameTime, Light, MaterialParams,
+    MeshData, MeshHandle, OverlayFill, OverlayQuad, ParticleSystem, PipelineDescriptor,
+    PipelineHandle, PipelineKind, RenderDevice, RenderSettings, SunSky, TextureData, TextureHandle,
+    VertexFormat, VertexLayout, MAX_EMITTERS, MAX_LIGHTS, MAX_PARTICLES,
 };
 
 use crate::deindex::deindex;
@@ -209,6 +210,10 @@ use crate::frame_sync::FrameSemaphore;
 use crate::lights::{
     ClusterInfo, GpuLight, LightBins, CLUSTERS_OFFSET, INDICES_OFFSET, LIGHTS_OFFSET,
     LIGHT_REGION_SIZE,
+};
+use crate::particles::{
+    ParticleFrame, ParticlePlanner, ParticleStep, ParticleView, Window, EMITTER_UNIFORMS_SIZE,
+    MAX_SPAWN_BATCHES, SPAWN_BATCH_SIZE,
 };
 use crate::registry::Registry;
 use crate::shadow::{
@@ -580,6 +585,24 @@ const OVERLAY_MODE_SDF: f32 = 2.0;
 /// colours it stores, exactly like the same bytes uploaded as linear.
 const OVERLAY_MODE_TEXTURED_SRGB: f32 = 3.0;
 
+/// Bytes one particle takes in the particle ring (`Particle` in the shader).
+const PARTICLE_SIZE: u64 = 48;
+/// Bytes of one in-flight frame's emitter table: [`MAX_EMITTERS`] entries.
+/// A multiple of 256, so every frame's region starts 256-byte aligned.
+const EMITTER_REGION_SIZE: u64 = (MAX_EMITTERS * EMITTER_UNIFORMS_SIZE) as u64;
+/// Bytes of one in-flight frame's spawn batches.
+const SPAWN_REGION_SIZE: u64 = (MAX_SPAWN_BATCHES * SPAWN_BATCH_SIZE) as u64;
+/// Threads per threadgroup for the particle kernels.
+const PARTICLE_THREADS: u64 = 64;
+
+/// What the scene pass draws of the particles: the live slots, where this
+/// frame's emitter table is, and which blends are in use.
+struct ParticleDraw {
+    window: Window,
+    emitters: u64,
+    blends: (bool, bool),
+}
+
 /// A render target the backend presents into.
 ///
 /// The windowed path renders into a `CAMetalLayer` and presents a drawable; the
@@ -648,6 +671,23 @@ pub struct MetalRenderer {
     /// rings, so the CPU never rewrites HUD vertices a frame still on the GPU is
     /// drawing. Each grows on its own when a frame needs more room.
     overlay_buffers: [Option<(metal::Buffer, usize)>; MAX_FRAMES_IN_FLIGHT as usize],
+
+    // Particles (see `crate::particles`). The CPU half plans spawns and the
+    // live window; the particles themselves live only in `particle_buffer`, a
+    // `Private` ring of `MAX_PARTICLES` slots the two kernels write and the
+    // particle draw reads. The emitter table and the spawn batches go up through
+    // per-frame regions of shared rings, like the light ring.
+    particles: ParticlePlanner,
+    particle_buffer: metal::Buffer,
+    emitter_ring: metal::Buffer,
+    spawn_ring: metal::Buffer,
+    particle_update_state: metal::ComputePipelineState,
+    particle_spawn_state: metal::ComputePipelineState,
+    particle_additive_state: metal::RenderPipelineState,
+    particle_alpha_state: metal::RenderPipelineState,
+    // Depth-tested, never written: particles hide behind the scene and hide
+    // nothing themselves.
+    particle_depth_stencil_state: metal::DepthStencilState,
 
     // Shadow map. A `shadow_map_size`² `Depth32Float` texture, `Private`
     // and stored (never memoryless — it is sampled by the pass after the one that
@@ -1294,6 +1334,48 @@ impl MetalRenderer {
         overlay_sampler_descriptor.set_address_mode_t(metal::MTLSamplerAddressMode::ClampToEdge);
         let overlay_sampler_state = device.new_sampler(&overlay_sampler_descriptor);
 
+        // Particles: two compute kernels (move the particles there, spawn the
+        // new ones) and one instanced draw per blend, into the MSAA scene pass
+        // after the geometry. Additive adds the particle's light and keeps the
+        // frame's alpha; alpha covers source-over, like the overlay.
+        let compute = |name: &str| {
+            let kernel = function(name)?;
+            device
+                .new_compute_pipeline_state_with_function(&kernel)
+                .map_err(|e| RenderError::PipelineCreation(format!("{name}: {e}")))
+        };
+        let particle_update_state = compute("particle_update")?;
+        let particle_spawn_state = compute("particle_spawn")?;
+        let particle_vertex_function = function("particle_vertex_main")?;
+        let particle_pipeline = |fragment: &str, additive: bool| {
+            let fragment_function = function(fragment)?;
+            let descriptor = metal::RenderPipelineDescriptor::new();
+            descriptor.set_vertex_function(Some(&particle_vertex_function));
+            descriptor.set_fragment_function(Some(&fragment_function));
+            let color = descriptor.color_attachments().object_at(0).unwrap();
+            color.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+            color.set_blending_enabled(true);
+            color.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
+            color.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
+            if additive {
+                color.set_source_rgb_blend_factor(metal::MTLBlendFactor::One);
+                color.set_destination_rgb_blend_factor(metal::MTLBlendFactor::One);
+                color.set_source_alpha_blend_factor(metal::MTLBlendFactor::Zero);
+                color.set_destination_alpha_blend_factor(metal::MTLBlendFactor::One);
+            } else {
+                color.set_source_rgb_blend_factor(metal::MTLBlendFactor::SourceAlpha);
+                color.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
+                color.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
+                color
+                    .set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
+            }
+            descriptor.set_depth_attachment_pixel_format(MTLPixelFormat::Depth32Float);
+            descriptor.set_sample_count(MSAA_SAMPLE_COUNT);
+            pipeline(&descriptor, fragment)
+        };
+        let particle_additive_state = particle_pipeline("particle_additive_fragment", true)?;
+        let particle_alpha_state = particle_pipeline("particle_alpha_fragment", false)?;
+
         // Trilinear sampler for base-color textures: min/mag linear + mip linear,
         // so the mipmaps generated in `create_texture` are sampled smoothly.
         let sampler_descriptor = metal::SamplerDescriptor::new();
@@ -1316,6 +1398,27 @@ impl MetalRenderer {
         sky_depth_descriptor.set_depth_compare_function(metal::MTLCompareFunction::Always);
         sky_depth_descriptor.set_depth_write_enabled(false);
         let sky_depth_stencil_state = device.new_depth_stencil_state(&sky_depth_descriptor);
+
+        let particle_depth_descriptor = metal::DepthStencilDescriptor::new();
+        particle_depth_descriptor.set_depth_compare_function(metal::MTLCompareFunction::Less);
+        particle_depth_descriptor.set_depth_write_enabled(false);
+        let particle_depth_stencil_state =
+            device.new_depth_stencil_state(&particle_depth_descriptor);
+
+        // The particle ring (GPU only), and the emitter table and spawn batch
+        // rings (one region per in-flight frame). Created once, here.
+        let particle_buffer = device.new_buffer(
+            MAX_PARTICLES as u64 * PARTICLE_SIZE,
+            MTLResourceOptions::StorageModePrivate,
+        );
+        let emitter_ring = device.new_buffer(
+            MAX_FRAMES_IN_FLIGHT * EMITTER_REGION_SIZE,
+            MTLResourceOptions::CPUCacheModeDefaultCache,
+        );
+        let spawn_ring = device.new_buffer(
+            MAX_FRAMES_IN_FLIGHT * SPAWN_REGION_SIZE,
+            MTLResourceOptions::CPUCacheModeDefaultCache,
+        );
 
         // Shadow caster pipelines: depth-only, single-sample, the minimal
         // `shadow_vertex_main` and **no fragment function** — casters need no
@@ -1379,6 +1482,15 @@ impl MetalRenderer {
             overlay_vertices: Vec::new(),
             overlay_textures: Vec::new(),
             overlay_buffers: [None, None, None],
+            particles: ParticlePlanner::new(),
+            particle_buffer,
+            emitter_ring,
+            spawn_ring,
+            particle_update_state,
+            particle_spawn_state,
+            particle_additive_state,
+            particle_alpha_state,
+            particle_depth_stencil_state,
             shadow_map,
             shadow_pipeline_state,
             shadow_textured_pipeline_state,
@@ -1417,10 +1529,10 @@ impl MetalRenderer {
             meshes: Registry::new(),
             pipelines: Vec::new(),
             textures: Vec::new(),
-            // Three construction-time allocations: the `light_ring`, the
-            // `cluster_ring` and the persistent `uniform_ring`. All load-time,
-            // off the hot path.
-            alloc_count: AtomicU64::new(3),
+            // Six construction-time allocations: the `light_ring`, the
+            // `cluster_ring`, the persistent `uniform_ring`, and the particle
+            // ring, emitter ring and spawn ring. All load-time, off the hot path.
+            alloc_count: AtomicU64::new(6),
             rejected_draws: 0,
             frame: None,
         })
@@ -2192,7 +2304,13 @@ impl MetalRenderer {
     /// into its color target. This is the original single pass, unchanged except
     /// that it binds the shadow map at fragment `[[texture(1)]]` for the lit
     /// shaders and replays the recorded draw list instead of encoding immediately.
-    fn encode_scene_pass(&mut self, frame: &FrameState, shading: &FrameShading, lights: u64) {
+    fn encode_scene_pass(
+        &mut self,
+        frame: &FrameState,
+        shading: &FrameShading,
+        lights: u64,
+        particles: &ParticleDraw,
+    ) {
         let render_pass_descriptor = metal::RenderPassDescriptor::new();
 
         // MSAA: render into a multisampled color attachment and resolve
@@ -2276,11 +2394,161 @@ impl MetalRenderer {
             encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, draw.vertex_count);
         }
 
+        // Particles, after the geometry they are depth-tested against and before
+        // the overlay that covers them.
+        self.draw_particles(&encoder, frame, shading, particles);
+
         // 2D overlay / HUD pass: flush everything recorded this frame
         // on the same encoder, after all 3D draws, so it composites on top.
         self.flush_overlay(&encoder, (frame.width, frame.height));
 
         encoder.end_encoding();
+    }
+
+    /// Encode the frame's **particle pass**: upload its emitter table and spawn
+    /// batches into this frame's ring regions, then run `particle_update` over
+    /// the particles already there and `particle_spawn` over the new ones, in
+    /// one compute encoder ahead of the render passes (see
+    /// [`crate::particles`]). Returns what the scene pass draws.
+    ///
+    /// The regions are `frame_index % MAX_FRAMES_IN_FLIGHT`, behind the same
+    /// frames-in-flight permit as the light ring, so the CPU never rewrites a
+    /// table or batch list a queued frame still reads. The particle ring itself
+    /// is one buffer every frame's kernels and draw use in turn: the frames run
+    /// in order on the one queue, and Metal orders each frame's kernels after
+    /// the last frame's draw that read the same buffer.
+    fn encode_particle_pass(&mut self, frame: &FrameState) -> ParticleDraw {
+        let work: ParticleFrame = self.particles.take_frame();
+        let region = self.frame_index % MAX_FRAMES_IN_FLIGHT;
+        let emitters = region * EMITTER_REGION_SIZE;
+        let spawns = region * SPAWN_REGION_SIZE;
+        // SAFETY: both rings are CPU-visible, sized for `MAX_FRAMES_IN_FLIGHT`
+        // regions of `MAX_EMITTERS` table entries and `MAX_SPAWN_BATCHES`
+        // batches, which the planner never exceeds; both structs are
+        // `#[repr(C)]` plain data.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                work.emitters.as_ptr(),
+                (self.emitter_ring.contents() as *mut u8)
+                    .add(emitters as usize)
+                    .cast(),
+                work.emitters.len().min(MAX_EMITTERS),
+            );
+            std::ptr::copy_nonoverlapping(
+                work.spawns.as_ptr(),
+                (self.spawn_ring.contents() as *mut u8)
+                    .add(spawns as usize)
+                    .cast(),
+                work.spawns.len().min(MAX_SPAWN_BATCHES),
+            );
+        }
+
+        let moving = work.dt > 0.0 || work.shift != Vec3::ZERO;
+        let update = work.update.count > 0 && moving;
+        if update || work.spawn_count > 0 {
+            let step = ParticleStep {
+                shift_dt: work.shift.extend(work.dt).to_array(),
+                window: [
+                    work.update.first,
+                    work.update.count,
+                    MAX_PARTICLES as u32,
+                    work.spawn_count,
+                ],
+                spawn: [work.spawn_first, work.spawns.len() as u32, 0, 0],
+            };
+            let groups = |threads: u32| metal::MTLSize {
+                width: u64::from(threads).div_ceil(PARTICLE_THREADS),
+                height: 1,
+                depth: 1,
+            };
+            let per_group = metal::MTLSize {
+                width: PARTICLE_THREADS,
+                height: 1,
+                depth: 1,
+            };
+            let encoder = frame.command_buffer.new_compute_command_encoder();
+            encoder.set_label("Particle pass");
+            encoder.set_buffer(0, Some(&self.particle_buffer), 0);
+            encoder.set_buffer(1, Some(&self.emitter_ring), emitters);
+            encoder.set_bytes(
+                2,
+                mem::size_of::<ParticleStep>() as u64,
+                (&step as *const ParticleStep).cast::<c_void>(),
+            );
+            if update {
+                encoder.set_compute_pipeline_state(&self.particle_update_state);
+                encoder.dispatch_thread_groups(groups(work.update.count), per_group);
+            }
+            if work.spawn_count > 0 {
+                encoder.set_compute_pipeline_state(&self.particle_spawn_state);
+                encoder.set_buffer(3, Some(&self.spawn_ring), spawns);
+                encoder.dispatch_thread_groups(groups(work.spawn_count), per_group);
+            }
+            encoder.end_encoding();
+        }
+
+        ParticleDraw {
+            window: work.draw,
+            emitters,
+            blends: work.blends,
+        }
+    }
+
+    /// Draw the frame's live particles on the scene pass's `encoder`: one
+    /// instanced draw of a six-vertex quad per particle slot in the window, per
+    /// blend in use, projected with the camera the frame is lit with.
+    fn draw_particles(
+        &self,
+        encoder: &metal::RenderCommandEncoderRef,
+        frame: &FrameState,
+        shading: &FrameShading,
+        particles: &ParticleDraw,
+    ) {
+        if particles.window.count == 0 {
+            return;
+        }
+        encoder.set_depth_stencil_state(&self.particle_depth_stencil_state);
+        encoder.set_vertex_buffer(0, Some(&self.particle_buffer), 0);
+        encoder.set_vertex_buffer(1, Some(&self.emitter_ring), particles.emitters);
+        encoder.set_fragment_buffer(0, Some(&self.light_ring), frame.light_offset);
+        let camera = self.light.camera_position;
+        for (in_use, state, blend) in [
+            (particles.blends.0, &self.particle_additive_state, 0.0),
+            (particles.blends.1, &self.particle_alpha_state, 1.0),
+        ] {
+            if !in_use {
+                continue;
+            }
+            let view = ParticleView {
+                view_projection: shading.view_projection.to_cols_array_2d(),
+                camera: [camera[0], camera[1], camera[2], blend],
+                window: [
+                    particles.window.first,
+                    particles.window.count,
+                    MAX_PARTICLES as u32,
+                    0,
+                ],
+            };
+            encoder.set_vertex_bytes(
+                2,
+                mem::size_of::<ParticleView>() as u64,
+                (&view as *const ParticleView).cast::<c_void>(),
+            );
+            encoder.set_render_pipeline_state(state);
+            encoder.draw_primitives_instanced(
+                metal::MTLPrimitiveType::Triangle,
+                0,
+                6,
+                u64::from(particles.window.count),
+            );
+        }
+    }
+
+    /// Bursts the particle system dropped because a frame already held its
+    /// most spawn batches ([`MAX_SPAWN_BATCHES`]). Diagnostic aid.
+    #[must_use]
+    pub fn dropped_burst_count(&self) -> u64 {
+        self.particles.dropped_bursts()
     }
 
     /// The color target for the next frame: the layer's next drawable (which may
@@ -2505,6 +2773,9 @@ impl MetalRenderer {
         let shading = frame.shading.as_ref().expect("captured above");
         let lights = self.upload_lights(&frame, shading);
         autoreleasepool(|| {
+            // The particle kernels first: they move the particles the scene pass
+            // then draws.
+            let particles = self.encode_particle_pass(&frame);
             // Pass order: the depth-only shadow pass first (every recorded
             // draw as a caster, into the stored shadow map), then the scene pass
             // (sky, lit draws sampling that map, and the 2D overlay on top).
@@ -2513,7 +2784,7 @@ impl MetalRenderer {
             if shading.casts_shadows {
                 self.encode_shadow_pass(&frame, shading);
             }
-            self.encode_scene_pass(&frame, shading, lights);
+            self.encode_scene_pass(&frame, shading, lights, &particles);
 
             // Offscreen: synchronize the Managed color texture so `read_pixels`
             // sees this frame, and copy it into the read-back buffer if one was
@@ -3086,6 +3357,37 @@ impl FrameRecorder for MetalRenderer {
 /// view's size in points and `backing_scale` its window's pixels per point; they
 /// decide only when a pixel dimension is zero. A non-finite or non-positive
 /// scale counts as 1.
+impl ParticleSystem for MetalRenderer {
+    fn create_emitter(&mut self, params: &EmitterParams) -> EmitterHandle {
+        self.particles.create(params)
+    }
+
+    fn set_emitter(&mut self, emitter: EmitterHandle, params: &EmitterParams) {
+        self.particles.set(emitter, params);
+    }
+
+    fn destroy_emitter(&mut self, emitter: EmitterHandle) {
+        self.particles.destroy(emitter);
+    }
+
+    fn place_emitter(&mut self, emitter: EmitterHandle, transform: &Transform, velocity: Vec3) {
+        self.particles
+            .place(emitter, transform.position, transform.rotation, velocity);
+    }
+
+    fn emit(&mut self, emitter: EmitterHandle, count: u32) {
+        self.particles.emit(emitter, count);
+    }
+
+    fn advance_particles(&mut self, dt: f32) {
+        self.particles.advance(dt);
+    }
+
+    fn shift_particles(&mut self, offset: Vec3) {
+        self.particles.shift(offset);
+    }
+}
+
 fn window_drawable(pixels: (u32, u32), bounds: (f64, f64), backing_scale: f64) -> (CGSize, f32) {
     let scale = if backing_scale.is_finite() && backing_scale > 0.0 {
         backing_scale

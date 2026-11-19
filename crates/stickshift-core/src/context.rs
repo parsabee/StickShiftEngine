@@ -26,28 +26,29 @@ use stickshift_audio::Audio;
 use stickshift_camera::Camera;
 use stickshift_ecs::hecs::World;
 use stickshift_perf::PerfSnapshot;
-use stickshift_render_api::{FrameRecorder, RenderDevice};
+use stickshift_render_api::{FrameRecorder, ParticleSystem, RenderDevice};
 use stickshift_scene::Scene;
 
 use crate::graphics::{GraphicsSettings, GraphicsState};
 use crate::input::InputState;
 
-/// The combined render seam: a type that is both a [`RenderDevice`] (load-time
-/// resource ownership) and a [`FrameRecorder`] (per-frame command recording).
+/// The combined render seam: a type that is a [`RenderDevice`] (load-time
+/// resource ownership), a [`FrameRecorder`] (per-frame command recording) and a
+/// [`ParticleSystem`] (particle effects, at any time).
 ///
-/// The engine owns one renderer implementing both halves of the
+/// The engine owns one renderer implementing every part of the
 /// `stickshift-render-api` seam and exposes it to the game as a single
 /// `&mut dyn Renderer`. The concrete backend is the Metal renderer or a
 /// [`NullRenderer`](stickshift_render_api::NullRenderer) (headless runs and tests),
 /// both behind the same trait object, so game code is unaffected.
 ///
-/// This is a pure marker: it adds no methods, only bundles the two seam traits
-/// so a single trait object can be handed across the boundary. A blanket impl
-/// covers any type that implements both, so backends never implement it
+/// This is a pure marker: it adds no methods, only bundles the seam traits so a
+/// single trait object can be handed across the boundary. A blanket impl covers
+/// any type that implements all three, so backends never implement it
 /// explicitly.
-pub trait Renderer: RenderDevice + FrameRecorder {}
+pub trait Renderer: RenderDevice + FrameRecorder + ParticleSystem {}
 
-impl<T: RenderDevice + FrameRecorder> Renderer for T {}
+impl<T: RenderDevice + FrameRecorder + ParticleSystem> Renderer for T {}
 
 /// The engine-services handle passed into every [`Game`](crate::Game) hook.
 ///

@@ -9,6 +9,38 @@ API**.
 
 ## [Unreleased]
 
+### Added
+
+- **GPU particles.** A third seam trait, `ParticleSystem`, gives a game particle effects without
+  touching a particle: it creates emitters from plain-data `EmitterParams` (rate or bursts,
+  lifetime, speed, direction and spread, spawn radius, inherited velocity, gravity, drag, an
+  optional `Floor` to bounce off, size and colour over life, a stretch that draws streaks along the
+  motion, additive or alpha blending), places them each frame with a velocity, and fires bursts with
+  `emit`, at any time, frame open or not. The Metal renderer simulates the particles in two compute
+  kernels and draws them as instanced quads in the scene pass, depth-tested against the scene and
+  fogged like it, up to `MAX_PARTICLES` (65,536) alive and `MAX_EMITTERS` (256) emitters. The CPU
+  cost is per emitter and per burst: on an M3 Max, 60,000 live particles add about 0.23 ms of GPU
+  time to a 1080p frame and nothing measurable on the CPU (`docs/BENCHMARKS.md`). Continuous
+  emission is spread over each frame's time and along the emitter's path, so a fast emitter leaves
+  a trail rather than clumps, and the same calls give the same particles.
+- **The engine loop advances particles** once per frame, by the fixed steps that frame ran
+  (`advance_particles`), so they move on simulated time and keep moving while a game holds its own
+  state still. A game that rebases its floating origin calls `shift_particles` with the same offset.
+- **`NullRenderer` records particles**: emitters, every burst with where its emitter was placed,
+  the time advanced and the shifts, so a game's effects are testable without a GPU. A destroyed or
+  unknown emitter, invalid params, and emitters past the limit are protocol violations.
+- **Particle scenarios in the renderer benchmark**: 10,000 and 60,000 additive particles, and
+  60,000 alpha particles, over 1,000 cubes.
+
+### Changed
+
+- **`Renderer` (in `stickshift-core`) now also requires `ParticleSystem`.** A renderer of your own
+  that wraps or replaces the Metal one must implement it; delegating every call to an inner
+  renderer is enough. `MetalRenderer` and `NullRenderer` implement it.
+- **The Metal renderer allocates three more buffers at construction** (the particle ring, and the
+  per-frame emitter table and spawn batch rings: about 4.5 MB together), so
+  `MetalRenderer::allocation_count` starts at 6, not 3. Nothing more is allocated per frame.
+
 ## [0.2.2] - 2026-11-18
 
 ### Changed

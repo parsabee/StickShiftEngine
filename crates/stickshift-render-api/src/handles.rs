@@ -15,7 +15,7 @@
 //! private business: for a real Metal backend it is typically an index into a
 //! resource table (a slot in a `Vec` of `metal::Buffer` / `metal::Texture` /
 //! `metal::RenderPipelineState`), but this crate does not mandate any particular
-//! allocation scheme. All three types are `Copy`, cheap to pass by value, and usable
+//! allocation scheme. Every handle type is `Copy`, cheap to pass by value, and usable
 //! as map keys (`Eq + Hash`).
 
 /// Opaque handle to a mesh resource (vertex + index geometry) owned by a
@@ -45,3 +45,13 @@ pub struct TextureHandle(pub u32);
 /// The wrapped [`u32`] is a backend-private identity; do not interpret it above the seam.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PipelineHandle(pub u32);
+
+/// Opaque handle to a particle emitter owned by a
+/// [`ParticleSystem`](crate::ParticleSystem).
+///
+/// Returned by
+/// [`ParticleSystem::create_emitter`](crate::ParticleSystem::create_emitter) and
+/// consumed by the rest of that trait. The wrapped [`u32`] is a backend-private
+/// identity; do not interpret it above the seam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EmitterHandle(pub u32);

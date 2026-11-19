@@ -73,6 +73,8 @@ its loop, world, streaming, physics, audio and rendering. See the [roadmap](docs
   ground-hugging horizon fog, ACES tonemapping, and **real fitted shadow maps** with PCF filtering.
 - **Point and spot lights:** up to 256 a frame, shaded with clustered forward lighting, plus
   emissive materials for lit windows and lamps.
+- **GPU particles:** emitters a game places and fires (bursts or a steady rate), simulated in
+  compute kernels and drawn instanced, additive or alpha, as points or streaks, up to 65,536 alive.
 - **2D HUD overlay** with SDF text rendering.
 - **Audio** built on [`kira`](https://crates.io/crates/kira): load-once sounds, one-shots, looping
   music, and master volume.
@@ -199,7 +201,7 @@ The workspace is the engine's `crates/stickshift-*`. The layout follows [docs/AR
 |---|---|
 | [`stickshift-core`](crates/stickshift-core) | Application lifecycle and the engine/game boundary: the `Game` trait, `EngineCtx`, the fixed-timestep loop, input, and the windowed (winit) and headless drivers |
 | [`stickshift-render-api`](crates/stickshift-render-api) | Backend-agnostic render seam: `RenderDevice` / `FrameRecorder` traits, opaque handles, descriptors, sun/sky and 2D overlay types, and a `NullRenderer` test double. Never depends on `metal` |
-| [`stickshift-render`](crates/stickshift-render) | Raw-Metal implementation of the seam: rasterization pipeline, look stack, shadow maps, clustered point and spot lights, offscreen rendering and pixel read-back |
+| [`stickshift-render`](crates/stickshift-render) | Raw-Metal implementation of the seam: rasterization pipeline, look stack, shadow maps, clustered point and spot lights, GPU particles, offscreen rendering and pixel read-back |
 | [`stickshift-assets`](crates/stickshift-assets) | Static glTF import and asset cache (metal-free) |
 | [`stickshift-audio`](crates/stickshift-audio) | Audio over `kira`: load-once sounds, one-shot playback, looping music, master volume |
 | [`stickshift-camera`](crates/stickshift-camera) | Camera state and controller math (perspective camera, chase controller) |

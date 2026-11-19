@@ -170,10 +170,11 @@ Two rules to follow:
 
 ## 4. Record a draw
 
-The render seam is two traits, handed to you as one `&mut dyn Renderer` from `ctx.renderer()`:
+The render seam is three traits, handed to you as one `&mut dyn Renderer` from `ctx.renderer()`:
 [`RenderDevice`](../crates/stickshift-render-api/src/device.rs#L100) for resources (and
-`surface_size` / `safe_area_insets`) and
-[`FrameRecorder`](../crates/stickshift-render-api/src/recorder.rs#L68) for the frame. The frame
+`surface_size` / `safe_area_insets`),
+[`FrameRecorder`](../crates/stickshift-render-api/src/recorder.rs#L68) for the frame, and
+`ParticleSystem` for particle effects (below). The frame
 protocol is `begin_frame` → `set_pipeline` / `bind_texture` / `draw_mesh` /
 `draw_overlay_quad` → `submit`, exactly once per `render` call. For a night scene, add point and
 spot lights to the open frame with `add_light`; they last that frame only, so add them every
@@ -185,6 +186,12 @@ frame is drawn from. Move the camera with `ctx.camera_mut()`, in `update` or in 
 in `render` is pushed on your next `ctx.renderer()` call, so position the camera before recording
 the frame. `stickshift_camera::ChaseController` is a ready-made follow camera; pass `follow` the
 time step it covers, so its smoothing is the same at any frame rate.
+
+For particles, create an emitter once in `init` with `create_emitter` and an `EmitterParams`
+describing its particles, then from `update` place it where the effect is (`place_emitter`, with
+the velocity it moves at) and fire it with `emit(emitter, count)`, or give it a `rate` for a steady
+stream. The engine moves and draws the particles; you record nothing for them. If your game rebases
+its floating origin, pass the same offset to `shift_particles`.
 
 Group draws by pipeline and texture so each switch happens once per group rather than once per
 entity. For a HUD, record [`OverlayQuad`](../crates/stickshift-render-api/src/overlay.rs#L71)s — the
