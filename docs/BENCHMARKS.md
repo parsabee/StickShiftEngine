@@ -17,7 +17,9 @@ untextured pipeline and half the textured one (a 256 × 256 sRGB checkerboard), 
 pipeline as a game would draw them. They render into a **1920 × 1080 offscreen target with 4×
 MSAA**, with shadows at High unless the scenario says otherwise. The light scenarios also add
 point lights on a grid over the cubes every frame, each reaching a couple of cubes in every
-direction. After 60 warm-up frames, it times 300 frames:
+direction. The particle scenarios keep that many particles alive over the grid: one emitter
+emitting continuously, each particle living a second and falling under gravity, drawn as streaks;
+the warm-up fills it, and CPU time includes advancing the particles. After 60 warm-up frames, it times 300 frames:
 
 - **CPU time** runs from `begin_frame` through `submit_async`: recording the draws and lights,
   binning the lights into clusters, and encoding the shadow and scene passes on the calling thread.
@@ -47,6 +49,23 @@ Means and 95th percentiles are over the 300 measured frames.
 
 The scenarios without lights match the `v0.1.0` build's figures within run-to-run noise.
 
+`v0.3` development build (GPU particles), November 2026:
+
+| Scenario | Draws | Triangles | CPU ms (mean / p95) | GPU ms (mean / p95) | Frames/s |
+|---|---:|---:|---:|---:|---:|
+| 100 cubes | 100 | 1,200 | 0.13 / 0.27 | 0.14 / 0.25 | 7667 |
+| 1,000 cubes | 1,000 | 12,000 | 0.29 / 0.31 | 0.18 / 0.39 | 3481 |
+| 1,000 cubes, shadows off | 1,000 | 12,000 | 0.21 / 0.26 | 0.10 / 0.20 | 4763 |
+| 1,000 cubes, 64 lights | 1,000 | 12,000 | 0.30 / 0.34 | 0.21 / 0.42 | 3360 |
+| 1,000 cubes, 256 lights | 1,000 | 12,000 | 0.31 / 0.40 | 0.31 / 0.59 | 3191 |
+| 1,000 cubes, 10,000 particles | 1,000 | 12,000 | 0.30 / 0.38 | 0.29 / 0.42 | 3363 |
+| 1,000 cubes, 60,000 particles | 1,000 | 12,000 | 0.31 / 0.50 | 0.41 / 0.54 | 3149 |
+| 1,000 cubes, 60,000 alpha particles | 1,000 | 12,000 | 0.31 / 0.48 | 0.41 / 0.51 | 3167 |
+| 5,000 cubes | 5,000 | 60,000 | 1.22 / 1.27 | 0.48 / 0.50 | 817 |
+| 16 dense spheres (1M triangles) | 16 | 1,048,576 | 0.78 / 1.01 | 0.96 / 1.12 | 1265 |
+
+The scenarios without particles match the `v0.2` figures within run-to-run noise.
+
 Repeated runs agree within a few percent.
 
 ## What the numbers say
@@ -61,6 +80,10 @@ Repeated runs agree within a few percent.
   cubes at 1080p, and 0.01 to 0.02 ms of CPU time for binning them. Each fragment shades only the
   lights in its own cluster (see [ARCHITECTURE §4c](ARCHITECTURE.md#4c-point-and-spot-lights)),
   so the cost follows how much of the screen each light covers more than how many there are.
+- **Particles cost GPU time, not CPU time.** 60,000 live particles add about 0.23 ms of GPU time
+  to 1,000 cubes at 1080p (0.18 to 0.41 ms), additive or alpha alike, and nothing measurable on the
+  CPU: the CPU plans per emitter and per burst, and the particles are moved and drawn on the GPU
+  (see [ARCHITECTURE §4d](ARCHITECTURE.md#4d-particles)). 10,000 cost about 0.1 ms.
 - **Triangle count is cheap on this GPU.** A million triangles across 16 draws takes 0.92 ms of GPU
   time and 0.74 ms of CPU time (mostly encoding two passes over large index buffers).
 - **Nothing here is near a frame budget.** The heaviest scenario uses well under 10% of a 120 Hz

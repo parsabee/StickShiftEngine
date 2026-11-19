@@ -2,7 +2,8 @@
 //
 // This software is released under the Apache-2.0 License.
 
-//! Backend-agnostic render seam for Stick Shift Engine: [`RenderDevice`] / [`FrameRecorder`] traits.
+//! Backend-agnostic render seam for Stick Shift Engine: [`RenderDevice`] / [`FrameRecorder`] /
+//! [`ParticleSystem`] traits.
 //!
 //! This crate is the **blast-radius firewall** described in `docs/ARCHITECTURE.md` §2. It
 //! defines *only* a contract — opaque resource handles plus two traits — and never depends on
@@ -19,8 +20,9 @@
 //!
 //! # Public surface
 //!
-//! - Opaque handles: [`MeshHandle`], [`TextureHandle`], [`PipelineHandle`] — newtypes that
-//!   name GPU resources without exposing what they point at.
+//! - Opaque handles: [`MeshHandle`], [`TextureHandle`], [`PipelineHandle`],
+//!   [`EmitterHandle`] — newtypes that name GPU resources without exposing what they
+//!   point at.
 //! - [`RenderDevice`] — load-time resource create/destroy.
 //! - [`FrameRecorder`] — per-frame `begin_frame` / `set_pipeline` / `bind_texture` /
 //!   `draw_mesh` / `submit`.
@@ -34,11 +36,14 @@
 //! - [`Light`] / [`LightKind`] — point and spot lights, added to each frame with
 //!   [`FrameRecorder::add_light`] (up to [`MAX_LIGHTS`]); together with
 //!   [`MaterialParams::emissive`], what lights a scene after dark.
+//! - [`ParticleSystem`] — particle effects: emitters a game creates with
+//!   [`EmitterParams`], places, and fires, at any time; the backend simulates and
+//!   draws their particles with every frame (up to [`MAX_PARTICLES`] of them).
 //! - [`RenderSettings`] / [`ShadowQuality`] — render quality settings:
 //!   shadow tier and range and a draw-distance scale, pushed with
 //!   [`RenderDevice::set_render_settings`]; the drawable's resolution goes through
 //!   [`RenderDevice::resize_surface`].
-//! - [`NullRenderer`] — a headless, GPU-free test double implementing both traits so scene
+//! - [`NullRenderer`] — a headless, GPU-free test double implementing every trait so scene
 //!   and game code can be unit-tested without a device.
 //!
 //! # Example
@@ -80,6 +85,7 @@ pub mod handles;
 pub mod light;
 pub mod null;
 pub mod overlay;
+pub mod particles;
 pub mod recorder;
 pub mod settings;
 pub mod sun;
@@ -88,10 +94,13 @@ pub use descriptor::{MaterialParams, PipelineKind, VertexAttribute, VertexFormat
 pub use device::{
     ColorSpace, GpuFrameTime, MeshData, PipelineDescriptor, RenderDevice, TextureData,
 };
-pub use handles::{MeshHandle, PipelineHandle, TextureHandle};
+pub use handles::{EmitterHandle, MeshHandle, PipelineHandle, TextureHandle};
 pub use light::{Light, LightKind, LIGHT_MIN_DISTANCE, MAX_LIGHTS, MAX_SPOT_ANGLE_DEG};
-pub use null::{NullRenderer, ProtocolViolation, RecordedDraw};
+pub use null::{NullRenderer, ProtocolViolation, RecordedBurst, RecordedDraw, RecordedEmitter};
 pub use overlay::{FontAtlas, Glyph, OverlayFill, OverlayQuad};
+pub use particles::{
+    EmitterParams, Floor, ParticleBlend, ParticleSystem, MAX_EMITTERS, MAX_PARTICLES,
+};
 pub use recorder::FrameRecorder;
 pub use settings::{RenderSettings, ShadowQuality};
 pub use sun::SunSky;

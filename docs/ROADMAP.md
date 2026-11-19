@@ -85,7 +85,10 @@ Engine:
 [Milestone](https://github.com/parsabee/StickShiftEngine/milestone/2)
 
 - **GPU particles** in the engine, used for sparks, tyre smoke and weather
-  ([#85](https://github.com/parsabee/StickShiftEngine/issues/85)).
+  ([#85](https://github.com/parsabee/StickShiftEngine/issues/85)). The core is in: emitters through
+  a `ParticleSystem` seam trait, simulated in compute kernels and drawn instanced, additive or
+  alpha, with streaks and a floor to bounce off. Still to come: depth-sorted alpha particles, soft
+  particles where they meet geometry, and textured or flipbook particles.
 - **Instanced drawing** for dense scenes ([#89](https://github.com/parsabee/StickShiftEngine/issues/89)).
 
 ## v0.9 — iOS and full Xcode, right before 1.0

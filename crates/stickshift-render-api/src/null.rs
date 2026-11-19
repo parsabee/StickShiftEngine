@@ -6,14 +6,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use stickshift_math::glam::{Mat4, Vec3};
+use stickshift_math::glam::{Mat4, Quat, Vec3};
 use stickshift_math::Transform;
 
 use crate::descriptor::{MaterialParams, PipelineKind};
 use crate::device::{MeshData, PipelineDescriptor, RenderDevice, TextureData};
-use crate::handles::{MeshHandle, PipelineHandle, TextureHandle};
+use crate::handles::{EmitterHandle, MeshHandle, PipelineHandle, TextureHandle};
 use crate::light::{Light, MAX_LIGHTS};
 use crate::overlay::OverlayQuad;
+use crate::particles::{EmitterParams, ParticleSystem, MAX_EMITTERS};
 use crate::recorder::FrameRecorder;
 use crate::settings::RenderSettings;
 use crate::sun::SunSky;
@@ -39,6 +40,38 @@ pub struct RecordedDraw {
     /// The view-projection the seam held when the draw was recorded (the one
     /// the Metal backend would build this draw's MVP from), if any had been set.
     pub view_projection: Option<Mat4>,
+}
+
+/// A burst of particles fired with [`ParticleSystem::emit`], captured by
+/// [`NullRenderer`] with where its emitter was when it fired.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RecordedBurst {
+    /// The emitter that fired.
+    pub emitter: EmitterHandle,
+    /// How many particles it fired.
+    pub count: u32,
+    /// Where the emitter was placed when it fired.
+    pub position: Vec3,
+    /// How it was turned.
+    pub rotation: Quat,
+    /// How fast it was moving.
+    pub velocity: Vec3,
+    /// Its params when it fired.
+    pub params: EmitterParams,
+}
+
+/// A live emitter as [`NullRenderer`] holds it: its params and where it was
+/// last placed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RecordedEmitter {
+    /// Its params, as last created or set.
+    pub params: EmitterParams,
+    /// Where it was last placed (the origin until placed).
+    pub position: Vec3,
+    /// How it was last turned.
+    pub rotation: Quat,
+    /// How fast it was last said to move.
+    pub velocity: Vec3,
 }
 
 /// A call the Metal backend would ignore, which [`NullRenderer`] therefore
@@ -73,6 +106,15 @@ pub enum ProtocolViolation {
     InvalidLight,
     /// A light added to a frame that already held [`MAX_LIGHTS`].
     TooManyLights,
+    /// An emitter handle that was never created, or was already destroyed:
+    /// used in a call, or destroyed a second time.
+    UnknownEmitter(EmitterHandle),
+    /// Emitter params that are not [valid](EmitterParams::is_valid). The
+    /// emitter is still created or set, as a backend brings them into range.
+    InvalidEmitter,
+    /// An emitter created while [`MAX_EMITTERS`] were already live. A backend
+    /// hands it a handle that emits nothing.
+    TooManyEmitters,
 }
 
 /// A headless implementation of both [`RenderDevice`] and [`FrameRecorder`] that
@@ -166,6 +208,18 @@ pub struct NullRenderer {
     /// The UI scale last passed to [`resize_surface`](RenderDevice::resize_surface);
     /// `None` reports `1.0`.
     surface_scale: Option<f32>,
+
+    // --- particle bookkeeping (ParticleSystem side) ---
+    next_emitter: u32,
+    created_emitters: Vec<EmitterHandle>,
+    destroyed_emitters: Vec<EmitterHandle>,
+    live_emitters: HashMap<EmitterHandle, RecordedEmitter>,
+    /// Every burst fired, in call order, across frames.
+    bursts: Vec<RecordedBurst>,
+    /// The particle time advanced in total.
+    particle_time: f64,
+    /// The particle shifts applied in total.
+    particle_shift: Vec3,
 }
 
 impl NullRenderer {
@@ -331,6 +385,54 @@ impl NullRenderer {
     #[must_use]
     pub fn render_settings(&self) -> Option<RenderSettings> {
         self.render_settings
+    }
+
+    // --- particle introspection ---
+
+    /// Handles of every emitter created, in creation order (including any later
+    /// destroyed).
+    #[must_use]
+    pub fn created_emitters(&self) -> &[EmitterHandle] {
+        &self.created_emitters
+    }
+
+    /// Handles of every emitter destroyed, in destruction order.
+    #[must_use]
+    pub fn destroyed_emitters(&self) -> &[EmitterHandle] {
+        &self.destroyed_emitters
+    }
+
+    /// The number of emitters created and not destroyed.
+    #[must_use]
+    pub fn live_emitter_count(&self) -> usize {
+        self.live_emitters.len()
+    }
+
+    /// A live emitter's params and last placement, or `None` if `handle` is not
+    /// live.
+    #[must_use]
+    pub fn emitter(&self, handle: EmitterHandle) -> Option<&RecordedEmitter> {
+        self.live_emitters.get(&handle)
+    }
+
+    /// Every burst fired with [`emit`](ParticleSystem::emit), in call order,
+    /// across frames.
+    #[must_use]
+    pub fn bursts(&self) -> &[RecordedBurst] {
+        &self.bursts
+    }
+
+    /// The total time [`advance_particles`](ParticleSystem::advance_particles)
+    /// has moved particles on, in seconds.
+    #[must_use]
+    pub fn particle_time(&self) -> f64 {
+        self.particle_time
+    }
+
+    /// The total of every [`shift_particles`](ParticleSystem::shift_particles).
+    #[must_use]
+    pub fn particle_shift(&self) -> Vec3 {
+        self.particle_shift
     }
 }
 
@@ -550,5 +652,193 @@ impl FrameRecorder for NullRenderer {
         }
         self.frame_open = false;
         self.frames_submitted += 1;
+    }
+}
+
+impl ParticleSystem for NullRenderer {
+    fn create_emitter(&mut self, params: &EmitterParams) -> EmitterHandle {
+        if !params.is_valid() {
+            self.violations.push(ProtocolViolation::InvalidEmitter);
+        }
+        if self.live_emitters.len() >= MAX_EMITTERS {
+            self.violations.push(ProtocolViolation::TooManyEmitters);
+        }
+        let handle = EmitterHandle(self.next_emitter);
+        self.next_emitter += 1;
+        self.created_emitters.push(handle);
+        self.live_emitters.insert(
+            handle,
+            RecordedEmitter {
+                params: params.sanitized(),
+                position: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                velocity: Vec3::ZERO,
+            },
+        );
+        handle
+    }
+
+    fn set_emitter(&mut self, emitter: EmitterHandle, params: &EmitterParams) {
+        if !params.is_valid() {
+            self.violations.push(ProtocolViolation::InvalidEmitter);
+        }
+        match self.live_emitters.get_mut(&emitter) {
+            Some(live) => live.params = params.sanitized(),
+            None => self
+                .violations
+                .push(ProtocolViolation::UnknownEmitter(emitter)),
+        }
+    }
+
+    fn destroy_emitter(&mut self, emitter: EmitterHandle) {
+        if self.live_emitters.remove(&emitter).is_some() {
+            self.destroyed_emitters.push(emitter);
+        } else {
+            self.violations
+                .push(ProtocolViolation::UnknownEmitter(emitter));
+        }
+    }
+
+    fn place_emitter(&mut self, emitter: EmitterHandle, transform: &Transform, velocity: Vec3) {
+        match self.live_emitters.get_mut(&emitter) {
+            Some(live) => {
+                live.position = transform.position;
+                live.rotation = transform.rotation;
+                live.velocity = velocity;
+            }
+            None => self
+                .violations
+                .push(ProtocolViolation::UnknownEmitter(emitter)),
+        }
+    }
+
+    fn emit(&mut self, emitter: EmitterHandle, count: u32) {
+        match self.live_emitters.get(&emitter) {
+            Some(live) => self.bursts.push(RecordedBurst {
+                emitter,
+                count,
+                position: live.position,
+                rotation: live.rotation,
+                velocity: live.velocity,
+                params: live.params,
+            }),
+            None => self
+                .violations
+                .push(ProtocolViolation::UnknownEmitter(emitter)),
+        }
+    }
+
+    fn advance_particles(&mut self, dt: f32) {
+        if dt.is_finite() && dt > 0.0 {
+            self.particle_time += f64::from(dt);
+        }
+    }
+
+    fn shift_particles(&mut self, offset: Vec3) {
+        self.particle_shift += offset;
+        for live in self.live_emitters.values_mut() {
+            live.position += offset;
+        }
+    }
+}
+
+#[cfg(test)]
+mod particle_tests {
+    use super::*;
+
+    #[test]
+    fn a_burst_is_recorded_from_where_its_emitter_was_placed() {
+        let mut r = NullRenderer::new();
+        let sparks = r.create_emitter(&EmitterParams::default());
+        r.place_emitter(
+            sparks,
+            &Transform::from_position(Vec3::new(1.0, 2.0, 3.0)),
+            Vec3::new(0.0, 0.0, -20.0),
+        );
+        r.emit(sparks, 40);
+        r.place_emitter(sparks, &Transform::from_position(Vec3::X), Vec3::ZERO);
+        r.emit(sparks, 5);
+        let bursts = r.bursts();
+        assert_eq!(bursts.len(), 2);
+        assert_eq!(
+            (bursts[0].count, bursts[0].position),
+            (40, Vec3::new(1.0, 2.0, 3.0))
+        );
+        assert_eq!(bursts[0].velocity, Vec3::new(0.0, 0.0, -20.0));
+        assert_eq!((bursts[1].count, bursts[1].position), (5, Vec3::X));
+        assert!(r.protocol_violations().is_empty());
+    }
+
+    #[test]
+    fn a_destroyed_or_unknown_emitter_is_a_violation_and_records_nothing() {
+        let mut r = NullRenderer::new();
+        let e = r.create_emitter(&EmitterParams::default());
+        r.destroy_emitter(e);
+        r.emit(e, 10);
+        r.destroy_emitter(e);
+        r.place_emitter(EmitterHandle(99), &Transform::identity(), Vec3::ZERO);
+        assert!(r.bursts().is_empty());
+        assert_eq!(r.live_emitter_count(), 0);
+        assert_eq!(
+            r.protocol_violations(),
+            &[
+                ProtocolViolation::UnknownEmitter(e),
+                ProtocolViolation::UnknownEmitter(e),
+                ProtocolViolation::UnknownEmitter(EmitterHandle(99)),
+            ]
+        );
+    }
+
+    #[test]
+    fn invalid_params_are_a_violation_but_still_take_effect_in_range() {
+        let mut r = NullRenderer::new();
+        let e = r.create_emitter(&EmitterParams {
+            rate: -1.0,
+            ..EmitterParams::default()
+        });
+        assert_eq!(
+            r.protocol_violations(),
+            &[ProtocolViolation::InvalidEmitter]
+        );
+        assert_eq!(r.emitter(e).map(|live| live.params.rate), Some(0.0));
+        r.set_emitter(
+            e,
+            &EmitterParams {
+                rate: 30.0,
+                ..EmitterParams::default()
+            },
+        );
+        assert_eq!(r.emitter(e).map(|live| live.params.rate), Some(30.0));
+    }
+
+    #[test]
+    fn time_and_shifts_add_up_and_a_shift_moves_the_emitters() {
+        let mut r = NullRenderer::new();
+        let e = r.create_emitter(&EmitterParams::default());
+        r.place_emitter(e, &Transform::from_position(Vec3::Z), Vec3::ZERO);
+        r.advance_particles(0.5);
+        r.advance_particles(0.25);
+        r.advance_particles(-1.0);
+        r.shift_particles(Vec3::new(0.0, 0.0, 100.0));
+        assert_eq!(r.particle_time(), 0.75);
+        assert_eq!(r.particle_shift(), Vec3::new(0.0, 0.0, 100.0));
+        assert_eq!(
+            r.emitter(e).map(|live| live.position),
+            Some(Vec3::new(0.0, 0.0, 101.0))
+        );
+    }
+
+    #[test]
+    fn past_the_emitter_limit_a_create_is_a_violation() {
+        let mut r = NullRenderer::new();
+        for _ in 0..MAX_EMITTERS {
+            r.create_emitter(&EmitterParams::default());
+        }
+        assert!(r.protocol_violations().is_empty());
+        r.create_emitter(&EmitterParams::default());
+        assert_eq!(
+            r.protocol_violations(),
+            &[ProtocolViolation::TooManyEmitters]
+        );
     }
 }

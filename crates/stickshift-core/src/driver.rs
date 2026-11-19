@@ -277,6 +277,11 @@ pub fn drive_frame<G: Game>(
     // numerically fragile. Pushed here, next to the matrix it must agree with, so
     // the two can never describe different cameras.
     renderer.set_camera_position(lp.camera.position());
+    // Particles move on simulated time: the fixed steps this frame ran, so they
+    // keep pace with the game (and stand still on a frame that ran none). Once
+    // per frame, after the updates that fired this frame's bursts and before the
+    // frame that draws them.
+    renderer.advance_particles(steps as f32 * FIXED_DT);
 
     // Exactly one render per frame, carrying the interpolation alpha.
     lp.perf.mark_start();
@@ -401,6 +406,37 @@ mod tests {
         assert_eq!(steps2, 0);
         assert_eq!(game.updates, MAX_STEPS_PER_FRAME);
         assert_eq!(game.renders, 2);
+    }
+
+    /// Particles advance on simulated time: each frame by exactly the fixed steps
+    /// it ran, so a stall clamped to `MAX_STEPS_PER_FRAME` moves them only as far
+    /// as the game moved, and a frame that ran no step moves them not at all.
+    #[test]
+    fn particles_advance_by_the_fixed_steps_each_frame_ran() {
+        let mut lp = Loop::new();
+        let mut renderer = NullRenderer::new();
+        let mut game = Counter::default();
+        lp.init_once(&mut game, &mut renderer);
+        let step = f64::from(FIXED_DT);
+
+        drive_frame(
+            &mut lp,
+            &mut game,
+            &mut renderer,
+            Duration::from_secs_f64(3.0 * step),
+        );
+        assert!((renderer.particle_time() - 3.0 * step).abs() < 1e-6);
+        drive_frame(&mut lp, &mut game, &mut renderer, Duration::ZERO);
+        assert!(
+            (renderer.particle_time() - 3.0 * step).abs() < 1e-6,
+            "no step, no time"
+        );
+        drive_frame(&mut lp, &mut game, &mut renderer, Duration::from_secs(10));
+        let clamped = (3 + MAX_STEPS_PER_FRAME) as f64 * step;
+        assert!(
+            (renderer.particle_time() - clamped).abs() < 1e-5,
+            "only the clamped steps"
+        );
     }
 
     /// The engine owns the camera and pushes its view-projection across the render

@@ -178,14 +178,13 @@ inline float3 present_color(float3 linearHdr) {
 // Distance fog
 // ============================================================================
 
-/// Exponential-squared distance fog blending `color` toward the horizon/sky
-/// color, **attenuated by world height**. Returns linear color (present happens
-/// afterward). Hides the streaming spawn edge by fading far geometry into the sky,
-/// while the height falloff keeps the fog hugging the ground so tall geometry (the
-/// skyline backdrop, high buildings) stays readable above it.
-inline float3 apply_fog(float3 color, float viewDist, float worldY, constant Light& light) {
+/// How much fog stands between the eye and a point `viewDist` away at height
+/// `worldY`: `0` none, `1` all sky. Exponential-squared in distance,
+/// **attenuated by world height**. `apply_fog` blends a colour by it; additive
+/// particles fade by it instead, having no colour of their own to blend.
+inline float fog_amount(float viewDist, float worldY, constant Light& light) {
     if (light.fogDensity <= 0.0) {
-        return color;
+        return 0.0;
     }
     float d = max(viewDist - light.fogStart, 0.0) * light.fogDensity;
     float fog = 1.0 - exp(-d * d);
@@ -195,8 +194,19 @@ inline float3 apply_fog(float3 color, float viewDist, float worldY, constant Lig
         fog *= exp(-max(worldY - light.fogHeight, 0.0) / light.fogFalloff);
     }
 
-    fog = clamp(fog, 0.0, 1.0);
-    return mix(color, light.skyHorizonColor, fog);
+    return clamp(fog, 0.0, 1.0);
+}
+
+/// Exponential-squared distance fog blending `color` toward the horizon/sky
+/// color, **attenuated by world height**. Returns linear color (present happens
+/// afterward). Hides the streaming spawn edge by fading far geometry into the sky,
+/// while the height falloff keeps the fog hugging the ground so tall geometry (the
+/// skyline backdrop, high buildings) stays readable above it.
+inline float3 apply_fog(float3 color, float viewDist, float worldY, constant Light& light) {
+    if (light.fogDensity <= 0.0) {
+        return color;
+    }
+    return mix(color, light.skyHorizonColor, fog_amount(viewDist, worldY, light));
 }
 
 // ============================================================================
@@ -710,4 +720,273 @@ fragment float4 overlay_fragment_main(OverlayVertexOut in [[stage_in]],
     float width = max(fwidth(dist), 1e-4);
     float coverage = smoothstep(0.5 - width, 0.5 + width, dist);
     return float4(in.color.rgb, in.color.a * coverage);
+}
+
+// ============================================================================
+// Particles
+// ============================================================================
+//
+// Particles live only here, in one ring buffer of slots the CPU never reads
+// back (src/particles.rs has the CPU half: what to spawn, and which slots are
+// live). Each frame runs `particle_update` over the particles already there,
+// then `particle_spawn` over the frame's new ones, in a compute pass before the
+// scene pass; the scene pass then draws the live slots as instanced quads,
+// after the geometry and before the overlay.
+
+/// One particle: 48 bytes. A dead particle has `age >= lifetime`.
+struct Particle {
+    float4 positionAge;                // xyz world position, w age in seconds
+    float4 velocityLife;               // xyz velocity, w lifetime in seconds
+    uint4  meta;                       // x its emitter's slot in the table
+};
+
+/// One emitter's params. Mirrors the Rust `EmitterUniforms`, 128 bytes.
+struct EmitterParams {
+    float4 colorStart;                 // linear RGBA at the start of life
+    float4 colorEnd;                   // ... and at the end
+    float4 gravityDrag;                // xyz gravity, w drag
+    float4 look;                       // size start, size end, stretch, blend (0 add, 1 alpha)
+    float4 floorParams;                // height, bounce, friction, 1 if there is a floor
+    float4 directionSpread;            // xyz unit direction (emitter frame), w cos(spread)
+    float4 lifetimeSpeed;              // lifetime min, max, speed min, max
+    float4 radiusInherit;              // spawn radius, share of emitter velocity, -, -
+};
+
+/// A run of particles to spawn. Mirrors the Rust `SpawnBatch`, 80 bytes.
+struct SpawnBatch {
+    float4 from;                       // xyz path start, w seconds into the frame it starts
+    float4 to;                         // xyz path end, w the span's length (0 for a burst)
+    float4 rotation;                   // the emitter's rotation, quaternion xyzw
+    float4 velocity;                   // xyz the emitter's velocity
+    uint4  meta;                       // emitter slot, first spawn index, count, seed
+};
+
+/// The compute kernels' per-frame values. Mirrors the Rust `ParticleStep`.
+struct ParticleStep {
+    float4 shiftDt;                    // xyz shift for the particles already there, w seconds
+    uint4  window;                     // their first slot, count; ring size; spawn count
+    uint4  spawn;                      // first spawn slot, batch count
+};
+
+/// The draw's per-frame values. Mirrors the Rust `ParticleView`.
+struct ParticleView {
+    float4x4 viewProjection;           // world -> clip
+    float4   camera;                   // xyz camera position, w the blend drawn
+    uint4    window;                   // first live slot, count, ring size
+};
+
+/// A 32-bit integer hash (PCG): the particles' random numbers come from hashing
+/// a batch's seed with the particle's index, so the same batch spawns the same
+/// particles.
+inline uint pcg_hash(uint v) {
+    uint state = v * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+/// The next random number in `[0, 1)` from `state`.
+inline float next_unit(thread uint& state) {
+    state = pcg_hash(state);
+    return float(state >> 8) * (1.0 / 16777216.0);
+}
+
+/// `v` turned by the unit quaternion `q` (xyzw).
+inline float3 rotate_by(float4 q, float3 v) {
+    float3 t = 2.0 * cross(q.xyz, v);
+    return v + q.w * t + cross(q.xyz, t);
+}
+
+/// Move a particle on `dt` seconds: drag, gravity, then the floor.
+inline void integrate(thread float3& p, thread float3& v, float dt, constant EmitterParams& e) {
+    if (dt <= 0.0) {
+        return;
+    }
+    v *= exp(-e.gravityDrag.w * dt);
+    v += e.gravityDrag.xyz * dt;
+    p += v * dt;
+    float floorY = e.floorParams.x;
+    if (e.floorParams.w > 0.5 && p.y < floorY && v.y < 0.0) {
+        p.y = floorY + (floorY - p.y) * e.floorParams.y;
+        v.y = -v.y * e.floorParams.y;
+        v.xz *= 1.0 - e.floorParams.z;
+    }
+}
+
+/// Move every particle already in the ring on by the frame's time, shifted
+/// with the world. Dead particles are left as they are.
+kernel void particle_update(device Particle* particles [[buffer(0)]],
+                            constant EmitterParams* emitters [[buffer(1)]],
+                            constant ParticleStep& step [[buffer(2)]],
+                            uint id [[thread_position_in_grid]]) {
+    if (id >= step.window.y) {
+        return;
+    }
+    uint slot = (step.window.x + id) % step.window.z;
+    Particle part = particles[slot];
+    if (part.positionAge.w >= part.velocityLife.w) {
+        return;
+    }
+    float3 p = part.positionAge.xyz + step.shiftDt.xyz;
+    float3 v = part.velocityLife.xyz;
+    integrate(p, v, step.shiftDt.w, emitters[part.meta.x]);
+    part.positionAge = float4(p, part.positionAge.w + step.shiftDt.w);
+    part.velocityLife.xyz = v;
+    particles[slot] = part;
+}
+
+/// Spawn the frame's new particles into the next slots of the ring: each
+/// leaves from along its batch's path, within its emitter's radius and cone,
+/// and is moved on by the part of the frame after it was born.
+kernel void particle_spawn(device Particle* particles [[buffer(0)]],
+                           constant EmitterParams* emitters [[buffer(1)]],
+                           constant ParticleStep& step [[buffer(2)]],
+                           constant SpawnBatch* batches [[buffer(3)]],
+                           uint id [[thread_position_in_grid]]) {
+    if (id >= step.window.w) {
+        return;
+    }
+    // The batch this particle is in: the last one starting at or before it.
+    uint lo = 0;
+    uint hi = step.spawn.y;
+    while (hi - lo > 1) {
+        uint mid = (lo + hi) / 2;
+        if (batches[mid].meta.y <= id) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    constant SpawnBatch& batch = batches[lo];
+    constant EmitterParams& e = emitters[batch.meta.x];
+    uint index = id - batch.meta.y;
+    uint state = pcg_hash(batch.meta.w ^ pcg_hash(index));
+
+    // When and where: spread evenly over the span and along the path.
+    float along = (float(index) + next_unit(state)) / float(max(batch.meta.z, 1u));
+    float born = batch.from.w + along * batch.to.w;
+    float3 p = mix(batch.from.xyz, batch.to.xyz, along);
+    float cosBall = next_unit(state) * 2.0 - 1.0;
+    float sinBall = sqrt(max(0.0, 1.0 - cosBall * cosBall));
+    float ballTurn = next_unit(state) * 6.28318530718;
+    float3 ball = float3(sinBall * cos(ballTurn), cosBall, sinBall * sin(ballTurn));
+    p += ball * pow(next_unit(state), 1.0 / 3.0) * e.radiusInherit.x;
+
+    // Which way: evenly over the cone around the emitter's direction.
+    float3 axis = e.directionSpread.xyz;
+    float cosTheta = mix(1.0, e.directionSpread.w, next_unit(state));
+    float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+    float turn = next_unit(state) * 6.28318530718;
+    float3 helper = abs(axis.y) < 0.99 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
+    float3 across = normalize(cross(helper, axis));
+    float3 dir = axis * cosTheta + (across * cos(turn) + cross(axis, across) * sin(turn)) * sinTheta;
+    dir = rotate_by(batch.rotation, dir);
+
+    float speed = mix(e.lifetimeSpeed.z, e.lifetimeSpeed.w, next_unit(state));
+    float3 v = dir * speed + batch.velocity.xyz * e.radiusInherit.y;
+    float life = mix(e.lifetimeSpeed.x, e.lifetimeSpeed.y, next_unit(state));
+    float age = max(step.shiftDt.w - born, 0.0);
+    integrate(p, v, age, e);
+
+    Particle part;
+    part.positionAge = float4(p, age);
+    part.velocityLife = float4(v, life);
+    part.meta = uint4(batch.meta.x, 0, 0, 0);
+    particles[(step.spawn.x + id) % step.window.z] = part;
+}
+
+struct ParticleOut {
+    float4 position [[position]];
+    float4 color;                      // linear RGBA at this point of its life
+    float2 corner;                     // -1..1 across the quad, for its soft edge
+    float  viewDist;                   // for fog
+    float  worldY;                     // for fog's height falloff
+};
+
+/// The six corners of a quad, as two triangles.
+constant float2 PARTICLE_CORNERS[6] = {
+    float2(-1.0, -1.0), float2(1.0, -1.0), float2(1.0, 1.0),
+    float2(-1.0, -1.0), float2(1.0, 1.0), float2(-1.0, 1.0),
+};
+
+/// One corner of one live particle's quad: facing the camera, or for an emitter
+/// with a stretch, a streak along its motion (as seen from the camera) whose
+/// head is the particle. A dead particle, or one drawn by the other blend, is
+/// put outside the clip volume so its quad draws nothing.
+vertex ParticleOut particle_vertex_main(uint vid [[vertex_id]],
+                                        uint iid [[instance_id]],
+                                        const device Particle* particles [[buffer(0)]],
+                                        constant EmitterParams* emitters [[buffer(1)]],
+                                        constant ParticleView& view [[buffer(2)]]) {
+    ParticleOut out;
+    out.position = float4(0.0, 0.0, 2.0, 1.0);
+    out.color = float4(0.0);
+    out.corner = float2(0.0);
+    out.viewDist = 0.0;
+    out.worldY = 0.0;
+
+    Particle part = particles[(view.window.x + iid) % view.window.z];
+    float age = part.positionAge.w;
+    float life = part.velocityLife.w;
+    constant EmitterParams& e = emitters[part.meta.x];
+    if (age >= life || abs(e.look.w - view.camera.w) > 0.5) {
+        return out;
+    }
+    float t = saturate(age / life);
+    float size = mix(e.look.x, e.look.y, t);
+
+    float3 p = part.positionAge.xyz;
+    float3 toEye = view.camera.xyz - p;
+    float eyeDist = length(toEye);
+    float3 d = eyeDist > 1e-5 ? toEye / eyeDist : float3(0.0, 0.0, 1.0);
+    float3 v = part.velocityLife.xyz;
+    float3 crossing = v - d * dot(v, d);
+    float crossingSpeed = length(crossing);
+
+    float3 along;
+    float3 side;
+    float length_ = size;
+    float3 centre = p;
+    if (e.look.z > 0.0 && crossingSpeed > 1e-4) {
+        along = crossing / crossingSpeed;
+        side = normalize(cross(d, along));
+        length_ = size + crossingSpeed * e.look.z;
+        centre = p - along * (length_ - size) * 0.5;
+    } else {
+        float3 up = abs(d.y) < 0.99 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
+        side = normalize(cross(up, d));
+        along = cross(d, side);
+    }
+
+    float2 corner = PARTICLE_CORNERS[vid];
+    float3 world = centre + along * (corner.x * length_ * 0.5) + side * (corner.y * size * 0.5);
+    out.position = view.viewProjection * float4(world, 1.0);
+    out.color = mix(e.colorStart, e.colorEnd, t);
+    out.corner = corner;
+    out.viewDist = length(world - view.camera.xyz);
+    out.worldY = world.y;
+    return out;
+}
+
+/// How much of a particle's quad is lit at `corner`: full at its middle,
+/// fading to nothing at its edges.
+inline float particle_shape(float2 corner) {
+    return saturate(1.0 - corner.x * corner.x) * saturate(1.0 - corner.y * corner.y);
+}
+
+/// An additive particle: its colour, presented, scaled by its alpha, its shape
+/// and how much fog is in front of it, added onto the frame (the blend adds
+/// `rgb` and keeps the frame's alpha).
+fragment float4 particle_additive_fragment(ParticleOut in [[stage_in]],
+                                           constant Light& light [[buffer(0)]]) {
+    float fade = in.color.a * particle_shape(in.corner)
+        * (1.0 - fog_amount(in.viewDist, in.worldY, light));
+    return float4(present_color(in.color.rgb) * fade, 0.0);
+}
+
+/// An alpha particle: its colour fogged like the scene and presented, covering
+/// the frame by its alpha and shape.
+fragment float4 particle_alpha_fragment(ParticleOut in [[stage_in]],
+                                        constant Light& light [[buffer(0)]]) {
+    float3 color = apply_fog(in.color.rgb, in.viewDist, in.worldY, light);
+    return float4(present_color(color), in.color.a * particle_shape(in.corner));
 }
