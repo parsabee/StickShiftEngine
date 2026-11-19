@@ -330,7 +330,9 @@ encoder runs `particle_update` over the particles already there (drag, gravity, 
 floating-origin shift) and `particle_spawn` over the frame's new ones. The scene pass then draws
 the live slots as one instanced six-vertex quad each, per blend in use, after the geometry and
 before the overlay: depth-tested against the scene but never writing depth, fogged like it, and
-either camera-facing or stretched into a streak along the particle's motion. Additive particles need
+either camera-facing, stretched into a streak along the particle's motion, or (`ParticleFacing::Flat`)
+lying flat in the horizontal plane, turned to the heading its emitter pointed when it was made,
+which the spawn kernel stores with the particle: marks on the ground. Additive particles need
 no ordering; alpha particles draw in spawn order, unsorted.
 
 **Planned on the CPU.** What the CPU does is plain arithmetic in `stickshift-render/src/particles.rs`,

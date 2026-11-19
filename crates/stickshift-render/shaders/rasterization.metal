@@ -737,7 +737,7 @@ fragment float4 overlay_fragment_main(OverlayVertexOut in [[stage_in]],
 struct Particle {
     float4 positionAge;                // xyz world position, w age in seconds
     float4 velocityLife;               // xyz velocity, w lifetime in seconds
-    uint4  meta;                       // x its emitter's slot in the table
+    uint4  meta;                       // x its emitter's slot, y its heading (float bits)
 };
 
 /// One emitter's params. Mirrors the Rust `EmitterUniforms`, 128 bytes.
@@ -749,7 +749,7 @@ struct EmitterParams {
     float4 floorParams;                // height, bounce, friction, 1 if there is a floor
     float4 directionSpread;            // xyz unit direction (emitter frame), w cos(spread)
     float4 lifetimeSpeed;              // lifetime min, max, speed min, max
-    float4 radiusInherit;              // spawn radius, share of emitter velocity, -, -
+    float4 radiusInheritFacing;        // spawn radius, share of emitter velocity, facing (0 camera, 1 flat), -
 };
 
 /// A run of particles to spawn. Mirrors the Rust `SpawnBatch`, 80 bytes.
@@ -869,7 +869,7 @@ kernel void particle_spawn(device Particle* particles [[buffer(0)]],
     float sinBall = sqrt(max(0.0, 1.0 - cosBall * cosBall));
     float ballTurn = next_unit(state) * 6.28318530718;
     float3 ball = float3(sinBall * cos(ballTurn), cosBall, sinBall * sin(ballTurn));
-    p += ball * pow(next_unit(state), 1.0 / 3.0) * e.radiusInherit.x;
+    p += ball * pow(next_unit(state), 1.0 / 3.0) * e.radiusInheritFacing.x;
 
     // Which way: evenly over the cone around the emitter's direction.
     float3 axis = e.directionSpread.xyz;
@@ -882,15 +882,20 @@ kernel void particle_spawn(device Particle* particles [[buffer(0)]],
     dir = rotate_by(batch.rotation, dir);
 
     float speed = mix(e.lifetimeSpeed.z, e.lifetimeSpeed.w, next_unit(state));
-    float3 v = dir * speed + batch.velocity.xyz * e.radiusInherit.y;
+    float3 v = dir * speed + batch.velocity.xyz * e.radiusInheritFacing.y;
     float life = mix(e.lifetimeSpeed.x, e.lifetimeSpeed.y, next_unit(state));
     float age = max(step.shiftDt.w - born, 0.0);
     integrate(p, v, age, e);
 
+    // The heading the emitter pointed along, for a flat particle: the way
+    // `(sin h, 0, -cos h)` points, as a turn from `-Z` toward `+X`.
+    float3 pointing = rotate_by(batch.rotation, axis);
+    float heading = length(pointing.xz) > 1e-6 ? atan2(pointing.x, -pointing.z) : 0.0;
+
     Particle part;
     part.positionAge = float4(p, age);
     part.velocityLife = float4(v, life);
-    part.meta = uint4(batch.meta.x, 0, 0, 0);
+    part.meta = uint4(batch.meta.x, as_type<uint>(heading), 0, 0);
     particles[(step.spawn.x + id) % step.window.z] = part;
 }
 
@@ -910,7 +915,8 @@ constant float2 PARTICLE_CORNERS[6] = {
 
 /// One corner of one live particle's quad: facing the camera, or for an emitter
 /// with a stretch, a streak along its motion (as seen from the camera) whose
-/// head is the particle. A dead particle, or one drawn by the other blend, is
+/// head is the particle, or for a flat emitter, a square lying in the
+/// horizontal plane turned to the heading it was made with. A dead particle, or one drawn by the other blend, is
 /// put outside the clip volume so its quad draws nothing.
 vertex ParticleOut particle_vertex_main(uint vid [[vertex_id]],
                                         uint iid [[instance_id]],
@@ -946,7 +952,11 @@ vertex ParticleOut particle_vertex_main(uint vid [[vertex_id]],
     float3 side;
     float length_ = size;
     float3 centre = p;
-    if (e.look.z > 0.0 && crossingSpeed > 1e-4) {
+    if (e.radiusInheritFacing.z > 0.5) {
+        float heading = as_type<float>(part.meta.y);
+        along = float3(sin(heading), 0.0, -cos(heading));
+        side = float3(cos(heading), 0.0, sin(heading));
+    } else if (e.look.z > 0.0 && crossingSpeed > 1e-4) {
         along = crossing / crossingSpeed;
         side = normalize(cross(d, along));
         length_ = size + crossingSpeed * e.look.z;

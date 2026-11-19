@@ -15,12 +15,13 @@
 //! Like the other backend tests these **skip** when no Metal device is available
 //! (GPU-less CI) and run + assert on a real Mac.
 
-use stickshift_math::glam::{Mat4, Vec3};
+use stickshift_math::glam::{Mat4, Quat, Vec3};
 use stickshift_math::Transform;
 use stickshift_render::MetalRenderer;
 use stickshift_render_api::{
     EmitterHandle, EmitterParams, Floor, FrameRecorder, MaterialParams, MeshData, MeshHandle,
-    ParticleBlend, ParticleSystem, PipelineDescriptor, PipelineHandle, PipelineKind, RenderDevice,
+    ParticleBlend, ParticleFacing, ParticleSystem, PipelineDescriptor, PipelineHandle,
+    PipelineKind, RenderDevice,
 };
 
 mod common;
@@ -33,14 +34,18 @@ const DT: f32 = 1.0 / 60.0;
 /// A renderer looking at the origin from 5 units down `+Z`, or `None` (having
 /// reported the skip) without a Metal device.
 fn renderer() -> Option<MetalRenderer> {
+    renderer_from(Vec3::new(0.0, 0.0, 5.0), Vec3::Y)
+}
+
+/// A renderer looking at the origin from `eye`, with `up` up the screen.
+fn renderer_from(eye: Vec3, up: Vec3) -> Option<MetalRenderer> {
     let Some(mut r) = MetalRenderer::new_offscreen(SIZE, SIZE) else {
         common::no_gpu();
         return None;
     };
-    let eye = Vec3::new(0.0, 0.0, 5.0);
     r.set_view_projection(
         Mat4::perspective_rh(60f32.to_radians(), 1.0, 0.1, 100.0)
-            * Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y),
+            * Mat4::look_at_rh(eye, Vec3::ZERO, up),
     );
     r.set_camera_position(eye);
     Some(r)
@@ -407,5 +412,65 @@ fn particles_add_no_allocations_per_frame() {
         r.allocation_count(),
         before,
         "no buffer allocated per frame"
+    );
+}
+
+/// A flat glowing square, one unit across.
+fn flat() -> EmitterParams {
+    EmitterParams {
+        facing: ParticleFacing::Flat,
+        direction: Vec3::NEG_Z,
+        size: [1.0, 1.0],
+        ..glow()
+    }
+}
+
+#[test]
+fn a_flat_particle_lies_on_the_ground() {
+    // Edge on, from level with it, there is nothing to see...
+    let Some(mut r) = renderer() else { return };
+    let base = frame(&mut r, None);
+    let e = emitter(&mut r, &flat(), Vec3::ZERO);
+    r.emit(e, 1);
+    assert_eq!(step(&mut r), base, "edge on, a flat particle draws nothing");
+
+    // ...and from above, the square it lies in.
+    let Some(mut r) = renderer_from(Vec3::new(0.0, 5.0, 0.0), Vec3::NEG_Z) else {
+        return;
+    };
+    let base = frame(&mut r, None);
+    let e = emitter(&mut r, &flat(), Vec3::ZERO);
+    r.emit(e, 1);
+    let seen = lit(&step(&mut r), &base);
+    assert!(
+        seen.len() > 30,
+        "from above it covers {} pixels",
+        seen.len()
+    );
+}
+
+#[test]
+fn a_flat_particle_turns_to_the_way_its_emitter_points() {
+    // From above, a square turned 45° spreads further across the frame.
+    let across = |turn: f32| {
+        let mut r = renderer_from(Vec3::new(0.0, 5.0, 0.0), Vec3::NEG_Z)?;
+        let base = frame(&mut r, None);
+        let e = r.create_emitter(&flat());
+        r.place_emitter(
+            e,
+            &Transform::from_position_rotation(Vec3::ZERO, Quat::from_rotation_y(turn)),
+            Vec3::ZERO,
+        );
+        r.emit(e, 1);
+        let seen = lit(&step(&mut r), &base);
+        let xs = seen.iter().map(|&(x, _)| x);
+        Some(xs.clone().max()? - xs.min()?)
+    };
+    let (Some(square), Some(turned)) = (across(0.0), across(45f32.to_radians())) else {
+        return;
+    };
+    assert!(
+        turned as f32 > square as f32 * 1.15,
+        "turned 45°, {turned} pixels across against {square}"
     );
 }

@@ -44,7 +44,10 @@
 //! [`size`](EmitterParams::size) and [`color`](EmitterParams::color) blending from
 //! their start to their end values over its life. With a
 //! [`stretch`](EmitterParams::stretch) it is drawn as a streak along its motion
-//! instead, as long as the distance it covers in that time: sparks, rain. Particles
+//! instead, as long as the distance it covers in that time: sparks, rain. With
+//! [`ParticleFacing::Flat`] it lies flat in the horizontal plane instead, turned
+//! the way its emitter pointed when it was made: tyre marks, puddles, scorch
+//! marks, laid just above the ground they mark. Particles
 //! are depth-tested against the scene (hidden behind what is in front of them)
 //! but never hide anything, and the scene's fog fades them with distance like
 //! everything else. [`ParticleBlend::Additive`] particles add light (sparks, fire,
@@ -80,6 +83,20 @@ pub enum ParticleBlend {
     /// It covers what is behind it by its alpha: smoke, dust. Particles draw in
     /// the order they were spawned, not sorted by depth.
     Alpha,
+}
+
+/// Which way a particle's quad faces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ParticleFacing {
+    /// Toward the camera, or as a streak along its motion with a
+    /// [`stretch`](EmitterParams::stretch): sparks, smoke, rain.
+    #[default]
+    Camera,
+    /// Flat in the horizontal plane, a square of its size turned to the
+    /// heading its emitter's [`direction`](EmitterParams::direction) had when
+    /// it was made (as turned by the emitter's placement): marks on the ground.
+    /// The stretch does not apply.
+    Flat,
 }
 
 /// A horizontal surface particles bounce off.
@@ -146,6 +163,8 @@ pub struct EmitterParams {
     pub stretch: f32,
     /// How a particle combines with what is behind it.
     pub blend: ParticleBlend,
+    /// Which way a particle's quad faces.
+    pub facing: ParticleFacing,
 }
 
 impl Default for EmitterParams {
@@ -167,6 +186,7 @@ impl Default for EmitterParams {
             color: [[1.0, 1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 0.0]],
             stretch: 0.0,
             blend: ParticleBlend::Additive,
+            facing: ParticleFacing::Camera,
         }
     }
 }
@@ -227,6 +247,7 @@ impl EmitterParams {
             ],
             stretch: num(self.stretch, fallback.stretch, 0.0, f32::MAX),
             blend: self.blend,
+            facing: self.facing,
         }
     }
 }

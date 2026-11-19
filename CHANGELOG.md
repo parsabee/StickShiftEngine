@@ -11,6 +11,15 @@ API**.
 
 ### Added
 
+- **Flat particles**, for marks on the ground: `EmitterParams::facing` takes
+  `ParticleFacing::Flat` to lay each particle flat in the horizontal plane, a square of its size
+  turned to the heading its emitter pointed when it was made, instead of facing the camera. An
+  emitter placed just above the ground and moved along it lays a mark: tyre marks, puddles, scorch
+  marks. `ParticleFacing::Camera` is the default, so existing emitters are unchanged; a struct
+  literal of `EmitterParams` that names every field must now set `facing`.
+
+### Added
+
 - **GPU particles.** A third seam trait, `ParticleSystem`, gives a game particle effects without
   touching a particle: it creates emitters from plain-data `EmitterParams` (rate or bursts,
   lifetime, speed, direction and spread, spawn radius, inherited velocity, gravity, drag, an

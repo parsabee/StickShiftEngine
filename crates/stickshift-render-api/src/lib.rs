@@ -38,7 +38,8 @@
 //!   [`MaterialParams::emissive`], what lights a scene after dark.
 //! - [`ParticleSystem`] — particle effects: emitters a game creates with
 //!   [`EmitterParams`], places, and fires, at any time; the backend simulates and
-//!   draws their particles with every frame (up to [`MAX_PARTICLES`] of them).
+//!   draws their particles with every frame (up to [`MAX_PARTICLES`] of them), facing the
+//!   camera or lying flat on the ground ([`ParticleFacing`]).
 //! - [`RenderSettings`] / [`ShadowQuality`] — render quality settings:
 //!   shadow tier and range and a draw-distance scale, pushed with
 //!   [`RenderDevice::set_render_settings`]; the drawable's resolution goes through
@@ -99,7 +100,8 @@ pub use light::{Light, LightKind, LIGHT_MIN_DISTANCE, MAX_LIGHTS, MAX_SPOT_ANGLE
 pub use null::{NullRenderer, ProtocolViolation, RecordedBurst, RecordedDraw, RecordedEmitter};
 pub use overlay::{FontAtlas, Glyph, OverlayFill, OverlayQuad};
 pub use particles::{
-    EmitterParams, Floor, ParticleBlend, ParticleSystem, MAX_EMITTERS, MAX_PARTICLES,
+    EmitterParams, Floor, ParticleBlend, ParticleFacing, ParticleSystem, MAX_EMITTERS,
+    MAX_PARTICLES,
 };
 pub use recorder::FrameRecorder;
 pub use settings::{RenderSettings, ShadowQuality};
