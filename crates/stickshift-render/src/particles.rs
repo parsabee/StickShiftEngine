@@ -43,7 +43,7 @@ use std::collections::VecDeque;
 
 use stickshift_math::glam::{Quat, Vec3};
 use stickshift_render_api::{
-    EmitterHandle, EmitterParams, ParticleBlend, MAX_EMITTERS, MAX_PARTICLES,
+    EmitterHandle, EmitterParams, ParticleBlend, ParticleFacing, MAX_EMITTERS, MAX_PARTICLES,
 };
 
 /// The most spawn batches one frame holds: bursts fired plus emitters emitting
@@ -71,8 +71,9 @@ pub struct EmitterUniforms {
     pub direction_spread: [f32; 4],
     /// Shortest and longest lifetime, slowest and fastest speed.
     pub lifetime_speed: [f32; 4],
-    /// Spawn radius, share of the emitter's velocity inherited, unused, unused.
-    pub radius_inherit: [f32; 4],
+    /// Spawn radius, share of the emitter's velocity inherited, the facing
+    /// (`0` the camera, `1` flat), unused.
+    pub radius_inherit_facing: [f32; 4],
 }
 
 /// Byte size of one [`EmitterUniforms`]; the shader's `EmitterParams` must match.
@@ -110,7 +111,15 @@ impl EmitterUniforms {
                 params.speed[0],
                 params.speed[1],
             ],
-            radius_inherit: [params.radius, params.inherit, 0.0, 0.0],
+            radius_inherit_facing: [
+                params.radius,
+                params.inherit,
+                match params.facing {
+                    ParticleFacing::Camera => 0.0,
+                    ParticleFacing::Flat => 1.0,
+                },
+                0.0,
+            ],
         }
     }
 }
@@ -821,6 +830,7 @@ mod tests {
             blend: ParticleBlend::Alpha,
             spread_deg: 90.0,
             direction: Vec3::new(0.0, 0.0, -2.0),
+            facing: ParticleFacing::Flat,
             ..EmitterParams::default()
         });
         let frame = p.take_frame();
@@ -834,6 +844,11 @@ mod tests {
             "a unit direction"
         );
         assert!(table.direction_spread[3].abs() < 1e-6, "cos 90°");
+        assert_eq!(table.radius_inherit_facing[2], 1.0, "flat");
+        assert_eq!(
+            frame.emitters[0].radius_inherit_facing[2], 0.0,
+            "facing the camera"
+        );
     }
 
     #[test]

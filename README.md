@@ -74,7 +74,8 @@ its loop, world, streaming, physics, audio and rendering. See the [roadmap](docs
 - **Point and spot lights:** up to 256 a frame, shaded with clustered forward lighting, plus
   emissive materials for lit windows and lamps.
 - **GPU particles:** emitters a game places and fires (bursts or a steady rate), simulated in
-  compute kernels and drawn instanced, additive or alpha, as points or streaks, up to 65,536 alive.
+  compute kernels and drawn instanced, additive or alpha, as points, streaks or marks lying flat on
+  the ground, up to 65,536 alive.
 - **2D HUD overlay** with SDF text rendering.
 - **Audio** built on [`kira`](https://crates.io/crates/kira): load-once sounds, one-shots, looping
   music, and master volume.
