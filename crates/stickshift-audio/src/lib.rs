@@ -5,8 +5,10 @@
 //! Engine-generic audio for Stick Shift Engine.
 //!
 //! `stickshift-audio` wraps [`kira`] in the smallest surface a game actually needs:
-//! **load a sound from a path**, **play it once**, **play it looping**, **stop the
-//! loop**, and **set the master volume**. That is the entire API ([`Audio`]).
+//! **load a sound from a path**, **play it once**, **play it looping** on the one
+//! loop channel (the music), **layer** more loops under it that fade in and out
+//! on their own (ambience, an engine's drone), and **set the master volume**.
+//! That is the entire API ([`Audio`]).
 //!
 //! It is engine-generic in the strict sense: it knows nothing about what any sound
 //! *means*. "The background music" and "the impact effect" are a *game's* words
@@ -69,7 +71,7 @@ pub mod handle;
 pub mod mixer;
 pub mod volume;
 
-pub use handle::SoundHandle;
+pub use handle::{LayerHandle, SoundHandle};
 pub use mixer::Audio;
 pub use volume::Volume;
 

@@ -42,3 +42,44 @@ impl SoundHandle {
         self.index
     }
 }
+
+/// Opaque handle to a **layer**: a sound looping on its own, started with
+/// [`Audio::play_layer`](crate::mixer::Audio::play_layer) and faded or stopped
+/// through this handle.
+///
+/// Like a [`SoundHandle`], it names the [`Audio`](crate::mixer::Audio) that
+/// issued it, so another `Audio` ignores it. It also names one start of the
+/// layer: once [`Audio::stop_layer`](crate::mixer::Audio::stop_layer) has
+/// stopped it, the handle is ignored, even after its slot is reused by a later
+/// layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LayerHandle {
+    /// The id of the [`Audio`](crate::mixer::Audio) that issued it.
+    owner: u32,
+    /// Its slot in that `Audio`'s layer table.
+    index: u32,
+    /// Which start of that slot it names.
+    generation: u32,
+}
+
+impl LayerHandle {
+    pub(crate) fn new(owner: u32, index: u32, generation: u32) -> Self {
+        Self {
+            owner,
+            index,
+            generation,
+        }
+    }
+
+    pub(crate) fn owner(self) -> u32 {
+        self.owner
+    }
+
+    pub(crate) fn index(self) -> u32 {
+        self.index
+    }
+
+    pub(crate) fn generation(self) -> u32 {
+        self.generation
+    }
+}

@@ -249,9 +249,9 @@ monotonic clock, variable steps) share **one** loop implementation
 
 ### 4b. Audio
 
-`stickshift-audio` wraps `kira` in five operations — `load` a file into an opaque `SoundHandle`,
-`play_once`, `play_looping`, `stop_looping`, `set_master_volume` — with levels in decibels
-(`Volume`). It is a **leaf**: its only dependency is `kira`, so `cpal`/CoreAudio reach the process
+`stickshift-audio` wraps `kira` in a handful of operations — `load` a file into an opaque
+`SoundHandle`, `play_once`, `play_looping`, `stop_looping`, the layer trio `play_layer` /
+`set_layer_volume` / `stop_layer`, and `set_master_volume` — with levels in decibels (`Volume`). It is a **leaf**: its only dependency is `kira`, so `cpal`/CoreAudio reach the process
 through this crate and its single engine-side consumer, `stickshift-core`. Nothing below the render seam,
 and no other engine crate, gains an audio dependency. `kira`'s feature set is trimmed the same way
 `gltf`/`image` are (`default-features = false`, only `cpal`, `cpal-realtime`, `wav`, `pcm` — the
@@ -264,13 +264,22 @@ game *events*, never polled from `update`. There is exactly **one loop channel**
 sound already looping starts nothing, which makes a doubled music bed structurally impossible from
 above the seam rather than a rule each game has to remember.
 
+**Layers** are every other continuous sound: an ambient bed under the music, an engine's drone, a
+second drone faded in over it while the throttle is open. `play_layer` starts one alongside the loop
+channel and any other layers and returns a `LayerHandle`; `set_layer_volume` moves it to a level over
+a fade of any length (a fade under way is taken over from where it has got to); `stop_layer` fades it
+out and ends it. Layers are deliberately *not* idempotent the way the loop channel is: the caller
+holds a handle per layer, which already says which is which. A handle names one start of its slot,
+so a stopped layer's handle never reaches whatever is layered in that slot next.
+
 **It never needs an audio device and never fails.** Creating a `kira` mixer fails with no audio
 output (CI, a remote shell, `--smoke`); rather than push an `if audio_available` branch into every
 game, the layer degrades to a **silent mode** that still accepts loads and plays and still hands back
 valid handles — and that mode is constructible directly (`Audio::silent`), which is what `Loop::new`
 holds. So the headless driver and `--smoke` open no device at all, and only the windowed entry binds
 the mixer to the default output. Because the silent mode still *records* every request
-(`is_silent`, `looping`, `loop_starts`, `one_shots_played`, `one_shots_of`, `decode_count`), audio
+(`is_silent`, `looping`, `loop_starts`, `one_shots_played`, `one_shots_of`, `decode_count`, and for
+layers `layer_count`, `layer_starts`, `layer_volume`, `layer_sound`), audio
 behaviour is asserted in plain unit tests with no hardware and nothing to listen to — the same
 approach as `NullRenderer` for draws. Which sound is "the music" and which is an effect is game
 policy: the engine takes a handle and a level.

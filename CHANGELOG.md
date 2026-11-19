@@ -11,6 +11,17 @@ API**.
 
 ### Added
 
+- **Audio layers**: loops that play alongside the loop channel (the music) and each other, each
+  faded on its own. `Audio::play_layer(sound, volume)` starts one and returns a `LayerHandle`;
+  `set_layer_volume(layer, volume, fade)` moves it to a level over a fade (zero for at once), and
+  `stop_layer(layer, fade)` fades it out and ends it. For an ambient bed under the music, an
+  engine's drone, or a second drone faded in over it. Like the rest of `Audio`, layers work in
+  silent mode and are recorded there (`layer_count`, `layer_starts`, `layer_volume`,
+  `layer_sound`), so a game's use of them is testable without a device. A stopped layer's handle
+  is ignored, even after its slot is reused.
+
+### Added
+
 - **Flat particles**, for marks on the ground: `EmitterParams::facing` takes
   `ParticleFacing::Flat` to lay each particle flat in the horizontal plane, a square of its size
   turned to the heading its emitter pointed when it was made, instead of facing the camera. An
