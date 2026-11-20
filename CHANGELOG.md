@@ -9,6 +9,19 @@ API**.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Headlights stop flickering in busy night scenes.** The Metal renderer bounded a spot light by
+  the whole sphere of its range when binning it into clusters, though a spot lights only its cone. A
+  car's headlight beam just ahead of the camera (the camera inside its range, though behind its
+  lamp) counted as covering every screen tile from the camera out, so a few of them used up most of
+  the frame's 32,768 light-to-cluster entries. Past that budget the renderer drops whole lights, and
+  which ones fit changed from frame to frame, so lights blinked on and off. Offramp's two-way roads
+  at night, with traffic both ways and more so in curves, dropped lights on up to one frame in
+  seven. A spot is now bounded by the smallest sphere around its cone (`lights::bounding_sphere`):
+  for a beam, a sphere ahead of the lamp. The same scenes use about 40% fewer entries, drop nothing,
+  and shade fewer lights per pixel; a frame that dropped nothing renders exactly as before.
+
 ### Added
 
 - **iPhone and iPad mini screens**, to see a game at a device's size and shape on a Mac.
