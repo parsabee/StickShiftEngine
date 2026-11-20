@@ -15,7 +15,7 @@ use crate::handles::{EmitterHandle, MeshHandle, PipelineHandle, TextureHandle};
 use crate::light::{Light, MAX_LIGHTS};
 use crate::overlay::OverlayQuad;
 use crate::particles::{EmitterParams, ParticleSystem, MAX_EMITTERS};
-use crate::recorder::FrameRecorder;
+use crate::recorder::{CapturedFrame, FrameRecorder};
 use crate::settings::RenderSettings;
 use crate::sun::SunSky;
 
@@ -208,6 +208,11 @@ pub struct NullRenderer {
     /// The UI scale last passed to [`resize_surface`](RenderDevice::resize_surface);
     /// `None` reports `1.0`.
     surface_scale: Option<f32>,
+    /// A capture asked for the next submit ([`capture_frame`](FrameRecorder::capture_frame)):
+    /// its size and time.
+    capture: Option<(u32, u32, f64)>,
+    /// Captures made at submit and not yet taken.
+    captured: Vec<CapturedFrame>,
 
     // --- particle bookkeeping (ParticleSystem side) ---
     next_emitter: u32,
@@ -652,6 +657,31 @@ impl FrameRecorder for NullRenderer {
         }
         self.frame_open = false;
         self.frames_submitted += 1;
+        // A capture asked for: there are no pixels, so its every byte is the
+        // frame's number (mod 256), opaque, so a test can tell frames apart.
+        if let Some((width, height, time)) = self.capture.take() {
+            let shade = (self.frames_submitted % 256) as u8;
+            let pixel = [shade, shade, shade, 255];
+            let bgra8 = pixel.repeat(width as usize * height as usize);
+            self.captured.push(CapturedFrame {
+                width,
+                height,
+                time,
+                bgra8,
+            });
+        }
+    }
+
+    fn capture_frame(&mut self, width: u32, height: u32, time: f64) -> bool {
+        if width == 0 || height == 0 {
+            return false;
+        }
+        self.capture = Some((width, height, time));
+        true
+    }
+
+    fn take_captured_frames(&mut self) -> Vec<CapturedFrame> {
+        std::mem::take(&mut self.captured)
     }
 }
 

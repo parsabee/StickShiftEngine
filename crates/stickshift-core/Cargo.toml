@@ -31,6 +31,9 @@ stickshift-camera.workspace = true
 stickshift-scene.workspace = true
 stickshift-render-api.workspace = true
 stickshift-perf.workspace = true
+# Recording (`Recording`): the movie writer. AVFoundation on Apple targets, iOS
+# as well as macOS; no windowing and no Metal.
+stickshift-video.workspace = true
 winit = { workspace = true, optional = true }
 
 # Graphics-settings persistence (`NSUserDefaults`), on every Apple target:

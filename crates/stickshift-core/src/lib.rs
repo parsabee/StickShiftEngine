@@ -103,6 +103,7 @@ pub mod graphics;
 pub mod headless;
 pub mod input;
 mod platform;
+pub mod record;
 pub mod session;
 pub mod settings_menu;
 pub mod timestep;
@@ -115,6 +116,7 @@ pub use graphics::{
     DrawDistance, GraphicsSettings, GraphicsState, RenderScale, ShadowDistance, ShadowQuality,
 };
 pub use input::{InputState, Key, MouseButton};
+pub use record::{Recording, VideoError, VideoSummary, DEFAULT_RECORDING_FPS};
 pub use session::{Clock, HostEvent, Requests, Session, SettingsStore, View};
 pub use settings_menu::MenuCommand;
 // Re-exported for the same reason `Scene` is: these are the types a game names

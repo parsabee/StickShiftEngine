@@ -11,6 +11,31 @@ API**.
 
 ### Added
 
+- **Recording to a movie**, for diagnosing what a game did: `RunConfig::record` takes a
+  `Recording` (a path, a height such as 480 or 720, and at most how many frames a second, 60 by
+  default), and the windowed runner records what the window shows, HUD and all, to an H.264 `.mp4`
+  for the whole run, finishes it when the run ends and reports it on stderr. A host driving its own
+  `Session` records with `Session::record` and stops with `Session::finish_recording`. The movie's
+  width follows the view's shape at its first frame, rounded to even. Nothing waits on the GPU or
+  the encoder while the game runs: a frame whose capture or encoding is not ready is skipped, and
+  each frame carries the time it was shown, so the movie plays at the game's pace. No sound is
+  recorded.
+  - The render seam gains frame capture: `FrameRecorder::capture_frame(width, height, time)` asks
+    for the next frame submitted to be scaled to that size and read back, and
+    `take_captured_frames` / `finish_captures` return the `CapturedFrame`s (BGRA8) once the GPU has
+    finished them. The defaults capture nothing; `NullRenderer` makes a frame of its frame number at
+    each submit asked for. The Metal renderer scales the finished frame (four bilinear taps over
+    each pixel's footprint) into a capture texture and copies it to one of a ring of read-back
+    buffers, flagged by the frame's completion; a layer's drawables become readable from the first
+    capture asked for.
+  - A new crate, `stickshift-video`: `VideoWriter` writes BGRA8 frames, each stamped with its time,
+    to an H.264 movie through AVFoundation's `AVAssetWriter` (the system's encoder, nothing bundled),
+    dropping a frame rather than waiting long for the encoder. Off Apple platforms it reports
+    `VideoError::Unsupported`.
+  - `RunConfig` is no longer `Copy` (it holds the recording's path); it is still `Clone`.
+
+### Added
+
 - **Audio layers**: loops that play alongside the loop channel (the music) and each other, each
   faded on its own. `Audio::play_layer(sound, volume)` starts one and returns a `LayerHandle`;
   `set_layer_volume(layer, volume, fade)` moves it to a level over a fade (zero for at once), and

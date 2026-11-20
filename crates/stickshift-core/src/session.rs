@@ -90,6 +90,7 @@ use crate::game::Game;
 use crate::graphics::GraphicsSettings;
 use crate::input::{Key, MouseButton};
 use crate::platform;
+use crate::record::{Recorder, Recording, VideoError, VideoSummary};
 use crate::settings_menu::MenuCommand;
 use crate::timestep::FIXED_DT_DURATION;
 
@@ -383,6 +384,8 @@ pub struct Session {
     safe_area: [f32; 4],
     /// Whether [`resume`](Self::resume) has run.
     hosted: bool,
+    /// A recording in progress ([`record`](Self::record)).
+    recorder: Option<Recorder>,
 }
 
 impl Session {
@@ -415,7 +418,38 @@ impl Session {
             view: None,
             safe_area: [0.0; 4],
             hosted: false,
+            recorder: None,
         }
+    }
+
+    /// Record what the session shows to a movie from the next frame on (see
+    /// [`Recording`]), replacing a recording in progress without finishing it.
+    /// Stop with [`finish_recording`](Self::finish_recording), or the movie is
+    /// left unplayable.
+    pub fn record(&mut self, recording: Recording) {
+        self.recorder = Some(Recorder::new(recording));
+    }
+
+    /// The recording in progress, if there is one.
+    #[must_use]
+    pub fn recording(&self) -> Option<&Recording> {
+        self.recorder.as_ref().map(Recorder::recording)
+    }
+
+    /// Stop recording and finish the movie: wait for the frames still on the
+    /// GPU and for the encoder to close the file. `None` when not recording.
+    ///
+    /// # Errors
+    ///
+    /// The inner result is the reason the movie could not be written or
+    /// finished, including that no frame was ever captured.
+    pub fn finish_recording(
+        &mut self,
+        renderer: &mut dyn Renderer,
+    ) -> Option<Result<VideoSummary, VideoError>> {
+        self.recorder
+            .take()
+            .map(|recorder| recorder.finish(renderer))
     }
 
     /// The view appeared (or reappeared): what the winit runner does in
@@ -458,7 +492,10 @@ impl Session {
     ///    and returns [`Requests::MENU_SYNC`]. All of this happens **before** the
     ///    frame, so no frame renders the new settings at the old size.
     /// 2. The elapsed time is read from `clock`.
-    /// 3. [`drive_frame`] runs 0..N fixed updates and one render.
+    /// 3. [`drive_frame`] runs 0..N fixed updates and one render. While
+    ///    [recording](Self::record), the frame is asked to be captured first
+    ///    (when one is due), and the captures the GPU has finished are written
+    ///    to the movie after.
     ///
     /// Returns the number of updates run and the requests: also
     /// [`Requests::EXIT`] while the game's
@@ -476,7 +513,14 @@ impl Session {
         let mut requests = self.after_graphics_change(renderer);
 
         let elapsed = self.elapsed(clock);
+        if let Some(recorder) = &mut self.recorder {
+            let aspect = self.view.map_or(16.0 / 9.0, View::aspect_ratio);
+            recorder.before_frame(renderer, elapsed, aspect);
+        }
         let steps = drive_frame(&mut self.lp, game, renderer, elapsed);
+        if let Some(recorder) = &mut self.recorder {
+            recorder.after_frame(renderer);
+        }
         if self.lp.exit_requested {
             requests |= Requests::EXIT;
         }

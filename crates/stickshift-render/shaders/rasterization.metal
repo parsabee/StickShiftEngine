@@ -1000,3 +1000,44 @@ fragment float4 particle_alpha_fragment(ParticleOut in [[stage_in]],
     float3 color = apply_fog(in.color.rgb, in.viewDist, in.worldY, light);
     return float4(present_color(color), in.color.a * particle_shape(in.corner));
 }
+
+// ---------------------------------------------------------------------------
+// Frame capture (recording)
+// ---------------------------------------------------------------------------
+//
+// The finished frame, HUD and all, scaled into a capture texture for
+// recording: a fullscreen triangle sampling the frame as presented. Each
+// destination pixel averages four bilinear taps spread over its footprint on
+// the frame, so a frame shrunk to a third of its size or so still averages its
+// pixels rather than skipping between them. The frame's bytes are already the
+// display's (tonemapped and sRGB-encoded by the scene's shaders, into a plain
+// BGRA8Unorm target), so they are copied as they are, made opaque.
+
+struct CaptureOut {
+    float4 position [[position]];
+    float2 uv;
+};
+
+/// Fullscreen triangle (no vertex buffer), with the frame's texture coordinates:
+/// top left `(0, 0)`.
+vertex CaptureOut capture_vertex_main(uint vid [[vertex_id]]) {
+    float2 pos[3] = { float2(-1.0, -3.0), float2(-1.0, 1.0), float2(3.0, 1.0) };
+    CaptureOut out;
+    out.position = float4(pos[vid], 0.0, 1.0);
+    out.uv = float2(pos[vid].x * 0.5 + 0.5, 0.5 - pos[vid].y * 0.5);
+    return out;
+}
+
+/// The frame under one capture pixel: four bilinear taps over its `footprint`
+/// (a capture pixel's size, in the frame's texture units).
+fragment float4 capture_fragment_main(CaptureOut in [[stage_in]],
+                                      texture2d<float> frame [[texture(0)]],
+                                      constant float2& footprint [[buffer(0)]]) {
+    constexpr sampler linear_clamp(filter::linear, address::clamp_to_edge);
+    float2 q = footprint * 0.25;
+    float4 sum = frame.sample(linear_clamp, in.uv + float2(-q.x, -q.y))
+               + frame.sample(linear_clamp, in.uv + float2( q.x, -q.y))
+               + frame.sample(linear_clamp, in.uv + float2(-q.x,  q.y))
+               + frame.sample(linear_clamp, in.uv + float2( q.x,  q.y));
+    return float4(sum.rgb * 0.25, 1.0);
+}
