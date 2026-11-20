@@ -306,8 +306,10 @@ the renderer can cull against, and `intensity` sits on the same scale as the sun
 
 **Clustered forward shading.** The renderer splits the view into a fixed grid of clusters, 16 × 9
 screen tiles × 24 depth slices that grow exponentially with distance. At `submit` the CPU boxes
-each light's sphere of influence, projects the box, and lists the light in every cluster the box
-overlaps; a lit fragment finds its cluster from its pixel and view depth and shades only that list.
+each light's sphere of influence (a point light's range around it; a spot's, the smallest sphere
+around its cone, so a headlight's lies ahead of its lamp), projects the box, and lists the light in
+every cluster the box overlaps; a lit fragment finds its cluster from its pixel and view depth and
+shades only that list.
 This fits a tile-based GPU: the scene stays one forward pass with MSAA resolved in tile memory, with
 no G-buffer to write out and read back and no depth pre-pass. The binning is plain CPU arithmetic in
 `stickshift-render/src/lights.rs`, conservative by construction (a light may be listed where it

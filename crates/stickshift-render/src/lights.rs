@@ -25,13 +25,19 @@
 //!
 //! A light may be listed in a cluster it does not actually reach (the shader's
 //! falloff is exactly zero there, so that only costs time), but never left out
-//! of one it does. Each light's sphere of influence (its position and
-//! [`range`](Light::range); a spot's cone is bounded by the same sphere) is
-//! boxed, the box's corners projected, and the screen rectangle and depth range
-//! they span widened by a small margin to cover rounding on the GPU. A light
-//! whose sphere reaches behind the camera covers the whole screen. The
+//! of one it does. Each light's [bounding sphere](bounding_sphere) is boxed,
+//! the box's corners projected, and the screen rectangle and depth range they
+//! span widened by a small margin to cover rounding on the GPU. A light whose
+//! sphere reaches behind the camera covers the whole screen. The
 //! `binning_never_misses_a_lit_point` test checks this against the same
 //! cluster formula the shader uses.
+//!
+//! A point light's sphere is its [`range`](Light::range) around it. A spot
+//! lights only its cone, out to its range, so its sphere is the smallest
+//! around that: for a headlight's narrow beam, a sphere ahead of the lamp
+//! rather than one around it. That matters most for a camera just behind a
+//! car: inside the sphere around the car's lamps, so each beam would cover the
+//! whole screen, but outside the spheres around their cones.
 //!
 //! # Budget
 //!
@@ -74,6 +80,10 @@ pub const CLUSTER_NEAR: f32 = 1.0;
 pub const CLUSTER_FAR: f32 = 400.0;
 /// Light-to-cluster entries one frame can hold (see [the budget](self#budget)).
 pub const MAX_LIGHT_INDICES: usize = 32_768;
+
+/// Relative widening of a spot's bounding sphere, to cover rounding where the
+/// sphere touches its cone (at the apex and the rim).
+const SPHERE_MARGIN: f32 = 1e-3;
 
 /// Relative widening of a light's depth range, to cover the GPU's `log2`.
 const DEPTH_MARGIN: f32 = 1e-3;
@@ -236,17 +246,60 @@ impl ClusterBox {
     }
 }
 
+/// A sphere holding everything `light` can light: its centre and radius.
+///
+/// A point light's is its [`range`](Light::range) around it. A spot lights
+/// only inside its outer cone and its range (the shader's falloff is exactly
+/// zero past either), a cone capped by a piece of sphere, so its sphere is the
+/// smallest around that: for a cone of half angle `θ` up to 45°, the sphere
+/// through its apex and the rim of its cap, `range / (2 cos θ)` across and
+/// centred that far along its axis; for a wider cone, the sphere around the
+/// rim's circle, `range · sin θ` across and centred `range · cos θ` along it.
+/// Widened by a hair to cover rounding where it touches the cone; a cone so
+/// wide that this is no smaller than its range keeps its range around it. A
+/// narrow beam's lies ahead of its lamp.
+#[must_use]
+pub fn bounding_sphere(light: &Light) -> (Vec3, f32) {
+    let LightKind::Spot {
+        direction,
+        outer_angle_deg,
+        ..
+    } = light.kind
+    else {
+        return (light.position, light.range);
+    };
+    let axis = direction.normalize_or_zero();
+    if axis == Vec3::ZERO {
+        return (light.position, light.range);
+    }
+    let r = light.range;
+    let (sin, cos) = outer_angle_deg.to_radians().sin_cos();
+    let (along, radius) = if cos >= std::f32::consts::FRAC_1_SQRT_2 {
+        let half = r / (2.0 * cos);
+        (half, half)
+    } else {
+        (r * cos, r * sin)
+    };
+    let radius = radius * (1.0 + SPHERE_MARGIN);
+    // A cone near a hemisphere gains nothing: keep the range around the apex,
+    // which holds every lit point exactly.
+    if radius >= r {
+        return (light.position, r);
+    }
+    (light.position + axis * along, radius)
+}
+
 /// The clusters `light` can reach seen through `view_projection`, or `None`
 /// when it reaches nothing on screen (wholly behind the camera, or off to a
 /// side). Conservative: see [the module docs](self#conservative-by-construction).
 #[must_use]
 pub fn cluster_box(light: &Light, view_projection: Mat4) -> Option<ClusterBox> {
-    let r = light.range;
+    let (centre, r) = bounding_sphere(light);
     // A fragment's view depth is its clip `w`: a linear function of the world
-    // position, so the sphere's depth range is the centre's ± the range scaled
+    // position, so the sphere's depth range is the centre's ± the radius scaled
     // by that function's gradient.
     let w_row = view_projection.row(3);
-    let depth = w_row.dot(light.position.extend(1.0));
+    let depth = w_row.dot(centre.extend(1.0));
     let reach = r * w_row.truncate().length();
     let (near, far) = (depth - reach, depth + reach);
     if far <= 0.0 {
@@ -268,7 +321,7 @@ pub fn cluster_box(light: &Light, view_projection: Mat4) -> Option<ClusterBox> {
             if corner & 2 == 0 { -r } else { r },
             if corner & 4 == 0 { -r } else { r },
         );
-        let clip: Vec4 = view_projection * (light.position + offset).extend(1.0);
+        let clip: Vec4 = view_projection * (centre + offset).extend(1.0);
         if clip.w <= MIN_CLIP_W {
             wraps = true;
             break;
@@ -415,6 +468,8 @@ impl LightBins {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stickshift_math::glam::Quat;
+    use stickshift_render_api::MAX_SPOT_ANGLE_DEG;
 
     const W: u32 = 1280;
     const H: u32 = 720;
@@ -477,9 +532,12 @@ mod tests {
 
     #[test]
     fn binning_never_misses_a_lit_point() {
-        // Random lights in and around the view, and random points inside each
-        // one's range: wherever such a point is visible, the cluster the shader
-        // would put it in must list the light.
+        // Random lights in and around the view, and random points each one
+        // lights (inside its range and, for a spot, its outer cone): wherever
+        // such a point is visible, the cluster the shader would put it in must
+        // list the light. Spots point every way, from narrow beams to
+        // hemispheres, and half their points are at the rim of the cone's cap,
+        // where its bounding sphere touches it.
         let vp = camera();
         let mut rng = Lcg(7);
         let lights: Vec<Light> = (0..MAX_LIGHTS)
@@ -491,7 +549,26 @@ mod tests {
                 );
                 let range = rng.range(0.5, 14.0);
                 if i % 3 == 0 {
-                    Light::spot(position, Vec3::NEG_Y, [1.0; 3], 10.0, range, 20.0, 35.0)
+                    let direction = Vec3::new(
+                        rng.range(-1.0, 1.0),
+                        rng.range(-1.0, 1.0),
+                        rng.range(-1.0, 1.0),
+                    );
+                    let direction = if direction.length() < 0.1 {
+                        Vec3::NEG_Y
+                    } else {
+                        direction
+                    };
+                    let outer = rng.range(3.0, MAX_SPOT_ANGLE_DEG);
+                    Light::spot(
+                        position,
+                        direction,
+                        [1.0; 3],
+                        10.0,
+                        range,
+                        outer * 0.5,
+                        outer,
+                    )
                 } else {
                     Light::point(position, [1.0; 3], 10.0, range)
                 }
@@ -519,16 +596,53 @@ mod tests {
         let mut checked = 0;
         for &light_index in &uploaded {
             let light = &lights[light_index];
-            for _ in 0..200 {
+            for sample in 0..200 {
                 let dir = Vec3::new(
                     rng.range(-1.0, 1.0),
                     rng.range(-1.0, 1.0),
                     rng.range(-1.0, 1.0),
                 );
-                if dir.length_squared() > 1.0 || dir.length_squared() == 0.0 {
+                if dir.length_squared() > 1.0 || dir.length_squared() < 1e-4 {
                     continue;
                 }
-                let point = light.position + dir * light.range * 0.999;
+                let offset = match light.kind {
+                    LightKind::Point => dir * light.range * 0.999,
+                    LightKind::Spot {
+                        direction,
+                        outer_angle_deg,
+                        ..
+                    } => {
+                        // A point in the cone: off its axis by up to its
+                        // outer angle, out to its range; every other one on
+                        // the rim of its cap.
+                        let axis = direction.normalize();
+                        let across = dir - axis * dir.dot(axis);
+                        if across.length_squared() < 1e-6 {
+                            continue;
+                        }
+                        let rim = sample % 2 == 0;
+                        let cos_outer = outer_angle_deg.to_radians().cos();
+                        let cos = if rim {
+                            cos_outer + (1.0 - cos_outer) * 1e-3
+                        } else {
+                            rng.range(cos_outer + (1.0 - cos_outer) * 1e-3, 1.0)
+                        };
+                        let sin = (1.0 - cos * cos).max(0.0).sqrt();
+                        let reach = if rim { 0.999 } else { 0.999 * rng.next() };
+                        (axis * cos + across.normalize() * sin) * light.range * reach
+                    }
+                };
+                // Lit, by the shader's own test.
+                if let LightKind::Spot {
+                    direction,
+                    inner_angle_deg,
+                    outer_angle_deg,
+                } = light.kind
+                {
+                    let (_, cos_outer) = cone_cosines(inner_angle_deg, outer_angle_deg);
+                    assert!(offset.normalize().dot(direction.normalize()) > cos_outer);
+                }
+                let point = light.position + offset;
                 let clip = vp * point.extend(1.0);
                 if clip.w <= 0.3 {
                     continue;
@@ -556,6 +670,85 @@ mod tests {
         assert!(
             checked > 10_000,
             "only {checked} visible points were checked"
+        );
+    }
+
+    #[test]
+    fn a_spots_bounding_sphere_holds_its_cone_and_no_more_than_its_range() {
+        let at = Vec3::new(1.0, 2.0, 3.0);
+        for outer in [5.0, 22.0, 45.0, 52.0, 80.0, MAX_SPOT_ANGLE_DEG] {
+            let direction = Vec3::new(0.3, -1.0, -2.0);
+            let spot = Light::spot(at, direction, [1.0; 3], 10.0, 30.0, outer * 0.5, outer);
+            let (centre, radius) = bounding_sphere(&spot);
+            assert!(radius <= spot.range, "{outer}: {radius}");
+            // Its apex, the tip of its cap, and around the rim of its cap (just
+            // inside the range, as the shader lights only short of it).
+            let axis = direction.normalize();
+            let across = axis.any_orthonormal_vector();
+            let (sin, cos) = outer.to_radians().sin_cos();
+            let reach = spot.range * 0.9999;
+            let mut points = vec![at, at + axis * reach];
+            for turn in 0..16 {
+                let around =
+                    Quat::from_axis_angle(axis, turn as f32 * std::f32::consts::TAU / 16.0);
+                points.push(at + (axis * cos + around * across * sin) * reach);
+            }
+            for p in points {
+                assert!(p.distance(centre) <= radius, "{outer}: {p} outside");
+            }
+        }
+        // A narrow beam's lies wholly ahead of its lamp, about two thirds the
+        // size of its range; a point light's is its range around it.
+        let beam = Light::spot(at, Vec3::NEG_Z, [1.0; 3], 10.0, 24.0, 14.0, 28.0);
+        let (centre, radius) = bounding_sphere(&beam);
+        assert!(centre.z + radius <= at.z + 0.1, "{centre} {radius}");
+        assert!(radius < 0.6 * beam.range);
+        let point = Light::point(at, [1.0; 3], 10.0, 7.0);
+        assert_eq!(bounding_sphere(&point), (at, 7.0));
+    }
+
+    #[test]
+    fn a_beam_from_just_ahead_of_the_camera_covers_its_cone_not_the_screen() {
+        // A car's lamp six units ahead of the camera, its beam pointing away:
+        // the camera is inside its range, but not inside its cone. Bounded by
+        // its range, it reaches every slice from the camera's out; by its
+        // cone, none nearer than the lamp.
+        let vp = camera();
+        let lamp = Vec3::new(0.0, 0.7, 0.0);
+        let beam = Light::spot(
+            lamp,
+            Vec3::new(0.0, -0.07, -1.0),
+            [1.0; 3],
+            10.0,
+            30.0,
+            10.0,
+            22.0,
+        );
+        let around = Light::point(lamp, [1.0; 3], 10.0, 30.0);
+        let whole = cluster_box(&around, vp).expect("in view");
+        assert_eq!(whole.x, (0, CLUSTER_TILES_X - 1), "the range alone wraps");
+        let cone = cluster_box(&beam, vp).expect("in view");
+        assert_eq!(whole.z.0, 0);
+        assert!(cone.z.0 >= slice_of(5.0), "{cone:?}");
+        assert!(
+            cone.len() * 3 < whole.len() * 2,
+            "{} clusters for the cone, {} for the range",
+            cone.len(),
+            whole.len()
+        );
+        // And the beam still lights where it points.
+        let mut bins = LightBins::new();
+        bins.bin(&[beam], vp);
+        let ahead = lamp + Vec3::new(0.0, -0.7, -15.0);
+        let clip = vp * ahead.extend(1.0);
+        let ndc = Vec2::new(clip.x, clip.y) / clip.w;
+        let pixel = Vec2::new(
+            (ndc.x + 1.0) * 0.5 * W as f32,
+            (1.0 - ndc.y) * 0.5 * H as f32,
+        );
+        assert_eq!(
+            bins.lights_in(cluster_of(pixel.x, pixel.y, clip.w, W, H)),
+            [0]
         );
     }
 
