@@ -164,11 +164,20 @@ pub trait RenderDevice {
     /// notches, rounded corners, home indicators — as `[top, right, bottom, left]`.
     ///
     /// A HUD should keep anything it wants guaranteed-visible inside
-    /// [`surface_size`](Self::surface_size) shrunk by these. The backends in this
-    /// workspace report zeros on every platform: a plain desktop window has no
-    /// intrusions, and on a device it is the host that knows its view's safe area
-    /// (UIKit's `safeAreaInsets`) and should apply it to its own layout.
+    /// [`surface_size`](Self::surface_size) shrunk by these. They are what the
+    /// host last said with [`set_safe_area_insets`](Self::set_safe_area_insets)
+    /// (the engine's session passes on its host's safe area, or a device window's),
+    /// and zeros until then: a plain desktop window has no intrusions.
     fn safe_area_insets(&self) -> [f32; 4];
+
+    /// Set the insets [`safe_area_insets`](Self::safe_area_insets) reports, in
+    /// pixels of the drawable: `[top, right, bottom, left]`. The engine's
+    /// session calls it with its host's safe area (a device's, or a device
+    /// window's on a Mac) whenever that or the drawable's scale changes. The
+    /// default ignores it, for a backend that knows its own.
+    fn set_safe_area_insets(&mut self, insets: [f32; 4]) {
+        let _ = insets;
+    }
 
     /// Resize the drawable to `width` × `height` **pixels**.
     ///

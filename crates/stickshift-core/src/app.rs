@@ -68,14 +68,17 @@
 //! (`drive_frame`) is platform-neutral.
 
 use winit::application::ApplicationHandler;
+use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::{ElementState, MouseButton as WinitMouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::monitor::MonitorHandle;
 use winit::window::{Fullscreen, Window, WindowId};
 
 use stickshift_render_api::NullRenderer;
 
 use crate::context::Renderer;
+use crate::device::{DeviceWindow, Orientation};
 use crate::driver::Loop;
 use crate::game::Game;
 use crate::input::{Key, MouseButton};
@@ -188,7 +191,7 @@ pub fn run_with_backend<G: Game>(game: &mut G, factory: BackendFactory<'_>) {
 ///     },
 /// );
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RunConfig {
     /// Install the built-in **Graphics** menu in the macOS menu bar. Default
     /// `true`. Turn it off when the game provides its own settings UI.
@@ -209,6 +212,20 @@ pub struct RunConfig {
     /// the movie and reports it on stderr: where it is, its size, how many
     /// frames it holds and how many were dropped (or why it failed).
     pub record: Option<Recording>,
+    /// Run in a window the size of a device's screen held one way (see
+    /// [`DeviceWindow`], [`IPHONES`](crate::IPHONES) and
+    /// [`IPADS`](crate::IPADS)), instead of the default window. Default
+    /// `None`.
+    ///
+    /// The window is the device's size in points (shrunk, its shape kept, if
+    /// the screen is too small to hold it), titled with its name, and not
+    /// resizable. The game sees the device's points, whatever the window's
+    /// zoom (the view's scale is the window's pixels per device point), and
+    /// its safe area: the notch or Dynamic Island, the home indicator, an
+    /// iPad's status bar,
+    /// through [`RenderDevice::safe_area_insets`](stickshift_render_api::RenderDevice::safe_area_insets).
+    /// Its pixels are the Mac's, not the device's.
+    pub device: Option<DeviceWindow>,
 }
 
 impl Default for RunConfig {
@@ -218,6 +235,7 @@ impl Default for RunConfig {
             persist_graphics_settings: true,
             quit_on_escape: true,
             record: None,
+            device: None,
         }
     }
 }
@@ -331,11 +349,18 @@ impl<'g, 'f, G: Game> EngineApp<'g, 'f, G> {
         }
     }
 
-    /// The window's native pixels and scale factor, as the session sizes the
-    /// drawable from them.
-    fn view_of(window: &Window) -> View {
-        let size = window.inner_size();
-        View::new(size.width, size.height, window.scale_factor())
+    /// The view a window `size` pixels at `scale_factor` pixels per point is,
+    /// as the session sizes the drawable and lays out from it: as it is, or in
+    /// a device's window, that device's points across it (so the game sees
+    /// them at any zoom).
+    fn view(&self, size: PhysicalSize<u32>, scale_factor: f64) -> View {
+        match &self.config.device {
+            Some(device) => {
+                let scale = f64::from(size.width) / f64::from(device.points().0.max(1));
+                View::new(size.width, size.height, scale)
+            }
+            None => View::new(size.width, size.height, scale_factor),
+        }
     }
 
     /// Hand `event` to the session, then carry out what it asks for.
@@ -386,7 +411,7 @@ impl<G: Game> ApplicationHandler<EngineEvent> for EngineApp<'_, '_, G> {
         let window = match self.window.take() {
             Some(window) => window,
             None => {
-                let window = create_window(event_loop);
+                let window = create_window(event_loop, self.config.device.as_ref());
                 // Construct the real backend now that a window exists.
                 // Consuming the factory (an `Option`) makes this happen exactly
                 // once.
@@ -398,8 +423,18 @@ impl<G: Game> ApplicationHandler<EngineEvent> for EngineApp<'_, '_, G> {
                 window
             }
         };
-        let view = Self::view_of(&window);
+        let view = self.view(window.inner_size(), window.scale_factor());
         self.window = Some(window);
+
+        // A device's window: its safe area, before the game's init, so its
+        // first frame lays out clear of the notch and the home indicator.
+        if let Some(device) = self.config.device {
+            let _ = self.session.event(
+                HostEvent::SafeArea(device.safe_area()),
+                self.game,
+                self.renderer.as_mut(),
+            );
+        }
 
         // On first resume the session matches the engine camera's aspect to the
         // real window before the first frame (resize events keep it current
@@ -477,13 +512,13 @@ impl<G: Game> ApplicationHandler<EngineEvent> for EngineApp<'_, '_, G> {
                 // resized, and the menu's full-screen title refreshed (the
                 // window may have entered or left full screen).
                 let scale = self.window.as_ref().map_or(1.0, |w| w.scale_factor());
-                let view = View::new(size.width, size.height, scale);
+                let view = self.view(size, scale);
                 self.event(event_loop, HostEvent::Resized(view));
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 // Moved to a display with a different pixel density.
                 if let Some(window) = &self.window {
-                    let view = Self::view_of(window);
+                    let view = self.view(window.inner_size(), window.scale_factor());
                     self.event(event_loop, HostEvent::ScaleChanged(view));
                 }
             }
@@ -529,15 +564,44 @@ fn report_recording(result: &Result<VideoSummary, VideoError>) {
     }
 }
 
-/// Create the application window. Isolated so the platform split can
-/// swap window construction per target.
-fn create_window(event_loop: &ActiveEventLoop) -> Window {
-    let attrs = Window::default_attributes()
-        .with_title(WINDOW_TITLE)
-        .with_inner_size(winit::dpi::LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT));
+/// Create the application window: the default one, or a `device`'s screen's
+/// size in points (shrunk to fit the main display, its shape kept), titled
+/// with its name and not resizable. Isolated so the platform split can swap
+/// window construction per target.
+fn create_window(event_loop: &ActiveEventLoop, device: Option<&DeviceWindow>) -> Window {
+    let attrs = Window::default_attributes();
+    let attrs = match device {
+        None => attrs
+            .with_title(WINDOW_TITLE)
+            .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT)),
+        Some(device) => {
+            let (width, height) = device.points();
+            let zoom = event_loop
+                .primary_monitor()
+                .map_or(1.0, |monitor| device.zoom_to_fit(usable_points(&monitor)));
+            let held = match device.orientation {
+                Orientation::Portrait => "",
+                Orientation::Landscape => ", landscape",
+            };
+            attrs
+                .with_title(format!("{WINDOW_TITLE} — {}{held}", device.screen.name))
+                .with_inner_size(LogicalSize::new(
+                    f64::from(width) * zoom,
+                    f64::from(height) * zoom,
+                ))
+                .with_resizable(false)
+        }
+    };
     event_loop
         .create_window(attrs)
         .expect("failed to create window")
+}
+
+/// The points of `monitor` a window can fill: its size, less room for the
+/// menu bar, the window's title bar and the Dock.
+fn usable_points(monitor: &MonitorHandle) -> (f64, f64) {
+    let size: LogicalSize<f64> = monitor.size().to_logical(monitor.scale_factor());
+    (size.width - 40.0, size.height - 160.0)
 }
 
 /// Translate a `winit` physical key into the engine's backend-agnostic [`Key`].

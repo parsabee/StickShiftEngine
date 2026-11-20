@@ -97,6 +97,7 @@
 #[cfg(feature = "windowed")]
 pub mod app;
 pub mod context;
+pub mod device;
 pub mod driver;
 pub mod game;
 pub mod graphics;
@@ -111,6 +112,7 @@ pub mod timestep;
 #[cfg(feature = "windowed")]
 pub use app::{run, run_with_backend, run_with_config, BackendFactory, RunConfig};
 pub use context::{EngineCtx, Renderer};
+pub use device::{DeviceScreen, DeviceWindow, Orientation, IPADS, IPHONES};
 pub use game::Game;
 pub use graphics::{
     DrawDistance, GraphicsSettings, GraphicsState, RenderScale, ShadowDistance, ShadowQuality,

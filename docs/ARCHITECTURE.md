@@ -210,6 +210,14 @@ A game implements `stickshift_core::Game`; the engine runs it the same way under
   cadence, the settings side effects and the clock are one implementation, not two that agree.
 - **The host drives.** Nothing in the engine owns a thread, a window or a timer. The winit runner
   calls `Session::frame` on each redraw; another host calls it from its display link.
+- **A device's screen on a Mac.** `RunConfig::device` makes the winit runner's window an
+  iPhone's or an iPad mini's size in points (`stickshift_core::IPHONES`, `IPADS`), held either
+  way, and report it to the session as that device would: a view whose scale is the window's
+  pixels per device point (so the game lays out in the device's points at any zoom), and the
+  device's safe area as a
+  `HostEvent::SafeArea`. The session passes a safe area on to the renderer in drawable pixels
+  (`RenderDevice::set_safe_area_insets`), whoever the host is, so a HUD reads the same insets on a
+  phone and in a phone-sized window.
 - **No windowing without the feature.** `stickshift-core` without `windowed` has neither winit nor
   the AppKit menu (a CI dependency firewall checks), and settings persistence is Foundation only,
   so it builds for iOS. `stickshift-render` still links AppKit through its `cocoa` dependency;
