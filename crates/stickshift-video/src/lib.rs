@@ -594,10 +594,22 @@ mod tests {
         let path = dir.join("nested").join("movie.mp4");
         let (width, height) = (320, 240);
         let mut writer = VideoWriter::create(&path, width, height).expect("a movie");
+        // The encoder works at the machine's pace: a frame it is not ready for
+        // in time is dropped, so hand each over again until it is taken (a CI
+        // runner's encoder, with no media engine, can be far slower than this
+        // loop).
+        let mut retried = 0;
         for n in 0..45 {
-            writer
-                .append(&frame(n, width, height), f64::from(n) / 30.0)
-                .expect("a frame");
+            let (pixels, at) = (frame(n, width, height), f64::from(n) / 30.0);
+            let given_up = std::time::Instant::now() + Duration::from_secs(10);
+            while !writer.append(&pixels, at).expect("a frame") {
+                retried += 1;
+                assert!(
+                    std::time::Instant::now() < given_up,
+                    "frame {n} never taken"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
         }
         // Out of time order: dropped, not an error.
         assert_eq!(writer.append(&frame(0, width, height), 0.5), Ok(false));
@@ -605,14 +617,14 @@ mod tests {
             writer.append(&[0; 16], 2.0),
             Err(VideoError::BadFrame { .. })
         ));
-        let written = writer.frames();
-        assert!(written >= 40, "only {written} of 45 written");
+        assert_eq!(writer.frames(), 45);
         let summary = writer.finish().expect("finished");
         assert_eq!((summary.width, summary.height), (width, height));
-        assert_eq!(summary.frames, written);
-        assert!(summary.dropped >= 1);
+        assert_eq!(summary.frames, 45);
+        // Each try the encoder was not ready for, and the frame out of order.
+        assert_eq!(summary.dropped, retried + 1);
         assert!(
-            summary.seconds > 1.0 && summary.seconds < 1.5,
+            (summary.seconds - 44.0 / 30.0).abs() < 1e-3,
             "{}",
             summary.seconds
         );
@@ -620,7 +632,7 @@ mod tests {
         let movie = std::fs::read(&path).expect("the movie");
         // An MPEG-4 file (`ftyp` first), holding every frame written, in H.264.
         assert_eq!(&movie[4..8], b"ftyp");
-        assert_eq!(samples(&movie), Some(written as u32));
+        assert_eq!(samples(&movie), Some(45));
         assert!(movie.windows(4).any(|w| w == b"avc1"), "not H.264");
         // And a second movie at the same path replaces it.
         let writer = VideoWriter::create(&path, width, height).expect("again");
