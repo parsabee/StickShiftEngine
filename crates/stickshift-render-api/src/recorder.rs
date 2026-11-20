@@ -237,4 +237,51 @@ pub trait FrameRecorder {
     ///   [`begin_frame`](Self::begin_frame) again.
     /// - Calling it without an open frame is a caller error.
     fn submit(&mut self);
+
+    /// Ask for the **next frame submitted** to be captured, for recording: the
+    /// finished frame as it is presented, HUD and all, scaled to `width` ×
+    /// `height` pixels and stamped `time`. Returns whether it will be.
+    ///
+    /// # Contract
+    /// - It applies to the next [`submit`](Self::submit), whether or not a frame
+    ///   is open when it is asked: a loop asks before the game opens its frame.
+    ///   Asking again before that submit replaces the request.
+    /// - The capture comes back later, from
+    ///   [`take_captured_frames`](Self::take_captured_frames), once the GPU has
+    ///   finished the frame: asking never waits for the GPU.
+    /// - A backend that cannot capture, or whose capture slots are all still
+    ///   busy with earlier frames, returns `false` and captures nothing: the
+    ///   frame is skipped, not waited for. The default captures nothing.
+    fn capture_frame(&mut self, width: u32, height: u32, time: f64) -> bool {
+        let _ = (width, height, time);
+        false
+    }
+
+    /// The captured frames ([`capture_frame`](Self::capture_frame)) the GPU has
+    /// finished since the last call, oldest first. Never waits. The default
+    /// has none.
+    fn take_captured_frames(&mut self) -> Vec<CapturedFrame> {
+        Vec::new()
+    }
+
+    /// Wait for every capture still on the GPU, then take them all, oldest
+    /// first: what a recording does before it stops, so its last frames are
+    /// not lost. The default waits for nothing.
+    fn finish_captures(&mut self) -> Vec<CapturedFrame> {
+        self.take_captured_frames()
+    }
+}
+
+/// A frame read back from the renderer for recording
+/// ([`FrameRecorder::capture_frame`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CapturedFrame {
+    /// Its width in pixels.
+    pub width: u32,
+    /// Its height in pixels.
+    pub height: u32,
+    /// The time its capture was stamped with.
+    pub time: f64,
+    /// Its pixels: BGRA8, `width * 4` bytes a row, top row first.
+    pub bgra8: Vec<u8>,
 }

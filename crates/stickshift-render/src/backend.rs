@@ -179,11 +179,12 @@
 //! [`MaterialParams`] does not change its output; the textured pipeline
 //! multiplies the sampled base color by `MaterialParams::base_color`.
 
+use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::mem;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use block::ConcreteBlock;
 use cocoa::base::id as cocoa_id;
@@ -198,10 +199,11 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use stickshift_math::glam::{Mat4, Vec3};
 use stickshift_math::Transform;
 use stickshift_render_api::{
-    ColorSpace, EmitterHandle, EmitterParams, FrameRecorder, GpuFrameTime, Light, MaterialParams,
-    MeshData, MeshHandle, OverlayFill, OverlayQuad, ParticleSystem, PipelineDescriptor,
-    PipelineHandle, PipelineKind, RenderDevice, RenderSettings, SunSky, TextureData, TextureHandle,
-    VertexFormat, VertexLayout, MAX_EMITTERS, MAX_LIGHTS, MAX_PARTICLES,
+    CapturedFrame, ColorSpace, EmitterHandle, EmitterParams, FrameRecorder, GpuFrameTime, Light,
+    MaterialParams, MeshData, MeshHandle, OverlayFill, OverlayQuad, ParticleSystem,
+    PipelineDescriptor, PipelineHandle, PipelineKind, RenderDevice, RenderSettings, SunSky,
+    TextureData, TextureHandle, VertexFormat, VertexLayout, MAX_EMITTERS, MAX_LIGHTS,
+    MAX_PARTICLES,
 };
 
 use crate::deindex::deindex;
@@ -832,6 +834,36 @@ pub struct MetalRenderer {
 
     // Per-frame recording state (valid between `begin_frame` and `submit`).
     frame: Option<FrameState>,
+
+    // Frame capture for recording (`capture_frame`): the pass that scales the
+    // finished frame into the capture texture, the request latched for the
+    // next submit, that texture and its size, the ring of read-back slots, and
+    // which of them are in flight, oldest first.
+    capture_pipeline_state: metal::RenderPipelineState,
+    capture_request: Option<(u32, u32, f64)>,
+    capture_texture: Option<(metal::Texture, u32, u32)>,
+    capture_slots: Vec<CaptureSlot>,
+    capture_in_flight: VecDeque<usize>,
+}
+
+/// How many captured frames can be on their way back at once: one more than
+/// the frames in flight, so a capture can be asked for every frame.
+const CAPTURE_SLOTS: usize = MAX_FRAMES_IN_FLIGHT as usize + 1;
+
+/// How long [`finish_captures`](FrameRecorder::finish_captures) waits for the
+/// GPU to finish the captures still on it.
+const CAPTURE_PATIENCE: Duration = Duration::from_secs(2);
+
+/// One read-back slot of the capture ring: the CPU-visible buffer a captured
+/// frame is copied into, the flag its frame's completion handler sets once the
+/// copy is there, and what it holds.
+struct CaptureSlot {
+    buffer: metal::Buffer,
+    done: Arc<AtomicBool>,
+    width: u32,
+    height: u32,
+    time: f64,
+    busy: bool,
 }
 
 /// Backend-private pipeline record. There is a second (textured) built-in
@@ -1325,6 +1357,21 @@ impl MetalRenderer {
         overlay_descriptor.set_sample_count(MSAA_SAMPLE_COUNT);
         let overlay_pipeline_state = pipeline(&overlay_descriptor, "overlay pipeline")?;
 
+        // Frame capture (recording): a fullscreen triangle sampling the
+        // finished frame into a single-sample capture texture. No vertex
+        // descriptor (positions from `vertex_id`), no depth, no MSAA.
+        let capture_vertex_function = function("capture_vertex_main")?;
+        let capture_fragment_function = function("capture_fragment_main")?;
+        let capture_descriptor = metal::RenderPipelineDescriptor::new();
+        capture_descriptor.set_vertex_function(Some(&capture_vertex_function));
+        capture_descriptor.set_fragment_function(Some(&capture_fragment_function));
+        capture_descriptor
+            .color_attachments()
+            .object_at(0)
+            .unwrap()
+            .set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+        let capture_pipeline_state = pipeline(&capture_descriptor, "capture pipeline")?;
+
         // Clamped linear sampler for the overlay atlas — SDF glyphs must not wrap
         // or they bleed neighbouring atlas cells into each other.
         let overlay_sampler_descriptor = metal::SamplerDescriptor::new();
@@ -1535,6 +1582,11 @@ impl MetalRenderer {
             alloc_count: AtomicU64::new(6),
             rejected_draws: 0,
             frame: None,
+            capture_pipeline_state,
+            capture_request: None,
+            capture_texture: None,
+            capture_slots: Vec::new(),
+            capture_in_flight: VecDeque::new(),
         })
     }
 
@@ -2814,6 +2866,13 @@ impl MetalRenderer {
                 blit.end_encoding();
             }
 
+            // A capture asked for (recording): the finished frame scaled into
+            // the capture texture and copied out to a read-back slot, after
+            // everything that drew it, in this frame's command buffer.
+            if let Some((width, height, time)) = self.capture_request.take() {
+                self.encode_capture(&frame, width, height, time);
+            }
+
             // Frames-in-flight release: register a completion handler that
             // signals the semaphore when the GPU finishes this frame, counts the
             // frame complete, and flags its read-back. The handler runs on a
@@ -2874,6 +2933,100 @@ impl MetalRenderer {
             }
         });
         Some(self.frame_index)
+    }
+
+    /// Encode the capture of `frame` asked for at `width` × `height`, stamped
+    /// `time` ([`FrameRecorder::capture_frame`]): a pass scaling the finished
+    /// frame into the capture texture, then a blit copying that out to a free
+    /// read-back slot, flagged done by the frame's completion. A drawable only
+    /// the display may read (as a layer's are until a capture is first asked
+    /// for) cannot be sampled, so its frame is skipped.
+    fn encode_capture(&mut self, frame: &FrameState, width: u32, height: u32, time: f64) {
+        if frame.color_texture.framebuffer_only() {
+            return;
+        }
+        let slot = match self.capture_slots.iter().position(|s| !s.busy) {
+            Some(slot) => slot,
+            None if self.capture_slots.len() < CAPTURE_SLOTS => {
+                self.capture_slots.push(CaptureSlot {
+                    buffer: self.counted_new_buffer(4, MTLResourceOptions::StorageModeShared),
+                    done: Arc::new(AtomicBool::new(false)),
+                    width: 0,
+                    height: 0,
+                    time: 0.0,
+                    busy: false,
+                });
+                self.capture_slots.len() - 1
+            }
+            None => return,
+        };
+        let bytes = u64::from(width) * u64::from(height) * 4;
+        if self.capture_slots[slot].buffer.length() < bytes {
+            let buffer = self.counted_new_buffer(bytes, MTLResourceOptions::StorageModeShared);
+            self.capture_slots[slot].buffer = buffer;
+        }
+        if !matches!(&self.capture_texture, Some((_, w, h)) if *w == width && *h == height) {
+            let desc = metal::TextureDescriptor::new();
+            desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+            desc.set_width(u64::from(width));
+            desc.set_height(u64::from(height));
+            desc.set_usage(metal::MTLTextureUsage::RenderTarget);
+            desc.set_storage_mode(metal::MTLStorageMode::Private);
+            self.capture_texture = Some((self.device.new_texture(&desc), width, height));
+        }
+        let Some((target, _, _)) = &self.capture_texture else {
+            return;
+        };
+
+        let pass = metal::RenderPassDescriptor::new();
+        let color = pass.color_attachments().object_at(0).unwrap();
+        color.set_texture(Some(target));
+        color.set_load_action(metal::MTLLoadAction::DontCare);
+        color.set_store_action(metal::MTLStoreAction::Store);
+        let encoder = frame.command_buffer.new_render_command_encoder(pass);
+        encoder.set_render_pipeline_state(&self.capture_pipeline_state);
+        encoder.set_fragment_texture(0, Some(&frame.color_texture));
+        // Each destination pixel's footprint on the frame, in texture units.
+        let footprint = [1.0 / width as f32, 1.0 / height as f32];
+        encoder.set_fragment_bytes(
+            0,
+            mem::size_of_val(&footprint) as u64,
+            footprint.as_ptr().cast::<c_void>(),
+        );
+        encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 3);
+        encoder.end_encoding();
+
+        let slot_state = &mut self.capture_slots[slot];
+        let blit = frame.command_buffer.new_blit_command_encoder();
+        blit.copy_from_texture_to_buffer(
+            target,
+            0,
+            0,
+            metal::MTLOrigin { x: 0, y: 0, z: 0 },
+            metal::MTLSize {
+                width: u64::from(width),
+                height: u64::from(height),
+                depth: 1,
+            },
+            &slot_state.buffer,
+            0,
+            u64::from(width) * 4,
+            bytes,
+            metal::MTLBlitOption::empty(),
+        );
+        blit.end_encoding();
+
+        slot_state.done.store(false, Ordering::Release);
+        slot_state.busy = true;
+        (slot_state.width, slot_state.height, slot_state.time) = (width, height, time);
+        // Runs on a Metal thread: it only stores the flag.
+        let done = Arc::clone(&slot_state.done);
+        let completion = ConcreteBlock::new(move |_: &metal::CommandBufferRef| {
+            done.store(true, Ordering::Release);
+        })
+        .copy();
+        frame.command_buffer.add_completed_handler(&completion);
+        self.capture_in_flight.push_back(slot);
     }
 
     /// Draws [`draw_mesh_matrix`](FrameRecorder::draw_mesh_matrix) refused because the
@@ -3348,6 +3501,68 @@ impl FrameRecorder for MetalRenderer {
     /// [`submit_async`](MetalRenderer::submit_async) never waits.
     fn submit(&mut self) {
         let _ = self.submit_frame(true);
+    }
+
+    /// Latch a capture for the next submit (see the seam contract). On a
+    /// layer, this first makes its drawables readable (`framebufferOnly` off),
+    /// which takes from its next drawable on; a frame drawn into one still
+    /// for display only is skipped. Refused while every read-back slot holds a
+    /// frame not yet taken.
+    fn capture_frame(&mut self, width: u32, height: u32, time: f64) -> bool {
+        if width == 0 || height == 0 {
+            return false;
+        }
+        if let RenderTarget::Surface { layer } = &self.target {
+            if layer.framebuffer_only() {
+                layer.set_framebuffer_only(false);
+            }
+        }
+        let free = self.capture_slots.len() < CAPTURE_SLOTS
+            || self.capture_slots.iter().any(|slot| !slot.busy);
+        if free {
+            self.capture_request = Some((width, height, time));
+        }
+        free
+    }
+
+    fn take_captured_frames(&mut self) -> Vec<CapturedFrame> {
+        let mut frames = Vec::new();
+        while let Some(&index) = self.capture_in_flight.front() {
+            let slot = &mut self.capture_slots[index];
+            if !slot.done.load(Ordering::Acquire) {
+                break;
+            }
+            let len = slot.width as usize * slot.height as usize * 4;
+            // SAFETY: the buffer is CPU-visible shared storage at least `len`
+            // bytes long, and the GPU has finished writing it: its frame's
+            // completion handler set `done` (with release ordering, read here
+            // with acquire) after the copy into it.
+            let bgra8 =
+                unsafe { std::slice::from_raw_parts(slot.buffer.contents().cast::<u8>(), len) }
+                    .to_vec();
+            frames.push(CapturedFrame {
+                width: slot.width,
+                height: slot.height,
+                time: slot.time,
+                bgra8,
+            });
+            slot.busy = false;
+            self.capture_in_flight.pop_front();
+        }
+        frames
+    }
+
+    fn finish_captures(&mut self) -> Vec<CapturedFrame> {
+        let start = Instant::now();
+        while start.elapsed() < CAPTURE_PATIENCE
+            && self
+                .capture_in_flight
+                .iter()
+                .any(|&index| !self.capture_slots[index].done.load(Ordering::Acquire))
+        {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        self.take_captured_frames()
     }
 }
 

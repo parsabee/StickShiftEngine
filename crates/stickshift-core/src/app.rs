@@ -80,6 +80,7 @@ use crate::driver::Loop;
 use crate::game::Game;
 use crate::input::{Key, MouseButton};
 use crate::platform::SettingsMenu;
+use crate::record::{Recording, VideoError, VideoSummary};
 use crate::session::{Clock, HostEvent, Requests, Session, SettingsStore, View};
 use crate::settings_menu::MenuCommand;
 
@@ -187,7 +188,7 @@ pub fn run_with_backend<G: Game>(game: &mut G, factory: BackendFactory<'_>) {
 ///     },
 /// );
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunConfig {
     /// Install the built-in **Graphics** menu in the macOS menu bar. Default
     /// `true`. Turn it off when the game provides its own settings UI.
@@ -203,6 +204,11 @@ pub struct RunConfig {
     /// [`EngineCtx::request_exit`](crate::EngineCtx::request_exit). The close
     /// button and Cmd-Q quit either way.
     pub quit_on_escape: bool,
+    /// Record what the window shows to an H.264 movie for the whole run (see
+    /// [`Recording`]). Default `None`. When the run ends, the runner finishes
+    /// the movie and reports it on stderr: where it is, its size, how many
+    /// frames it holds and how many were dropped (or why it failed).
+    pub record: Option<Recording>,
 }
 
 impl Default for RunConfig {
@@ -211,6 +217,7 @@ impl Default for RunConfig {
             native_settings_menu: true,
             persist_graphics_settings: true,
             quit_on_escape: true,
+            record: None,
         }
     }
 }
@@ -307,7 +314,10 @@ impl<'g, 'f, G: Game> EngineApp<'g, 'f, G> {
         let store = config
             .persist_graphics_settings
             .then(SettingsStore::standard);
-        let session = Session::new(lp, store, config.quit_on_escape);
+        let mut session = Session::new(lp, store, config.quit_on_escape);
+        if let Some(recording) = config.record.clone() {
+            session.record(recording);
+        }
 
         Self {
             game,
@@ -415,6 +425,14 @@ impl<G: Game> ApplicationHandler<EngineEvent> for EngineApp<'_, '_, G> {
         }
     }
 
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        // A movie is only playable once finished: finish it here, while the
+        // renderer still holds the frames on their way back from the GPU.
+        if let Some(result) = self.session.finish_recording(self.renderer.as_mut()) {
+            report_recording(&result);
+        }
+    }
+
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => self.event(event_loop, HostEvent::Close),
@@ -493,6 +511,23 @@ impl<G: Game> ApplicationHandler<EngineEvent> for EngineApp<'_, '_, G> {
 //
 // These are deliberately small free functions. A platform split (iOS, v0.9) can
 // wrap them (or provide iOS variants) without touching `EngineApp`'s loop.
+
+/// Say on stderr what a finished recording holds, or why it failed: the
+/// runner's one report ([`RunConfig::record`]).
+fn report_recording(result: &Result<VideoSummary, VideoError>) {
+    match result {
+        Ok(movie) => eprintln!(
+            "recorded {} frames ({} dropped), {:.1} s at {}x{}, to {}",
+            movie.frames,
+            movie.dropped,
+            movie.seconds,
+            movie.width,
+            movie.height,
+            movie.path.display()
+        ),
+        Err(e) => eprintln!("recording failed: {e}"),
+    }
+}
 
 /// Create the application window. Isolated so the platform split can
 /// swap window construction per target.

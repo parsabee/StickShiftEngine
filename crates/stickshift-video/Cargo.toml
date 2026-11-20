@@ -1,0 +1,54 @@
+[package]
+name = "stickshift-video"
+description = "Video recording for Stick Shift Engine: frames written to an H.264 movie through AVFoundation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+# AVFoundation's movie writer, through the objc2 0.6 generation of the framework
+# bindings: the first to bind CoreMedia (`CMTime`) and CoreVideo (pixel buffers),
+# which writing frames needs. It is the generation the audio stack already
+# builds (`objc2` 0.6 is in the lock through `cpal`), so it adds no runtime of
+# its own; `stickshift-core`'s 0.5-generation menu and settings bindings stay as
+# they are (nothing of either crosses this crate's API). Only the classes the
+# writer uses are on.
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSDictionary",
+    "NSError",
+    "NSString",
+    "NSURL",
+    "NSValue",
+] }
+objc2-av-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "AVAssetWriter",
+    "AVAssetWriterInput",
+    "AVMediaFormat",
+    "AVVideoSettings",
+    "block2",
+    "objc2-core-media",
+    "objc2-core-video",
+] }
+objc2-core-media = { version = "0.3", default-features = false, features = ["std", "CMTime"] }
+objc2-core-video = { version = "0.3", default-features = false, features = [
+    "std",
+    "CVBase",
+    "CVBuffer",
+    "CVImageBuffer",
+    "CVPixelBuffer",
+    "CVPixelBufferPool",
+    "CVReturn",
+] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "CFString",
+] }

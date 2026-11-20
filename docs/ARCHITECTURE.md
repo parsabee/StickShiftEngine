@@ -163,7 +163,8 @@ stickshift-engine/
 │   ├── stickshift-render        # raw-Metal impl of stickshift-render-api      (refactor)
 │   ├── stickshift-core          # app/lifecycle + platform (#[cfg])       (refactor)
 │   ├── stickshift-assets        # glTF + textures                         (new)
-│   └── stickshift-audio         # kira wrapper: sounds/one-shots/loops    (new)
+│   ├── stickshift-audio         # kira wrapper: sounds/one-shots/loops    (new)
+│   └── stickshift-video         # movie writer (AVFoundation H.264)       (new)
 ├── docs/                   # architecture, design, guides, roadmap
 └── scripts/                # preflight, doc-anchor check, GIF assembly
 ```
@@ -371,6 +372,34 @@ written once per frame like the light ring, so particles add no per-frame alloca
 
 **Not yet:** depth-sorted alpha particles, soft particles (fading where they meet geometry), and
 textured or flipbook particles.
+
+### 4e. Recording
+
+A run can be **recorded to a movie** for diagnosis: `RunConfig::record` takes a `Recording` (a
+path, a height, at most how many frames a second), and the session records every frame it shows
+until the run ends. It crosses the render seam as **pixels, never GPU types**:
+
+- Before a frame that is due (at most `fps` a second, give or take a quarter of a frame so a
+  display's jitter does not halve the rate), the session asks the renderer to capture the next
+  frame submitted: `FrameRecorder::capture_frame(width, height, time)`. The size is fixed at the
+  first frame from the view's shape; the time is the session's own clock since the recording began.
+- The Metal renderer, at that submit and after everything that drew the frame, scales the finished
+  frame (HUD and all) into a capture texture and blits it to one of `MAX_FRAMES_IN_FLIGHT + 1`
+  shared read-back buffers, flagged done by the frame's completion handler. No CPU wait: a request
+  with every slot still holding an untaken frame is refused, and that frame skipped. A layer's
+  drawables are display-only (`framebufferOnly`) until the first capture asks otherwise.
+- After the frame, the session takes the captures the GPU has finished (`take_captured_frames`)
+  and writes them to `stickshift-video`'s `VideoWriter`: AVFoundation's `AVAssetWriter`, the
+  system's H.264 encoder, taking frames in real time. A frame the encoder is not ready for within
+  a few milliseconds is dropped rather than waited for; frames carry their times, so a movie with
+  dropped frames still plays at the game's pace.
+- When the run ends, the windowed runner's `exiting` waits for the captures still on the GPU
+  (`finish_captures`), writes them, finishes the movie (only a finished movie plays) and reports it
+  on stderr.
+
+`stickshift-video` is the only crate that binds AVFoundation, through the objc2 0.6 generation (the
+first to bind CoreMedia and CoreVideo), which the audio stack already builds; `stickshift-core`
+depends on it, with no windowing and no Metal, so a host that owns its view records the same way.
 
 ## 5. Physics decision
 

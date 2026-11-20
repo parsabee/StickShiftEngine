@@ -12,6 +12,7 @@ members = [
     "crates/stickshift-assets",
     "crates/stickshift-audio",
     "crates/stickshift-core",
+    "crates/stickshift-video",
 ]
 
 # Shared package metadata. Individual crates inherit these via `field.workspace = true`.
@@ -51,6 +52,7 @@ stickshift-render = { path = "crates/stickshift-render" }
 stickshift-assets = { path = "crates/stickshift-assets" }
 stickshift-audio = { path = "crates/stickshift-audio" }
 stickshift-core = { path = "crates/stickshift-core" }
+stickshift-video = { path = "crates/stickshift-video" }
 
 glam = "0.29"
 # glTF import: pure-Rust parser, builds on the Command Line Tools (no

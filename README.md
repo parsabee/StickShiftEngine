@@ -80,6 +80,9 @@ its loop, world, streaming, physics, audio and rendering. See the [roadmap](docs
 - **Audio** built on [`kira`](https://crates.io/crates/kira): load-once sounds, one-shots, looping
   music, layers of more loops under it that fade on their own (ambience, an engine's drone), and
   master volume.
+- **Recording** a run to an H.264 movie (`RunConfig::record`), HUD and all, at the height you ask
+  (480 or 720, say), for diagnosing what a game did: captured on the GPU, encoded by the system's
+  AVFoundation, never stalling the game.
 - **Testable by design:** a headless driver that runs a game with no window or GPU, a
   `NullRenderer` that records what a frame drew, and golden pixel-hash tests that pin the
   renderer's output.
@@ -206,6 +209,7 @@ The workspace is the engine's `crates/stickshift-*`. The layout follows [docs/AR
 | [`stickshift-render`](crates/stickshift-render) | Raw-Metal implementation of the seam: rasterization pipeline, look stack, shadow maps, clustered point and spot lights, GPU particles, offscreen rendering and pixel read-back |
 | [`stickshift-assets`](crates/stickshift-assets) | Static glTF import and asset cache (metal-free) |
 | [`stickshift-audio`](crates/stickshift-audio) | Audio over `kira`: load-once sounds, one-shot playback, looping music, master volume |
+| [`stickshift-video`](crates/stickshift-video) | Movie writing: BGRA8 frames, each stamped with its time, to an H.264 `.mp4` through AVFoundation |
 | [`stickshift-camera`](crates/stickshift-camera) | Camera state and controller math (perspective camera, chase controller) |
 | [`stickshift-ecs`](crates/stickshift-ecs) | `hecs` wrapper and the shared engine components |
 | [`stickshift-math`](crates/stickshift-math) | Shared math layer: `glam` re-export plus the `Transform` (TRS) type |

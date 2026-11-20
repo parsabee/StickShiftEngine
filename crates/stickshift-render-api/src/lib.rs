@@ -103,6 +103,6 @@ pub use particles::{
     EmitterParams, Floor, ParticleBlend, ParticleFacing, ParticleSystem, MAX_EMITTERS,
     MAX_PARTICLES,
 };
-pub use recorder::FrameRecorder;
+pub use recorder::{CapturedFrame, FrameRecorder};
 pub use settings::{RenderSettings, ShadowQuality};
 pub use sun::SunSky;
