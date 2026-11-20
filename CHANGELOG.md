@@ -11,6 +11,26 @@ API**.
 
 ### Added
 
+- **iPhone and iPad mini screens**, to see a game at a device's size and shape on a Mac.
+  `stickshift_core::IPHONES` lists every iPhone from the iPhone 13 on (the 13 mini to the 2026
+  iPhone 18 Pro, 18 Pro Max and Duo, closed and open), and `IPADS` every iPad mini from 2021 on (the
+  6th generation, the A17 Pro and the 2026 A20 Pro); `DeviceScreen::all` gives them all, and
+  `DeviceScreen::find` one by its id. Each `DeviceScreen` has an id for a command line
+  (`iphone-15-pro`), its name, its year, its size in points upright, the scale it renders at, its
+  panel's pixels, and its safe-area insets upright and on its side, as UIKit reports them.
+  `RunConfig::device` takes a `DeviceWindow` (a screen and an `Orientation`), and the windowed
+  runner opens a window that many points across instead of the default one (shrunk, its shape kept,
+  to fit the main display), titled with the device and not resizable. The game sees the device's
+  points at any zoom, and its safe area.
+- **Safe areas reach the renderer**: `RenderDevice::set_safe_area_insets` sets what
+  `safe_area_insets` reports (in drawable pixels), and the session passes its host's safe area
+  (`HostEvent::SafeArea`, in points) to it whenever that or the drawable's scale changes. Before,
+  the session kept the insets to itself and every backend reported zeros, so a HUD never saw a
+  notch. The default `set_safe_area_insets` ignores them; `MetalRenderer` and `NullRenderer` keep
+  them. `RunConfig` is no longer `Eq` (a device's insets are floats).
+
+### Added
+
 - **Recording to a movie**, for diagnosing what a game did: `RunConfig::record` takes a
   `Recording` (a path, a height such as 480 or 720, and at most how many frames a second, 60 by
   default), and the windowed runner records what the window shows, HUD and all, to an H.264 `.mp4`

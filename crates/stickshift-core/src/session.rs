@@ -192,7 +192,9 @@ pub enum HostEvent {
     /// is resized, and nothing else changes. The aspect is left alone.
     ScaleChanged(View),
     /// The view's safe-area insets changed: top, right, bottom, left, in points.
-    /// Stored, for [`Session::safe_area`].
+    /// Stored, for [`Session::safe_area`], and passed to the renderer in the
+    /// drawable's pixels (again whenever the drawable is resized), where a game
+    /// reads them ([`RenderDevice::safe_area_insets`](stickshift_render_api::RenderDevice::safe_area_insets)).
     SafeArea([f32; 4]),
     /// A Graphics menu item was chosen. A settings change composes on any
     /// request still queued and is applied at once, between frames, and then
@@ -591,6 +593,7 @@ impl Session {
             }
             HostEvent::SafeArea(insets) => {
                 self.safe_area = insets;
+                self.apply_safe_area(renderer);
                 Requests::NONE
             }
             HostEvent::Menu(command) => self.choose(command, game, renderer),
@@ -724,16 +727,35 @@ impl Session {
     /// change counts, so this is right before [`Game::init`] has applied
     /// restored settings. Nothing to size before the host reports a view.
     fn resize_surface(&self, renderer: &mut dyn Renderer) {
-        let Some(view) = self.view else {
+        let Some((width, height, pixels_per_point)) = self.surface() else {
             return;
         };
-        let graphics = &self.lp.graphics;
-        let (width, height, pixels_per_point) = graphics
-            .pending()
-            .unwrap_or_else(|| graphics.current())
-            .render_scale
-            .surface_for(view.width, view.height, view.scale_factor);
         renderer.resize_surface(width, height, pixels_per_point);
+        self.apply_safe_area(renderer);
+    }
+
+    /// The drawable for the view and the render scale in effect (a queued one
+    /// first): its width and height in pixels, and its pixels per point.
+    /// `None` before the host has reported a view.
+    fn surface(&self) -> Option<(u32, u32, f32)> {
+        let view = self.view?;
+        let graphics = &self.lp.graphics;
+        Some(
+            graphics
+                .pending()
+                .unwrap_or_else(|| graphics.current())
+                .render_scale
+                .surface_for(view.width, view.height, view.scale_factor),
+        )
+    }
+
+    /// Tell the renderer the safe area ([`safe_area`](Self::safe_area)) in the
+    /// drawable's pixels, so a game reads it from
+    /// [`RenderDevice::safe_area_insets`](stickshift_render_api::RenderDevice::safe_area_insets).
+    fn apply_safe_area(&self, renderer: &mut dyn Renderer) {
+        if let Some((_, _, pixels_per_point)) = self.surface() {
+            renderer.set_safe_area_insets(self.safe_area.map(|inset| inset * pixels_per_point));
+        }
     }
 
     /// React to an applied settings change, whatever made it (the menu, or the
@@ -849,6 +871,9 @@ mod tests {
         }
         fn safe_area_insets(&self) -> [f32; 4] {
             self.inner.safe_area_insets()
+        }
+        fn set_safe_area_insets(&mut self, insets: [f32; 4]) {
+            self.inner.set_safe_area_insets(insets);
         }
         fn resize_surface(&mut self, width: u32, height: u32, pixels_per_point: f32) {
             self.log
@@ -1716,6 +1741,26 @@ mod tests {
         assert_eq!(rig.event(HostEvent::SafeArea(insets)), Requests::NONE);
         assert_eq!(rig.session.safe_area(), insets);
         assert_eq!(rig.renderer.resizes.len(), resizes, "no resize for insets");
+        // The renderer has them in the drawable's pixels (its pixels per
+        // point, the render scale's share of the view's), where a game reads
+        // them, and again at the drawable's new scale when it moves.
+        let scale = rig.renderer.surface_scale();
+        assert_eq!(rig.renderer.safe_area_insets(), insets.map(|i| i * scale));
+        let _ = rig.event(HostEvent::ScaleChanged(View::new(1000, 500, 4.0)));
+        let moved = rig.renderer.surface_scale();
+        assert!((moved - 2.0 * scale).abs() < 1e-6, "{moved}");
+        assert_eq!(rig.renderer.safe_area_insets(), insets.map(|i| i * moved));
+    }
+
+    #[test]
+    fn a_safe_area_before_the_view_reaches_the_renderer_when_it_appears() {
+        let mut rig = Rig::new();
+        let insets = [62.0, 0.0, 34.0, 0.0];
+        let _ = rig.event(HostEvent::SafeArea(insets));
+        assert_eq!(rig.renderer.safe_area_insets(), [0.0; 4], "no view yet");
+        let _ = rig.resume(RETINA);
+        let scale = rig.renderer.surface_scale();
+        assert_eq!(rig.renderer.safe_area_insets(), insets.map(|i| i * scale));
     }
 
     #[test]

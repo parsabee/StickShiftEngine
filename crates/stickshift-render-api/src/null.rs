@@ -208,6 +208,9 @@ pub struct NullRenderer {
     /// The UI scale last passed to [`resize_surface`](RenderDevice::resize_surface);
     /// `None` reports `1.0`.
     surface_scale: Option<f32>,
+    /// The safe-area insets last set ([`set_safe_area_insets`](RenderDevice::set_safe_area_insets)),
+    /// in pixels; zeros until then.
+    safe_area: [f32; 4],
     /// A capture asked for the next submit ([`capture_frame`](FrameRecorder::capture_frame)):
     /// its size and time.
     capture: Option<(u32, u32, f64)>,
@@ -516,8 +519,12 @@ impl RenderDevice for NullRenderer {
     }
 
     fn safe_area_insets(&self) -> [f32; 4] {
-        // No notches or rounded corners off-device.
-        [0.0; 4]
+        // No notches or rounded corners of its own: what it was told.
+        self.safe_area
+    }
+
+    fn set_safe_area_insets(&mut self, insets: [f32; 4]) {
+        self.safe_area = insets;
     }
 
     fn resize_surface(&mut self, width: u32, height: u32, pixels_per_point: f32) {

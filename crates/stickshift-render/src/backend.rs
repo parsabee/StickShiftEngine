@@ -844,6 +844,10 @@ pub struct MetalRenderer {
     capture_texture: Option<(metal::Texture, u32, u32)>,
     capture_slots: Vec<CaptureSlot>,
     capture_in_flight: VecDeque<usize>,
+
+    // The safe-area insets the host last set (`set_safe_area_insets`), in
+    // drawable pixels: top, right, bottom, left. Zeros until then.
+    safe_area: [f32; 4],
 }
 
 /// How many captured frames can be on their way back at once: one more than
@@ -1587,6 +1591,7 @@ impl MetalRenderer {
             capture_texture: None,
             capture_slots: Vec::new(),
             capture_in_flight: VecDeque::new(),
+            safe_area: [0.0; 4],
         })
     }
 
@@ -3300,10 +3305,14 @@ impl RenderDevice for MetalRenderer {
     }
 
     fn safe_area_insets(&self) -> [f32; 4] {
-        // Zeros on every platform: a macOS window has no notch/home-indicator
-        // intrusions, and on a device the host owns the view and knows its
-        // `safeAreaInsets`, so it applies them to its own layout.
-        [0.0; 4]
+        // What the host said (a device's `safeAreaInsets`, or a device
+        // window's on a Mac), through the session; a plain macOS window has no
+        // intrusions, so zeros until then.
+        self.safe_area
+    }
+
+    fn set_safe_area_insets(&mut self, insets: [f32; 4]) {
+        self.safe_area = insets;
     }
 
     fn resize_surface(&mut self, width: u32, height: u32, pixels_per_point: f32) {

@@ -80,6 +80,9 @@ its loop, world, streaming, physics, audio and rendering. See the [roadmap](docs
 - **Audio** built on [`kira`](https://crates.io/crates/kira): load-once sounds, one-shots, looping
   music, layers of more loops under it that fade on their own (ambience, an engine's drone), and
   master volume.
+- **iPhone and iPad mini screens:** every iPhone from the 13 on (`IPHONES`) and every iPad mini
+  from 2021 on (`IPADS`), with its points, scale and safe area, and a windowed run the size and
+  shape of one (`RunConfig::device`), portrait or landscape, its safe area reaching the game.
 - **Recording** a run to an H.264 movie (`RunConfig::record`), HUD and all, at the height you ask
   (480 or 720, say), for diagnosing what a game did: captured on the GPU, encoded by the system's
   AVFoundation, never stalling the game.
