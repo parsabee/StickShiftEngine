@@ -34,7 +34,7 @@
 //!
 //! - **Stride/alignment:** each slot is [`UNIFORM_RING_STRIDE`] (256) bytes so
 //!   every per-draw offset is a multiple of 256; a 208-byte [`Uniforms`] (MVP,
-//!   model and normal matrices, emissive colour) fits with padding.
+//!   model and normal matrices, emissive colour and clear coat) fits with padding.
 //! - **Capacity:** the ring holds `ring_draws_per_frame * MAX_FRAMES_IN_FLIGHT`
 //!   slots; [`MAX_FRAMES_IN_FLIGHT`] is `3`. A frame that exceeds its per-frame
 //!   capacity grows the ring (doubling, an allocation-time event), never a
@@ -3158,7 +3158,9 @@ impl MetalRenderer {
                 material.emissive[0],
                 material.emissive[1],
                 material.emissive[2],
-                0.0,
+                // The clear coat rides in the spare lane; a negative or NaN
+                // one is none.
+                material.clearcoat.max(0.0),
             ],
         };
         let uniform_offset = self.write_uniform_to_ring(&uniforms);

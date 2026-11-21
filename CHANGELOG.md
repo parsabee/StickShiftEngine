@@ -9,6 +9,16 @@ API**.
 
 ## [Unreleased]
 
+### Added
+
+- **Clear coat**, for car paint and glass: `MaterialParams::clearcoat` (`0.0` by default, up to
+  `1.0` for a full coat). Both lit pipelines mirror the frame's sky down the reflected view ray (its
+  horizon-to-zenith gradient, and the ground, darker, below the horizon), weighted by Fresnel: about
+  4% seen square on, all of it edge-on. They also add a tight glint of the sun. Shadows dim the
+  glint but not the sky's reflection, as the sky is still overhead in a shadow, so dark paint keeps
+  its shape in the shade, where it used to go flat black. The coat rides in the spare lane of the
+  per-draw uniform, and a draw without one shades exactly as before.
+
 ### Fixed
 
 - **Headlights stop flickering in busy night scenes.** The Metal renderer bounded a spot light by

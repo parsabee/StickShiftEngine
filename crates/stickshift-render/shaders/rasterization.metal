@@ -56,7 +56,7 @@ struct VertexOut {
     float3 worldPosition;              // World-space position for lighting/fog/shadow
     float3 color;                      // Interpolated vertex color
     float  viewDepth;                  // Positive view-space distance for fog
-    float3 emissive [[flat]];          // The draw's emissive colour (per draw, not interpolated)
+    float4 emissive [[flat]];          // The draw's emissive colour (xyz) and clear coat (w), per draw
 };
 
 // ============================================================================
@@ -64,12 +64,12 @@ struct VertexOut {
 // ============================================================================
 
 /// Per-draw uniforms passed from the CPU: the transforms, and the draw's
-/// emissive colour. Mirrors the Rust `Uniforms`, 208 bytes.
+/// emissive colour and clear coat. Mirrors the Rust `Uniforms`, 208 bytes.
 struct Uniforms {
     float4x4 modelViewProjection;      // Combined model-view-projection matrix
     float4x4 model;                    // Model matrix (world pos for fog + shadow lookups; places casters)
     float4x4 normalMatrix;             // Carries normals: inverse-transpose of model's 3x3 (or model itself)
-    float4   emissive;                 // xyz: linear emissive colour, added after lighting
+    float4   emissive;                 // xyz: linear emissive colour, added after lighting; w: clear coat
 };
 
 /// Lighting parameters (directional light with Phong components) plus the
@@ -143,6 +143,26 @@ constant float SUN_GLOW_GAIN = 0.55;
 /// with height above the horizon, as the sine of the elevation (about 8°) at
 /// which it is 63% of the way. A real sky is palest in a band along the horizon.
 constant float SKY_HORIZON_BAND = 0.14;
+
+// ============================================================================
+// Clear coat tuning
+// ============================================================================
+
+/// How much a clear coat reflects seen square on: about 4%, like lacquer or
+/// glass. Seen edge-on it reflects everything (Schlick's Fresnel).
+constant float COAT_F0 = 0.04;
+/// How bright the ground below the horizon is in a coat's reflection, as a
+/// share of the horizon's colour: a road and the land around it, darker than
+/// the sky.
+constant float COAT_GROUND = 0.25;
+/// The half-width, in the reflected ray's `y`, of the band across which a
+/// coat's reflection blends from the ground to the sky.
+constant float COAT_HORIZON_BLEND = 0.04;
+/// The Blinn-Phong exponent of a coat's glint of the sun: much tighter than
+/// the surface's own highlight.
+constant float COAT_SHININESS = 160.0;
+/// How bright a coat's glint of the sun is at its peak, times the sun.
+constant float COAT_GLINT = 0.8;
 
 // ============================================================================
 // Color management: linear -> ACES tonemap -> sRGB encode
@@ -428,7 +448,7 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.color = in.color;
     // Clip.w is the positive view-space depth for our right-handed projection.
     out.viewDepth = clip.w;
-    out.emissive = uniforms.emissive.xyz;
+    out.emissive = uniforms.emissive;
 
     return out;
 }
@@ -437,11 +457,24 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
 // Fragment Shader
 // ============================================================================
 
+/// What a clear coat mirrors along `dir`: the gradient sky above the horizon,
+/// graded exactly as the sky pass grades it, and the ground below it, a dim
+/// share of the horizon's colour, blending into each other across the horizon.
+inline float3 coat_environment(float3 dir, constant Light& light) {
+    float t = 1.0 - exp(-max(dir.y, 0.0) / SKY_HORIZON_BAND);
+    float3 sky = mix(light.skyHorizonColor, light.skyTopColor, t);
+    float3 ground = light.skyHorizonColor * COAT_GROUND;
+    return mix(ground, sky, smoothstep(-COAT_HORIZON_BLEND, COAT_HORIZON_BLEND, dir.y));
+}
+
 /// Blinn-Phong lit color in LINEAR space, shared by the lit fragment shaders:
-/// the sun, the cluster's point and spot lights, and the draw's emission, then
-/// fog. `shadow` (from `shadow_visibility`) scales the sun's direct light only;
-/// the ambient sky fill and the local lights reach shadowed surfaces unchanged.
-inline float3 lit_linear(float3 albedo, float3 emissive, float3 worldNormal, float3 worldPos,
+/// the sun, the cluster's point and spot lights, the draw's clear coat and its
+/// emission, then fog. `shadow` (from `shadow_visibility`) scales the sun's
+/// direct light only (its highlight and the coat's glint with it); the ambient
+/// sky fill, the coat's reflection of the sky and the local lights reach
+/// shadowed surfaces unchanged. `emissive` is the draw's emission (`xyz`) and
+/// clear coat (`w`).
+inline float3 lit_linear(float3 albedo, float4 emissive, float3 worldNormal, float3 worldPos,
                          float viewDepth, float2 pixel, float shadow, constant Light& light,
                          constant ClusterInfo& clusterInfo,
                          device const LocalLight* lights,
@@ -475,7 +508,24 @@ inline float3 lit_linear(float3 albedo, float3 emissive, float3 worldNormal, flo
     // without them shades bit-for-bit as it did before they existed.
     lit += local_lights(albedo, normal, worldPos, viewDir, pixel, viewDepth, light,
                         clusterInfo, lights, clusters, lightIndices)
-         + emissive;
+         + emissive.xyz;
+
+    // The clear coat: a thin lacquer over the surface, like a car's paint or
+    // glass. It mirrors the sky down the reflected view ray, Fresnel-weighted
+    // (Schlick), so a face seen edge-on mirrors far more than one seen square
+    // on, and it catches the sun in a tight glint. The sky's reflection is not
+    // shadowed: the sky is still overhead in a shadow, so dark paint keeps its
+    // shape there. A draw without one (`w` = 0) skips it and shades exactly as
+    // before.
+    float coat = emissive.w;
+    if (coat > 0.0) {
+        float facing = clamp(dot(normal, viewDir), 0.0, 1.0);
+        float fresnel = COAT_F0 + (1.0 - COAT_F0) * pow(1.0 - facing, 5.0);
+        float3 mirrored = coat_environment(reflect(-viewDir, normal), light);
+        float glint = pow(max(dot(normal, halfDir), 0.0), COAT_SHININESS) * step(1e-4, diff);
+        lit += coat * (fresnel * mirrored
+                       + COAT_GLINT * glint * shadow * light.diffuseIntensity * light.color);
+    }
     return apply_fog(lit, viewDepth, worldPos.y, light);
 }
 
@@ -597,7 +647,7 @@ struct TexturedVertexOut {
     float3 worldPosition;
     float2 uv;
     float  viewDepth;
-    float3 emissive [[flat]];
+    float4 emissive [[flat]];
 };
 
 /// Per-draw material parameters for the textured pipeline (base-color factor).
@@ -617,7 +667,7 @@ vertex TexturedVertexOut textured_vertex_main(TexturedVertexIn in [[stage_in]],
     out.worldNormal = (uniforms.normalMatrix * float4(in.normal, 0.0)).xyz;
     out.uv = in.uv;
     out.viewDepth = clip.w;
-    out.emissive = uniforms.emissive.xyz;
+    out.emissive = uniforms.emissive;
     return out;
 }
 
