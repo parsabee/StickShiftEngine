@@ -72,8 +72,10 @@ pub struct Uniforms {
     /// Normal matrix, column-major: [`normal_matrix`] of `model`. The shaders
     /// multiply `float4(normal, 0)` by it and normalise.
     pub normal_matrix: [[f32; 4]; 4],
-    /// Linear RGB emissive colour in `xyz` (`w` unused), added to the lit
-    /// surface before fog.
+    /// Linear RGB emissive colour in `xyz`, added to the lit surface before
+    /// fog, and the draw's clear coat
+    /// ([`MaterialParams::clearcoat`](stickshift_render_api::MaterialParams::clearcoat))
+    /// in `w`.
     pub emissive: [f32; 4],
 }
 

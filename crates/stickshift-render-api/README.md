@@ -85,9 +85,10 @@ them on the CPU, so a game can ask how lit a point is without a GPU.
 ### Plain-data descriptors
 
 `VertexFormat`, `VertexAttribute`, `VertexLayout` describe vertex memory layout;
-`MaterialParams` is a small backend-neutral shading block: a base colour, and an
+`MaterialParams` is a small backend-neutral shading block: a base colour, an
 `emissive` colour that both pipelines add after lighting, so lit windows and lamps
-glow without lighting anything around them. No GPU objects, no
+glow without lighting anything around them, and a `clearcoat`, a glossy lacquer
+that mirrors the sky, for paint and glass. No GPU objects, no
 `metal` types, no device-tied lifetimes — freely constructed, copied, and
 compared above the seam. The backend translates them into native objects.
 

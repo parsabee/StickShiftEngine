@@ -69,8 +69,9 @@ its loop, world, streaming, physics, audio and rendering. See the [roadmap](docs
   worlds.
 - **Asset import:** static glTF (`.gltf` / `.glb`) meshes and textures, uploaded once and
   referenced by handle.
-- **A modern look stack:** MSAA, a gradient sky with a drivable sun disc, specular lighting,
-  ground-hugging horizon fog, ACES tonemapping, and **real fitted shadow maps** with PCF filtering.
+- **A modern look stack:** MSAA, a gradient sky with a drivable sun disc, specular lighting, a
+  clear coat that mirrors the sky (for paint and glass), ground-hugging horizon fog, ACES
+  tonemapping, and **real fitted shadow maps** with PCF filtering.
 - **Point and spot lights:** up to 256 a frame, shaded with clustered forward lighting, plus
   emissive materials for lit windows and lamps.
 - **GPU particles:** emitters a game places and fires (bursts or a steady rate), simulated in

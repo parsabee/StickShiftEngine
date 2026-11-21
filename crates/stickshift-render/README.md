@@ -48,8 +48,9 @@ and per-draw uniforms live in the ring, so the steady state allocates no buffers
 counter is public so the frames-in-flight tests can reuse it.
 
 **Material.** The untextured pipeline takes its color from the per-vertex mesh data
-(as the prototype did), so `MaterialParams` does not change its output. The textured
-pipeline multiplies the sampled base color by `MaterialParams::base_color`. A mesh must
+(as the prototype did), so `MaterialParams::base_color` does not change its output. The
+textured pipeline multiplies the sampled base color by `MaterialParams::base_color`. Both
+add `MaterialParams::emissive` and lay `MaterialParams::clearcoat` over the lit surface. A mesh must
 be packed on the layout of the pipeline it is drawn with (`PipelineKind::vertex_layout`);
 a draw that doesn't match is rejected rather than read at the wrong stride.
 
@@ -109,7 +110,10 @@ entries a frame; a light that no longer fits is dropped whole and counted by
 one region per in-flight frame, so lights add no per-frame allocation.
 
 `MaterialParams::emissive` rides in the per-draw uniform slot, which had room for it, and
-both lit shaders add it after lighting and before fog.
+both lit shaders add it after lighting and before fog. `MaterialParams::clearcoat` rides in
+the same `float4`'s spare `w`: both lit shaders add its Fresnel-weighted reflection of the
+sky and its glint of the sun, and a draw without a coat skips it, so every pre-existing
+pixel hash is unchanged. `tests/clearcoat.rs` checks it on the GPU.
 
 With no lights and no emission a frame shades bit-for-bit as before lights existed: every
 pre-existing pixel hash is unchanged. `tests/lights.rs` checks the new path on the GPU:

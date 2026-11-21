@@ -100,9 +100,12 @@ impl VertexLayout {
 ///   the vertices and ignores it);
 /// - the **emissive** colour, which both pipelines add to the lit surface: light
 ///   the surface gives off itself, so a lit window or a lamp's bulb glows at
-///   night without lighting anything around it, and costs nothing per light.
+///   night without lighting anything around it, and costs nothing per light;
+/// - the **clear coat**, a glossy lacquer both pipelines lay over the surface,
+///   like a car's paint or glass: it mirrors the sky, most where the surface is
+///   seen edge-on, and catches the sun in a tight glint.
 ///
-/// The default is opaque white with no emission.
+/// The default is opaque white with no emission and no clear coat.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MaterialParams {
     /// Linear RGBA base colour / albedo, each channel in `0.0..=1.0`.
@@ -112,6 +115,18 @@ pub struct MaterialParams {
     /// and up) reads as a glowing light source rather than a flat colour. `[0, 0, 0]`
     /// (the default) emits nothing.
     pub emissive: [f32; 3],
+    /// How strongly a clear coat covers the surface: `0.0` (the default) none,
+    /// `1.0` a full coat, like a car's lacquered paint or its glass.
+    ///
+    /// The coat mirrors the frame's sky along the reflected view ray (the
+    /// gradient from its horizon colour up to its zenith colour, and the
+    /// ground, darker, below the horizon), weighted by Fresnel: about 4% seen
+    /// square on, rising to all of it edge-on. Shadows do not dim the sky's
+    /// reflection, as the sky is still overhead there, so a dark surface keeps
+    /// its shape in the shade; they do dim the coat's glint of the sun. The
+    /// reflection is added on top of the lit surface, so a coat brightens dark
+    /// colours most.
+    pub clearcoat: f32,
 }
 
 impl Default for MaterialParams {
@@ -119,6 +134,7 @@ impl Default for MaterialParams {
         Self {
             base_color: [1.0, 1.0, 1.0, 1.0],
             emissive: [0.0, 0.0, 0.0],
+            clearcoat: 0.0,
         }
     }
 }

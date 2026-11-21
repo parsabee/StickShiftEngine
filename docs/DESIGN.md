@@ -156,6 +156,7 @@ classDiagram
     class MaterialParams {
         +base_color
         +emissive
+        +clearcoat
     }
     class Light {
         +kind Point or Spot cone

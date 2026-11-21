@@ -332,6 +332,15 @@ It costs nothing per light and lights nothing else: a window glows, the wall bes
 It travels in the per-draw uniform slot, which had room, so it needs no extra binding. glTF models
 bring theirs from the material's `emissiveFactor` (and `KHR_materials_emissive_strength`).
 
+**Clear coat** is a per-draw strength (`MaterialParams::clearcoat`, `0` by default) of a glossy
+lacquer over the surface, like a car's paint or glass. Both lit shaders mirror the frame's sky down
+the reflected view ray (the same horizon-to-zenith gradient the sky pass draws, and below the horizon
+a dim share of the horizon colour standing in for the ground), weighted by Schlick's Fresnel (4%
+square on, all of it edge-on), and add a tight glint of the sun. The sky's reflection is not
+shadowed, since the sky is still overhead in a shadow, so dark paint keeps its shape in the shade;
+the glint is. It rides in the spare lane of the per-draw emissive (`w`), so it needs no extra
+binding, and a draw without one skips it and shades exactly as before.
+
 **Not yet:** shadows from local lights (a shadowed spot for headlights is the likely first), light
 cookies, and bloom, which would make bright emitters bleed light onto their surroundings.
 
