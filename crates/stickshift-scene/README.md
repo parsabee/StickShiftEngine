@@ -21,9 +21,11 @@ Part of the [Stick Shift Engine](../../README.md) workspace. Apache-2.0.
   the focus, then invokes the game's `spawn` callback once per unfilled slot up to
   `focus + spawn_ahead`. `SpawnCtx` gives the callback `world`/`physics`/`position`/`slot` and a
   `spawned(entity)` hook to mark an entity for despawn-behind (untracked spawns are permanent).
-- `maybe_rebase(focus) -> Vec3` — when the focus passes `rebase_threshold`, shifts all ECS
-  transforms **and** physics bodies back toward the origin by a whole multiple of the threshold,
-  transparently to gameplay; returns the applied offset.
+- `maybe_rebase(focus) -> Vec3` — when the focus passes `rebase_threshold` from the origin, along
+  the axis or off it to either side, shifts all ECS transforms **and** physics bodies back toward
+  the origin by whole multiples of the threshold, transparently to gameplay; returns the applied
+  offset. Only the part along the axis counts toward slot indexing, so a focus that winds is kept
+  near the origin both ways without the slots noticing.
 
 ## Invariants
 

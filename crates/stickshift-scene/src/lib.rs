@@ -28,11 +28,11 @@
 //!    [`PhysicsBodyComponent`] is ever left
 //!    holding a freed handle (the physics/ECS handle-ownership invariant).
 //! 3. **Floating-origin rebase** ([`maybe_rebase`](Scene::maybe_rebase)). When the
-//!    focus drifts past a threshold from the origin, every position — ECS
-//!    [`TransformComponent`] *and* every physics
-//!    body translation — is shifted by a fixed offset back toward the origin, so
-//!    world coordinates never grow into float-precision error. Relative positions
-//!    are preserved, so gameplay is unaffected.
+//!    focus drifts past a threshold from the origin, along the travel axis or off
+//!    it to either side, every position — ECS [`TransformComponent`] *and* every
+//!    physics body translation — is shifted by a fixed offset back toward the
+//!    origin, so world coordinates never grow into float-precision error.
+//!    Relative positions are preserved, so gameplay is unaffected.
 //!
 //! # Streaming is deterministic
 //!
@@ -101,8 +101,9 @@ pub struct StreamingConfig {
     /// How far behind the focus (along the axis) a streamed entity may fall before
     /// it is despawned, in world units.
     pub despawn_behind: f32,
-    /// Distance the focus may travel from the origin (along the axis) before a
-    /// floating-origin rebase shifts everything back by that much.
+    /// Distance the focus may travel from the origin before a floating-origin
+    /// rebase shifts everything back by that much: along the axis, or off it,
+    /// in any world direction across it.
     pub rebase_threshold: f32,
 }
 
@@ -578,11 +579,20 @@ impl Scene {
     /// threshold, shifting **all** positions — ECS transforms *and* physics body
     /// translations — back toward the origin by a fixed offset.
     ///
-    /// The shift is a whole multiple of the focus's distance along the axis,
-    /// quantized to [`rebase_threshold`](StreamingConfig::rebase_threshold), so
-    /// the focus is pulled back to within one threshold of the origin. Relative
-    /// positions between any two entities are preserved exactly (every position
-    /// moves by the same vector), so gameplay never notices.
+    /// The shift is quantized to whole multiples of
+    /// [`rebase_threshold`](StreamingConfig::rebase_threshold), so the focus is
+    /// pulled back to within one threshold of the origin:
+    ///
+    /// - **Along the axis**, a whole number of thresholds of the focus's
+    ///   distance along it. The scene keeps count of this part, so slot indexing
+    ///   is unchanged by it ([`stream`](Self::stream) fills the same slots).
+    /// - **Across the axis**, where a focus that does not travel straight down
+    ///   it (one that winds) drifts too: a whole number of thresholds of each
+    ///   world component of the focus's offset from the axis's line, with any
+    ///   part along the axis taken out, so slot indexing never sees it.
+    ///
+    /// Relative positions between any two entities are preserved exactly
+    /// (every position moves by the same vector), so gameplay never notices.
     ///
     /// Every [`TransformComponent`] is shifted, so every transform must be in
     /// world space. The whole physics world is shifted with
@@ -602,20 +612,21 @@ impl Scene {
             return Vec3::ZERO;
         }
 
-        let focus_d = focus.dot(axis);
-        if focus_d.abs() < threshold {
-            return Vec3::ZERO;
-        }
-
         // Quantize the shift to whole thresholds so the operation is
-        // deterministic and slot indexing stays aligned.
-        let steps = (focus_d / threshold).trunc();
-        let shift_along = steps * threshold;
-        if shift_along == 0.0 {
+        // deterministic and slot indexing stays aligned: along the axis...
+        let focus_d = focus.dot(axis);
+        let shift_along = (focus_d / threshold).trunc() * threshold;
+        // ...and across it, each world component of the focus's offset from
+        // the axis's line, less any part along the axis (none, for an axis
+        // along a world axis), which slot indexing would otherwise see.
+        let across = focus - axis * focus_d;
+        let mut shift_across = (across / threshold).trunc() * threshold;
+        shift_across -= axis * shift_across.dot(axis);
+        if shift_along == 0.0 && shift_across == Vec3::ZERO {
             return Vec3::ZERO;
         }
-        // Move everything back by `shift_along` along the axis.
-        let offset = axis * (-shift_along);
+        // Move everything back by both.
+        let offset = -(axis * shift_along + shift_across);
 
         // Shift ECS transforms.
         for (_e, transform) in self.world.query_mut::<&mut TransformComponent>() {
@@ -1150,6 +1161,88 @@ mod tests {
             (pa - a_after).length() < 1e-3,
             "physics body tracks ECS after rebase"
         );
+    }
+
+    /// A focus that wanders off the axis, as one that winds does, is pulled
+    /// back across it too, whichever side it is on, by whole thresholds, and
+    /// everything moves with it.
+    #[test]
+    fn rebase_pulls_a_focus_back_across_the_axis_too() {
+        use stickshift_math::Transform;
+        let mut scene = Scene::new();
+        let threshold = scene.config().rebase_threshold;
+        let pos = Vec3::new(2_600.0, 0.5, -300.0);
+        let body = scene
+            .physics_mut()
+            .create_dynamic_body(Transform::from_position(pos));
+        let entity = scene.world_mut().spawn((
+            TransformComponent::from_position(pos),
+            PhysicsBodyComponent::new(body),
+        ));
+        // Off to the right, a little way along: pulled back across only.
+        let offset = scene.maybe_rebase(pos);
+        assert_eq!(offset, Vec3::new(-2.0 * threshold, 0.0, 0.0));
+        let after = scene
+            .world()
+            .get::<&TransformComponent>(entity)
+            .unwrap()
+            .transform
+            .position;
+        assert_eq!(after, pos + offset);
+        assert!(after.x.abs() < threshold && after.z.abs() < threshold);
+        let moved = scene.physics().get_transform(body).unwrap().position;
+        assert!((moved - after).length() < 1e-3, "the body moved with it");
+        // Off to the left and along: pulled back both ways at once.
+        let far = Vec3::new(-1_500.0, 0.0, -3_200.0);
+        assert_eq!(
+            scene.maybe_rebase(far),
+            Vec3::new(threshold, 0.0, 3.0 * threshold)
+        );
+        // Within the threshold either way: no rebase.
+        assert_eq!(
+            scene.maybe_rebase(Vec3::new(999.0, 0.0, -999.0)),
+            Vec3::ZERO
+        );
+    }
+
+    /// A rebase across the axis leaves slot indexing alone: a focus heading
+    /// diagonally, rebased across and along as it goes, fills every slot along
+    /// the axis once, in order.
+    #[test]
+    fn rebasing_across_the_axis_leaves_the_slots_alone() {
+        let cfg = StreamingConfig {
+            axis: Vec3::new(0.0, 0.0, -1.0),
+            spawn_interval: 10.0,
+            spawn_ahead: 30.0,
+            despawn_behind: 20.0,
+            rebase_threshold: 100.0,
+        };
+        let mut scene = Scene::with_config(cfg);
+        let mut filled: Vec<i64> = Vec::new();
+        let mut focus = Vec3::ZERO;
+        let (mut across, mut along) = (0, 0);
+        for _ in 0..2_000 {
+            // Heading 60 degrees off the axis.
+            focus += Vec3::new(0.866, 0.0, -0.5);
+            let offset = scene.maybe_rebase(focus);
+            across += i32::from(offset.x != 0.0);
+            along += i32::from(offset.z != 0.0);
+            focus += offset;
+            scene.stream(focus, |cx| {
+                filled.push(cx.slot);
+                let e = cx
+                    .world
+                    .spawn((TransformComponent::from_position(cx.position),));
+                cx.spawned(e);
+            });
+        }
+        assert!(across > 0 && along > 0, "rebased both ways");
+        assert!(focus.x.abs() < 100.0 && focus.z.abs() < 100.0);
+        let expected: Vec<i64> = (filled[0]..filled[0] + filled.len() as i64).collect();
+        assert_eq!(filled, expected, "every slot once, in order");
+        // 2000 steps at half a unit along the axis: about 1000 units of it.
+        let last = *filled.last().unwrap();
+        assert!((last * 10 - 1_000 - 30).abs() <= 10, "{last}");
     }
 
     /// No rebase fires while the focus stays within the threshold.

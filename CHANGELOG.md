@@ -21,6 +21,16 @@ API**.
 
 ### Fixed
 
+- **The floating-origin rebase keeps a winding focus near the origin.** `Scene::maybe_rebase` only
+  ever shifted along the streaming axis, so a focus that wandered off it (Offramp's road winds up to
+  60° either side of `-Z`) drifted further from the origin across it for as long as the session
+  ran. In a long session the car was over 10,000 units out. That far out, the combined
+  model-view-projection matrix each draw carries in `f32` loses enough to shift a whole object's
+  depth by tenths of a unit at a typical viewing distance. Surfaces close together then drew
+  through each other: the ground plane through the road, trees through buildings, cars through the
+  deck. `maybe_rebase` now also shifts across the axis, by whole thresholds of each world
+  component of the focus's offset from the axis's line. Only the part along the axis counts toward
+  slot indexing, as before, so streaming is unchanged.
 - **Headlights stop flickering in busy night scenes.** The Metal renderer bounded a spot light by
   the whole sphere of its range when binning it into clusters, though a spot lights only its cone. A
   car's headlight beam just ahead of the camera (the camera inside its range, though behind its

@@ -321,7 +321,8 @@ stateDiagram-v2
 `stickshift-scene` owns the ECS `World` and the `PhysicsWorld`. Streaming spawns ahead of a focus point
 and despawns behind it; despawn removes the physics body **before** the ECS entity so no live
 `PhysicsBodyComponent` ever holds a freed handle. A floating-origin rebase shifts everything back
-toward the origin between physics steps.
+toward the origin between physics steps: along the travel axis, and across it for a focus that
+winds off it.
 
 ```mermaid
 sequenceDiagram
