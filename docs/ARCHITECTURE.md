@@ -445,7 +445,9 @@ engine-generic **streaming** (spawn-ahead / despawn-behind by focus distance) an
 rebase**. Despawn is **atomic** — the physics body is removed before the ECS entity, upholding the
 handle-ownership invariant above. Rebase shifts ECS transforms and physics bodies together, only
 **between** physics steps (`stream → step_physics → maybe_rebase`), so relative positions are
-preserved and the solver never sees a mid-step discontinuity. `stickshift-core` owns a `Scene` in its
+preserved and the solver never sees a mid-step discontinuity. It pulls the focus back across the
+travel axis as well as along it, a whole number of thresholds each way, so a focus that winds off
+the axis stays near the origin too; only the part along the axis moves slot indexing. `stickshift-core` owns a `Scene` in its
 loop and exposes it via `EngineCtx`; the dependency direction stays acyclic
 (`stickshift-core → stickshift-scene → {stickshift-ecs, stickshift-physics, stickshift-math}`).
 
