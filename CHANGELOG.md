@@ -11,6 +11,29 @@ API**.
 
 ### Added
 
+- **Diagnostics capture**, for chasing down a glitch. The Graphics menu gains a last section:
+  *Start Diagnostics Capture* (⌃⌘D, *Stop…* while one runs) and *Mark Moment* (⌃⌘M, enabled only
+  while one runs). Each capture is a folder of its own (`diagnostics/<game>-<time>/` by default),
+  holding:
+  - `footage.mp4`, what the window showed, at 720 pixels high by default;
+  - `frames.csv`, a row for every frame on the footage's clock: its CPU, GPU, physics and render
+    times, updates, draws, lights and lights left out of the budget, live meshes and textures, GPU
+    and process memory, entities and bodies, the camera's position and distance from the origin,
+    the rebases and where the camera would be unrebased, then columns the game adds;
+  - `events.csv`, the hitches, rebases, marked moments, settings changes, resizes and focus loss;
+  - `session.json`, the machine, the settings, the game's facts and a summary (frame-time
+    percentiles, the worst frames, peaks, the marks).
+
+  `RunConfig::diagnostics` (a `DiagnosticsConfig`) says where captures go, how high the footage is,
+  and whether one starts at launch. A game adds columns with `Game::diagnostics` and facts with
+  `Game::diagnostics_info` (both default to nothing); a host of its own uses
+  `Session::start_diagnostics`, `stop_diagnostics`, `mark_moment` and `capture_folder`.
+- **`RenderDevice::frame_stats`** (default `None`): what the last frame drew and what the backend
+  holds, as a `FrameStats`. The Metal backend and `NullRenderer` report it.
+- **`PerfTracker::last_frame`**: the latest frame's own times (`FrameSample`), not averaged.
+- **`Scene::rebase_count` and `Scene::rebase_total`**: how many floating-origin rebases there have
+  been, and the sum of their offsets in `f64`.
+
 - **Clear coat**, for car paint and glass: `MaterialParams::clearcoat` (`0.0` by default, up to
   `1.0` for a full coat). Both lit pipelines mirror the frame's sky down the reflected view ray (its
   horizon-to-zenith gradient, and the ground, darker, below the horizon), weighted by Fresnel: about

@@ -59,7 +59,7 @@ use std::collections::{HashMap, HashSet};
 
 use stickshift_ecs::hecs::{Entity, World};
 use stickshift_ecs::{DynamicTag, PhysicsBodyComponent, TransformComponent};
-use stickshift_math::glam::Vec3;
+use stickshift_math::glam::{DVec3, Vec3};
 use stickshift_physics::{PhysicsWorld, RigidBodyHandle, FIXED_DT};
 
 /// Configuration for the [`Scene`]'s spawn-ahead / despawn-behind streaming and
@@ -184,6 +184,11 @@ pub struct Scene {
     /// positions would lose precision on a long run, which is exactly what the
     /// floating origin exists to prevent.
     rebase_shift_units: f64,
+    /// How many rebases have shifted the world...
+    rebase_count: u64,
+    /// ...and by how much in all: the sum of every offset applied, in `f64`
+    /// for the same reason as `rebase_shift_units`.
+    rebase_total: DVec3,
     /// Which entity owns which rigid body, as last seen by a
     /// [`step_physics`](Self::step_physics) or [`stream`](Self::stream) pass.
     /// Lets the scene free a body whose entity was despawned through
@@ -208,6 +213,8 @@ impl Scene {
             streamed: Vec::new(),
             spawn_frontier: None,
             rebase_shift_units: 0.0,
+            rebase_count: 0,
+            rebase_total: DVec3::ZERO,
             body_owners: HashMap::new(),
         }
     }
@@ -336,6 +343,21 @@ impl Scene {
     #[must_use]
     pub fn streamed_count(&self) -> usize {
         self.streamed.len()
+    }
+
+    /// How many floating-origin rebases ([`maybe_rebase`](Self::maybe_rebase))
+    /// have shifted the world. For diagnostics.
+    #[must_use]
+    pub fn rebase_count(&self) -> u64 {
+        self.rebase_count
+    }
+
+    /// The sum of every offset the rebases have applied, in `f64`: a position
+    /// now, less this, is where it would be had the world never been shifted.
+    /// For diagnostics: how far the focus has truly travelled.
+    #[must_use]
+    pub fn rebase_total(&self) -> DVec3 {
+        self.rebase_total
     }
 
     /// Advances physics by one fixed timestep ([`FIXED_DT`]) and syncs transforms.
@@ -641,6 +663,8 @@ impl Scene {
 
         // Track the shift so slot indexing stays consistent with pre-rebase space.
         self.rebase_shift_units += f64::from(shift_along);
+        self.rebase_count += 1;
+        self.rebase_total += offset.as_dvec3();
 
         offset
     }
@@ -1198,6 +1222,10 @@ mod tests {
             scene.maybe_rebase(far),
             Vec3::new(threshold, 0.0, 3.0 * threshold)
         );
+        // Counted, and summed.
+        assert_eq!(scene.rebase_count(), 2);
+        let total = f64::from(threshold);
+        assert_eq!(scene.rebase_total(), DVec3::new(-total, 0.0, 3.0 * total));
         // Within the threshold either way: no rebase.
         assert_eq!(
             scene.maybe_rebase(Vec3::new(999.0, 0.0, -999.0)),

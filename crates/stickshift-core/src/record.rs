@@ -102,28 +102,31 @@ impl Recorder {
     /// Before a frame shown `elapsed` after the one before, in a view of
     /// `aspect`: if a frame is due, ask the renderer to capture it. A frame is
     /// due a frame period after the last one taken, give or take a quarter of
-    /// one (so a display's jitter does not halve the rate).
+    /// one (so a display's jitter does not halve the rate). Returns whether
+    /// the renderer took the request.
     pub(crate) fn before_frame(
         &mut self,
         renderer: &mut dyn Renderer,
         elapsed: Duration,
         aspect: f32,
-    ) {
+    ) -> bool {
         self.clock += elapsed.as_secs_f64();
         if self.failed.is_some() {
-            return;
+            return false;
         }
         let period = 1.0 / f64::from(self.recording.fps.max(1));
         if self.clock + 0.25 * period < self.next {
-            return;
+            return false;
         }
         let height = self.recording.height;
         let (width, height) = *self
             .size
             .get_or_insert_with(|| (self.recording.width_for(aspect), height));
-        if renderer.capture_frame(width, height, self.clock) {
+        let taken = renderer.capture_frame(width, height, self.clock);
+        if taken {
             self.next = (self.next + period).max(self.clock + 0.5 * period);
         }
+        taken
     }
 
     /// After a frame: write every capture the GPU has finished.

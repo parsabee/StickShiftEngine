@@ -54,6 +54,11 @@ stickshift-audio = { path = "crates/stickshift-audio" }
 stickshift-core = { path = "crates/stickshift-core" }
 stickshift-video = { path = "crates/stickshift-video" }
 
+# The C library's bindings: for a diagnostics capture, the process's resident
+# memory (Mach `task_info`), the machine (`sysctl`) and the local time. Already
+# in the build through `winit` and the audio stack.
+libc = "0.2"
+
 glam = "0.29"
 # glTF import: pure-Rust parser, builds on the Command Line Tools (no
 # Metal / no C toolchain beyond std). `default-features` is disabled and only the

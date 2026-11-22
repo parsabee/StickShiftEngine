@@ -87,6 +87,12 @@ its loop, world, streaming, physics, audio and rendering. See the [roadmap](docs
 - **Recording** a run to an H.264 movie (`RunConfig::record`), HUD and all, at the height you ask
   (480 or 720, say), for diagnosing what a game did: captured on the GPU, encoded by the system's
   AVFoundation, never stalling the game.
+- **Diagnostics capture** from the Graphics menu (*Start Diagnostics Capture*, ⌃⌘D; *Mark
+  Moment*, ⌃⌘M): footage of what the window shows, beside a CSV row for every frame (its CPU, GPU,
+  physics and render times, draws, lights and lights over budget, live meshes and textures, GPU and
+  process memory, entities, the camera's distance from the origin and the rebases, and columns the
+  game adds), the events (hitches, rebases, marked moments, settings changes) and a summary with
+  frame-time percentiles and peaks. Each capture is a folder of its own, for chasing down a glitch.
 - **Testable by design:** a headless driver that runs a game with no window or GPU, a
   `NullRenderer` that records what a frame drew, and golden pixel-hash tests that pin the
   renderer's output.

@@ -222,6 +222,16 @@ pub trait RenderDevice {
         None
     }
 
+    /// What the most recently recorded frame drew, and what the backend holds
+    /// now ([`FrameStats`]), if this backend counts it. For diagnostics: the
+    /// engine logs it each frame of a diagnostics capture.
+    ///
+    /// The default is `None`. Between frames it describes the frame last
+    /// submitted; during one, the frame so far.
+    fn frame_stats(&self) -> Option<FrameStats> {
+        None
+    }
+
     /// Apply render quality settings: shadow quality and range, and the
     /// draw-distance scale. See [`RenderSettings`].
     ///
@@ -232,6 +242,28 @@ pub trait RenderDevice {
     ///   here, for example a shadow map of a new size, so treat it as a
     ///   load-time-cost call, not a per-frame one.
     fn set_render_settings(&mut self, settings: &RenderSettings);
+}
+
+/// What one frame drew, and what the backend held, as reported by
+/// [`RenderDevice::frame_stats`]. A count the backend does not keep is zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FrameStats {
+    /// Meshes drawn: every `draw_mesh` and `draw_mesh_matrix`.
+    pub draws: u32,
+    /// Overlay quads drawn.
+    pub overlay_quads: u32,
+    /// Lights added.
+    pub lights: u32,
+    /// Lights left out of the frame because they did not fit its light budget
+    /// (a backend that bins lights into clusters may run out of room).
+    pub dropped_lights: u32,
+    /// Meshes live: created and not yet destroyed.
+    pub meshes: u32,
+    /// Textures live.
+    pub textures: u32,
+    /// Bytes of memory the GPU device has allocated for this backend, or zero
+    /// if it does not say.
+    pub gpu_memory: u64,
 }
 
 /// The GPU execution time of one completed frame, as reported by
