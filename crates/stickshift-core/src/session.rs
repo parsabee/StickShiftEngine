@@ -85,13 +85,16 @@ use std::ops::{BitOr, BitOrAssign};
 use std::time::{Duration, Instant};
 
 use crate::context::Renderer;
+use crate::diagnostics::{
+    Capture, CaptureSummary, DiagnosticsConfig, DiagnosticsInfo, FrameReadings, Setting,
+};
 use crate::driver::{drive_frame, Loop};
 use crate::game::Game;
-use crate::graphics::GraphicsSettings;
+use crate::graphics::{shadow_quality_label, GraphicsSettings};
 use crate::input::{Key, MouseButton};
 use crate::platform;
 use crate::record::{Recorder, Recording, VideoError, VideoSummary};
-use crate::settings_menu::MenuCommand;
+use crate::settings_menu::{MenuCommand, MenuState};
 use crate::timestep::FIXED_DT_DURATION;
 
 /// The size and pixel density of the view a game is drawn into.
@@ -388,6 +391,14 @@ pub struct Session {
     hosted: bool,
     /// A recording in progress ([`record`](Self::record)).
     recorder: Option<Recorder>,
+    /// Where diagnostics captures go and what they hold
+    /// ([`set_diagnostics`](Self::set_diagnostics)).
+    diagnostics: DiagnosticsConfig,
+    /// A diagnostics capture in progress
+    /// ([`start_diagnostics`](Self::start_diagnostics)).
+    capture: Option<Capture>,
+    /// Whether the capture asked for at launch has been started.
+    launch_capture_started: bool,
 }
 
 impl Session {
@@ -421,7 +432,114 @@ impl Session {
             safe_area: [0.0; 4],
             hosted: false,
             recorder: None,
+            diagnostics: DiagnosticsConfig::default(),
+            capture: None,
+            launch_capture_started: false,
         }
+    }
+
+    /// Set where [diagnostics captures](crate::diagnostics) go and what they
+    /// hold, for the next one started. With
+    /// [`start_at_launch`](DiagnosticsConfig::start_at_launch), one starts as
+    /// the game's init has run ([`resume`](Self::resume)).
+    pub fn set_diagnostics(&mut self, config: DiagnosticsConfig) {
+        self.diagnostics = config;
+    }
+
+    /// Where diagnostics captures go and what they hold.
+    #[must_use]
+    pub fn diagnostics(&self) -> &DiagnosticsConfig {
+        &self.diagnostics
+    }
+
+    /// The folder of the diagnostics capture in progress, if one is.
+    #[must_use]
+    pub fn capture_folder(&self) -> Option<&std::path::Path> {
+        self.capture.as_ref().map(Capture::folder)
+    }
+
+    /// The state the built-in menu's titles and enabled states follow, with
+    /// the view `fullscreen` or not (the host's to know).
+    #[must_use]
+    pub fn menu_state(&self, fullscreen: bool) -> MenuState {
+        MenuState {
+            fullscreen,
+            capturing: self.capture.is_some(),
+        }
+    }
+
+    /// Start a [diagnostics capture](crate::diagnostics): footage and a log of
+    /// every frame from the next one on, into a new folder under
+    /// [`DiagnosticsConfig::dir`], with `game`'s facts
+    /// ([`Game::diagnostics_info`]). Returns its folder; if one is already
+    /// running, that one's. It is reported on stderr.
+    ///
+    /// While a [recording](Self::record) is under way, the capture takes no
+    /// footage of its own: the recording's movie holds the frames.
+    ///
+    /// # Errors
+    ///
+    /// Its folder or files could not be made.
+    pub fn start_diagnostics<G: Game>(
+        &mut self,
+        game: &G,
+        renderer: &mut dyn Renderer,
+    ) -> std::io::Result<std::path::PathBuf> {
+        if let Some(capture) = &self.capture {
+            return Ok(capture.folder().to_path_buf());
+        }
+        let mut info = DiagnosticsInfo::default();
+        game.diagnostics_info(&mut info);
+        let setting = Setting {
+            view: self.view.map(|v| (v.width, v.height, v.scale_factor)),
+            drawable: renderer.surface_size(),
+            graphics: describe(&self.lp.graphics.current()),
+        };
+        let capture = Capture::start(&self.diagnostics, info, setting, self.recorder.is_some())?;
+        let folder = capture.folder().to_path_buf();
+        eprintln!("diagnostics: capturing to {}", folder.display());
+        self.capture = Some(capture);
+        Ok(folder)
+    }
+
+    /// Stop the diagnostics capture in progress: finish its footage (waiting
+    /// for the frames still on the GPU) and write its summary. Reported on
+    /// stderr. `None` when none is running.
+    pub fn stop_diagnostics(
+        &mut self,
+        renderer: &mut dyn Renderer,
+    ) -> Option<std::io::Result<CaptureSummary>> {
+        let result = self.capture.take()?.finish(renderer);
+        match &result {
+            Ok(summary) => {
+                eprintln!(
+                    "diagnostics: captured {} frames ({:.1} s, {} marked) to {}",
+                    summary.frames,
+                    summary.seconds,
+                    summary.marks,
+                    summary.folder.display()
+                );
+                if let Err(why) = &summary.footage {
+                    eprintln!("diagnostics: no footage: {why}");
+                }
+            }
+            Err(e) => eprintln!("diagnostics: the capture could not be finished: {e}"),
+        }
+        Some(result)
+    }
+
+    /// Mark this moment in the diagnostics capture in progress: an event in
+    /// its log, and an entry in its summary, at the frame shown now. Returns
+    /// whether one was running to mark.
+    pub fn mark_moment(&mut self) -> bool {
+        let Some(capture) = &mut self.capture else {
+            return false;
+        };
+        if let Err(e) = capture.mark() {
+            eprintln!("diagnostics: the moment could not be marked: {e}");
+        }
+        eprintln!("diagnostics: marked a moment");
+        true
     }
 
     /// Record what the session shows to a movie from the next frame on (see
@@ -483,6 +601,12 @@ impl Session {
         self.lp.init_once(game, renderer);
         self.resize_surface(renderer);
         self.seen_revision = self.lp.graphics.revision();
+        if self.diagnostics.start_at_launch && !self.launch_capture_started {
+            self.launch_capture_started = true;
+            if let Err(e) = self.start_diagnostics(game, renderer) {
+                eprintln!("diagnostics: the capture could not be started: {e}");
+            }
+        }
         Requests::MENU_SYNC
     }
 
@@ -515,14 +639,18 @@ impl Session {
         let mut requests = self.after_graphics_change(renderer);
 
         let elapsed = self.elapsed(clock);
+        let aspect = self.view.map_or(16.0 / 9.0, View::aspect_ratio);
         if let Some(recorder) = &mut self.recorder {
-            let aspect = self.view.map_or(16.0 / 9.0, View::aspect_ratio);
             recorder.before_frame(renderer, elapsed, aspect);
+        }
+        if let Some(capture) = &mut self.capture {
+            capture.before_frame(renderer, elapsed, aspect);
         }
         let steps = drive_frame(&mut self.lp, game, renderer, elapsed);
         if let Some(recorder) = &mut self.recorder {
             recorder.after_frame(renderer);
         }
+        self.log_frame(steps, game, renderer);
         if self.lp.exit_requested {
             requests |= Requests::EXIT;
         }
@@ -576,6 +704,7 @@ impl Session {
             }
             HostEvent::FocusLost => {
                 input.release_all();
+                self.log_event("focus_lost", "");
                 Requests::NONE
             }
             HostEvent::Resized(view) => {
@@ -584,6 +713,10 @@ impl Session {
                 self.lp.camera.set_aspect_ratio(view.aspect_ratio());
                 self.view = Some(view);
                 self.resize_surface(renderer);
+                self.log_event(
+                    "resize",
+                    format!("{}x{} at {}", view.width, view.height, view.scale_factor),
+                );
                 Requests::MENU_SYNC
             }
             HostEvent::ScaleChanged(view) => {
@@ -665,6 +798,25 @@ impl Session {
         game: &mut G,
         renderer: &mut dyn Renderer,
     ) -> Requests {
+        // The diagnostics items start, stop and mark a capture; neither is a
+        // settings change. The menu held the thread, as below.
+        match command {
+            MenuCommand::ToggleDiagnostics => {
+                if self.capture.is_some() {
+                    self.stop_diagnostics(renderer);
+                } else if let Err(e) = self.start_diagnostics(game, renderer) {
+                    eprintln!("diagnostics: the capture could not be started: {e}");
+                }
+                self.reset_clock();
+                return Requests::MENU_SYNC;
+            }
+            MenuCommand::MarkMoment => {
+                self.mark_moment();
+                self.reset_clock();
+                return Requests::NONE;
+            }
+            _ => {}
+        }
         let graphics = &self.lp.graphics;
         let base = graphics.pending().unwrap_or_else(|| graphics.current());
         let requests = match command.apply(base) {
@@ -771,8 +923,73 @@ impl Session {
         if let Some(store) = &self.store {
             store.save(&self.lp.graphics.current());
         }
+        let settings = describe(&self.lp.graphics.current())
+            .iter()
+            .map(|(name, value)| format!("{name} {value}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        self.log_event("settings", settings);
         Requests::MENU_SYNC
     }
+
+    /// Log an event of `kind` in the diagnostics capture in progress, if one
+    /// is. A capture that can no longer be written to stops.
+    fn log_event(&mut self, kind: &str, detail: impl std::fmt::Display) {
+        if let Some(capture) = &mut self.capture {
+            if let Err(e) = capture.event(kind, detail) {
+                eprintln!("diagnostics: the capture stopped: {e}");
+                self.capture = None;
+            }
+        }
+    }
+
+    /// Log the frame just shown, `steps` updates of it, in the diagnostics
+    /// capture in progress, if one is: the footage's frames the GPU has
+    /// finished, the frame's readings, and `game`'s sample
+    /// ([`Game::diagnostics`]). A capture that can no longer be written to
+    /// stops.
+    fn log_frame<G: Game>(&mut self, steps: u32, game: &G, renderer: &mut dyn Renderer) {
+        let Some(capture) = &mut self.capture else {
+            return;
+        };
+        capture.after_frame(renderer);
+        let perf = self.lp.perf.last_frame().unwrap_or_default();
+        let scene = &self.lp.scene;
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        let readings = FrameReadings {
+            frame: perf.frame_time,
+            cpu: perf.cpu_time,
+            gpu: perf.gpu_time,
+            physics: perf.physics_time,
+            render: perf.render_time,
+            updates: steps,
+            stats: renderer.frame_stats(),
+            entities: count(scene.world().len() as usize),
+            bodies: count(scene.physics().rigid_body_set.len()),
+            streamed: count(scene.streamed_count()),
+            camera: self.lp.camera.position(),
+            rebases: scene.rebase_count(),
+            rebase_total: scene.rebase_total(),
+        };
+        game.diagnostics(capture.sample());
+        if let Err(e) = capture.log_frame(&readings) {
+            eprintln!("diagnostics: the capture stopped: {e}");
+            self.capture = None;
+        }
+    }
+}
+
+/// `settings` as `name: value` pairs, as the menu shows them.
+fn describe(settings: &GraphicsSettings) -> Vec<(&'static str, String)> {
+    vec![
+        ("shadows", shadow_quality_label(settings.shadows).to_owned()),
+        (
+            "shadow_distance",
+            settings.shadow_distance.label().to_owned(),
+        ),
+        ("draw_distance", settings.draw_distance.label().to_owned()),
+        ("resolution", settings.render_scale.label().to_owned()),
+    ]
 }
 
 #[cfg(test)]

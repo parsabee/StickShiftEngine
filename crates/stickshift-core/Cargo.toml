@@ -42,6 +42,10 @@ winit = { workspace = true, optional = true }
 objc2.workspace = true
 objc2-foundation.workspace = true
 
+# A diagnostics capture's memory, machine and local time (see `diagnostics`).
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 # The built-in Graphics menu (`NSMenu`), for the windowed runner only. Same objc2
 # versions winit 0.30 already builds, so no new crates enter the build; AppKit's
 # Metal/QuartzCore features stay off, so `metal` stays out of this crate's tree.

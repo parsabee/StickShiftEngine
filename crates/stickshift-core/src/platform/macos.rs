@@ -41,7 +41,7 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::app::EngineEvent;
 use crate::graphics::GraphicsSettings;
-use crate::settings_menu::{submenus, MenuCommand, ACTIONS, MENU_TITLE};
+use crate::settings_menu::{submenus, MenuCommand, MenuState, ACTIONS, DIAGNOSTICS, MENU_TITLE};
 
 /// Instance variables of [`StickShiftMenuTarget`]: where to post clicks.
 pub(crate) struct TargetIvars {
@@ -108,27 +108,18 @@ impl SettingsMenu {
         let target_obj: &AnyObject = &target;
 
         let make_item = |command: MenuCommand| -> Retained<NSMenuItem> {
-            let (key, mask) = match command {
-                // ⌃⌘F, the system's standard full-screen shortcut.
-                MenuCommand::ToggleFullScreen => (
-                    "f",
-                    Some(
-                        NSEventModifierFlags::NSEventModifierFlagControl
-                            | NSEventModifierFlags::NSEventModifierFlagCommand,
-                    ),
-                ),
-                _ => ("", None),
-            };
-            // SAFETY: plain AppKit object construction and configuration on the
-            // main thread; the selector names the method `StickShiftMenuTarget`
-            // implements, and the target outlives the item's use of it (both are
-            // owned by the returned `SettingsMenu`).
+            // The toggles and marking take Control-Command shortcuts.
+            let key = command.shortcut().map(String::from).unwrap_or_default();
+            let mask = command.shortcut().map(|_| {
+                NSEventModifierFlags::NSEventModifierFlagControl
+                    | NSEventModifierFlags::NSEventModifierFlagCommand
+            });
             unsafe {
                 let item = NSMenuItem::initWithTitle_action_keyEquivalent(
                     mtm.alloc(),
-                    &NSString::from_str(command.label(false)),
+                    &NSString::from_str(command.label(MenuState::default())),
                     Some(action),
-                    &NSString::from_str(key),
+                    &NSString::from_str(&key),
                 );
                 if let Some(mask) = mask {
                     item.setKeyEquivalentModifierMask(mask);
@@ -179,6 +170,12 @@ impl SettingsMenu {
             graphics.addItem(&item);
             items.push((item, command));
         }
+        graphics.addItem(&NSMenuItem::separatorItem(mtm));
+        for command in DIAGNOSTICS {
+            let item = make_item(command);
+            graphics.addItem(&item);
+            items.push((item, command));
+        }
 
         let app = NSApplication::sharedApplication(mtm);
         // SAFETY: main-thread access to the shared application's menu bar.
@@ -196,21 +193,23 @@ impl SettingsMenu {
         })
     }
 
-    /// Refresh checkmarks, enabled states and the full-screen title for
-    /// `settings` and the window's full-screen state.
-    pub(crate) fn sync(&self, settings: &GraphicsSettings, fullscreen: bool) {
+    /// Refresh checkmarks, enabled states and the two toggles' titles for
+    /// `settings` and `state`: whether the window is full screen, and whether a
+    /// diagnostics capture is running.
+    pub(crate) fn sync(&self, settings: &GraphicsSettings, state: MenuState) {
         for (item, command) in &self.items {
-            // SAFETY: main-thread configuration of items this menu owns (the
-            // runner calls `sync` only from winit callbacks on the main thread).
             unsafe {
                 item.setState(if command.is_checked(settings) {
                     NSControlStateValueOn
                 } else {
                     NSControlStateValueOff
                 });
-                item.setEnabled(command.is_enabled(settings));
-                if *command == MenuCommand::ToggleFullScreen {
-                    item.setTitle(&NSString::from_str(command.label(fullscreen)));
+                item.setEnabled(command.is_enabled(settings, state));
+                if matches!(
+                    command,
+                    MenuCommand::ToggleFullScreen | MenuCommand::ToggleDiagnostics
+                ) {
+                    item.setTitle(&NSString::from_str(command.label(state)));
                 }
             }
         }

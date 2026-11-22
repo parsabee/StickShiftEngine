@@ -199,10 +199,10 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use stickshift_math::glam::{Mat4, Vec3};
 use stickshift_math::Transform;
 use stickshift_render_api::{
-    CapturedFrame, ColorSpace, EmitterHandle, EmitterParams, FrameRecorder, GpuFrameTime, Light,
-    MaterialParams, MeshData, MeshHandle, OverlayFill, OverlayQuad, ParticleSystem,
-    PipelineDescriptor, PipelineHandle, PipelineKind, RenderDevice, RenderSettings, SunSky,
-    TextureData, TextureHandle, VertexFormat, VertexLayout, MAX_EMITTERS, MAX_LIGHTS,
+    CapturedFrame, ColorSpace, EmitterHandle, EmitterParams, FrameRecorder, FrameStats,
+    GpuFrameTime, Light, MaterialParams, MeshData, MeshHandle, OverlayFill, OverlayQuad,
+    ParticleSystem, PipelineDescriptor, PipelineHandle, PipelineKind, RenderDevice, RenderSettings,
+    SunSky, TextureData, TextureHandle, VertexFormat, VertexLayout, MAX_EMITTERS, MAX_LIGHTS,
     MAX_PARTICLES,
 };
 
@@ -758,6 +758,9 @@ pub struct MetalRenderer {
     // `MAX_LIGHTS` / index budget. Diagnostic aids.
     rejected_lights: u64,
     dropped_lights: u64,
+    // What the open frame (or, between frames, the last one) drew: its draws,
+    // overlay quads, lights and dropped lights, for `frame_stats`.
+    frame_counts: FrameStats,
 
     // The world → clip view-projection, pushed through the seam via
     // `set_view_projection`. The backend owns no camera; the
@@ -1560,6 +1563,7 @@ impl MetalRenderer {
             cluster_ring,
             rejected_lights: 0,
             dropped_lights: 0,
+            frame_counts: FrameStats::default(),
             // No camera pushed yet; identity until the first `set_view_projection`,
             // and the origin until the first `set_camera_position`.
             view_projection: Mat4::IDENTITY,
@@ -2672,6 +2676,7 @@ impl MetalRenderer {
         self.overlay_vertices.clear();
         self.overlay_textures.clear();
         self.frame_lights.clear();
+        self.frame_counts = FrameStats::default();
 
         self.frame = Some(FrameState {
             command_buffer,
@@ -3068,6 +3073,7 @@ impl MetalRenderer {
         let bins = &mut self.light_bins;
         bins.bin(&self.frame_lights, shading.view_projection);
         self.dropped_lights += bins.dropped() as u64;
+        self.frame_counts.dropped_lights += u32::try_from(bins.dropped()).unwrap_or(u32::MAX);
         let info = ClusterInfo::new(frame.width as u32, frame.height as u32, bins.lights().len());
 
         // SAFETY: the ring is `MAX_FRAMES_IN_FLIGHT * LIGHT_REGION_SIZE` bytes and
@@ -3194,6 +3200,7 @@ impl MetalRenderer {
             },
         };
         self.draws.push(record);
+        self.frame_counts.draws += 1;
     }
 
     /// Append `quad` to this frame's overlay: the body of
@@ -3346,6 +3353,16 @@ impl RenderDevice for MetalRenderer {
             .map(|duration| GpuFrameTime { frame, duration })
     }
 
+    fn frame_stats(&self) -> Option<FrameStats> {
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        Some(FrameStats {
+            meshes: count(self.meshes.len()),
+            textures: count(self.textures.iter().flatten().count()),
+            gpu_memory: self.device.current_allocated_size(),
+            ..self.frame_counts
+        })
+    }
+
     fn set_render_settings(&mut self, settings: &RenderSettings) {
         // Draw distance: scale the fog from its look defaults. Start and opaque
         // depth (`start + 2 / density`) both scale by exactly `scale`, so the fog
@@ -3456,8 +3473,11 @@ impl FrameRecorder for MetalRenderer {
             self.rejected_lights += 1;
         } else if self.frame_lights.len() >= MAX_LIGHTS {
             self.dropped_lights += 1;
+            self.frame_counts.lights += 1;
+            self.frame_counts.dropped_lights += 1;
         } else {
             self.frame_lights.push(*light);
+            self.frame_counts.lights += 1;
         }
     }
 
@@ -3503,6 +3523,7 @@ impl FrameRecorder for MetalRenderer {
             return;
         }
         self.record_overlay_quad(quad);
+        self.frame_counts.overlay_quads += 1;
     }
 
     /// Close the frame and present it (see the seam contract).

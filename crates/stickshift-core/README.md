@@ -132,6 +132,22 @@ implementation of the clock and the settings side effects. The Graphics menu's
 model (`settings_menu`: layout, labels, checks, tags) is public for such a host to
 build its native menu from.
 
+## Diagnostics capture
+
+`diagnostics` captures what a session does, for chasing down a glitch: footage
+(through the same recorder `RunConfig::record` uses), a CSV row for every frame
+shown, the events, and a `session.json` with the machine, the settings, the
+game's facts and a summary. The Graphics menu's last section starts and stops one
+(*Start Diagnostics Capture*, ⌃⌘D) and marks the moment something goes wrong
+(*Mark Moment*, ⌃⌘M); `Session::start_diagnostics`, `stop_diagnostics` and
+`mark_moment` do the same for a host of its own, and `RunConfig::diagnostics`
+says where captures go (`diagnostics/` under the working directory by default)
+and can start one at launch. A game adds columns of its own to the frames
+(`Game::diagnostics`) and facts to the session (`Game::diagnostics_info`). The
+frame log reads the perf tracker's last frame (`PerfTracker::last_frame`), the
+renderer's `FrameStats` and the scene's rebase count, and nothing is logged, nor
+any hook called, while no capture runs.
+
 ## Features
 
 - **`windowed`** (default): the winit runner (`run`, `run_with_backend`,

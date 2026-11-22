@@ -93,7 +93,7 @@ pub mod sun;
 
 pub use descriptor::{MaterialParams, PipelineKind, VertexAttribute, VertexFormat, VertexLayout};
 pub use device::{
-    ColorSpace, GpuFrameTime, MeshData, PipelineDescriptor, RenderDevice, TextureData,
+    ColorSpace, FrameStats, GpuFrameTime, MeshData, PipelineDescriptor, RenderDevice, TextureData,
 };
 pub use handles::{EmitterHandle, MeshHandle, PipelineHandle, TextureHandle};
 pub use light::{Light, LightKind, LIGHT_MIN_DISTANCE, MAX_LIGHTS, MAX_SPOT_ANGLE_DEG};

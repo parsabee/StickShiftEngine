@@ -10,7 +10,7 @@ use stickshift_math::glam::{Mat4, Quat, Vec3};
 use stickshift_math::Transform;
 
 use crate::descriptor::{MaterialParams, PipelineKind};
-use crate::device::{MeshData, PipelineDescriptor, RenderDevice, TextureData};
+use crate::device::{FrameStats, MeshData, PipelineDescriptor, RenderDevice, TextureData};
 use crate::handles::{EmitterHandle, MeshHandle, PipelineHandle, TextureHandle};
 use crate::light::{Light, MAX_LIGHTS};
 use crate::overlay::OverlayQuad;
@@ -181,6 +181,9 @@ pub struct NullRenderer {
     /// The lights the open frame (or, between frames, the last one) added, in
     /// call order. Cleared by `begin_frame`: lights are not sticky.
     lights: Vec<Light>,
+    /// Where the latest frame's draws and overlay quads begin in `draws` and
+    /// `overlay_quads`, for [`frame_stats`](RenderDevice::frame_stats).
+    frame_starts: (usize, usize),
     /// The most recent view-projection pushed via
     /// [`set_view_projection`](FrameRecorder::set_view_projection), if any. `None`
     /// until the first push, then **sticky** (retained across frames) — mirroring
@@ -539,6 +542,21 @@ impl RenderDevice for NullRenderer {
     fn set_render_settings(&mut self, settings: &RenderSettings) {
         self.render_settings = Some(*settings);
     }
+
+    fn frame_stats(&self) -> Option<FrameStats> {
+        // The open frame so far, or between frames the last one: everything
+        // recorded since the latest `begin_frame`.
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        Some(FrameStats {
+            draws: count(self.draws.len() - self.frame_starts.0),
+            overlay_quads: count(self.overlay_quads.len() - self.frame_starts.1),
+            lights: count(self.lights.len()),
+            dropped_lights: 0,
+            meshes: count(self.live_mesh_count()),
+            textures: count(self.live_texture_count()),
+            gpu_memory: 0,
+        })
+    }
 }
 
 /// Drawable width the [`NullRenderer`] reports from
@@ -564,6 +582,7 @@ impl FrameRecorder for NullRenderer {
         self.current_pipeline = None;
         self.current_texture = None;
         self.lights.clear();
+        self.frame_starts = (self.draws.len(), self.overlay_quads.len());
     }
 
     fn set_view_projection(&mut self, view_proj: Mat4) {

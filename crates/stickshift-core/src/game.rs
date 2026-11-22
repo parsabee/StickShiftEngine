@@ -13,6 +13,7 @@
 //! game.
 
 use crate::context::EngineCtx;
+use crate::diagnostics::{DiagnosticsInfo, DiagnosticsSample};
 use crate::graphics::GraphicsSettings;
 
 /// A Stick Shift Engine game: implement this to be driven by the engine loop.
@@ -140,5 +141,24 @@ pub trait Game {
     /// [`init`](Self::init).
     fn graphics_settings_changed(&mut self, ctx: &mut EngineCtx, settings: &GraphicsSettings) {
         let _ = (ctx, settings);
+    }
+
+    /// Add this frame's values of the game's own to a diagnostics capture
+    /// (see [`diagnostics`](crate::diagnostics)): columns in its `frames.csv`
+    /// after the engine's, a row a frame. Called after each frame's render
+    /// while a capture runs, and only then.
+    ///
+    /// Give what helps tell what went wrong when: the game's state, where the
+    /// player is, how fast it is going, how many things are about. The names
+    /// set on a capture's first frame are its columns. The default adds none.
+    fn diagnostics(&self, sample: &mut DiagnosticsSample) {
+        let _ = sample;
+    }
+
+    /// Add the game's facts to a diagnostics capture's `session.json`: its
+    /// version, its seed, the flags it was launched with. Called once as a
+    /// capture begins. The default adds none.
+    fn diagnostics_info(&self, info: &mut DiagnosticsInfo) {
+        let _ = info;
     }
 }

@@ -420,6 +420,40 @@ until the run ends. It crosses the render seam as **pixels, never GPU types**:
 first to bind CoreMedia and CoreVideo), which the audio stack already builds; `stickshift-core`
 depends on it, with no windowing and no Metal, so a host that owns its view records the same way.
 
+### 4f. Diagnostics capture
+
+A **diagnostics capture** records a stretch of a session in enough detail to tell what went wrong
+in it and when. The Graphics menu's last section starts and stops one (*Start Diagnostics
+Capture*, ⌃⌘D) and marks moments in it (*Mark Moment*, ⌃⌘M, enabled only while one runs); the
+`Session` owns it, so a host of its own drives it the same way (`start_diagnostics`,
+`stop_diagnostics`, `mark_moment`, or the menu's commands as `HostEvent::Menu`).
+
+Each capture is a folder under `DiagnosticsConfig::dir`, named for the game and the local time:
+
+- `footage.mp4`, taken by a second `Recorder` exactly as §4e describes (none while a recording of
+  the whole run is under way: the capture slot is the renderer's one, and that movie has the
+  frames).
+- `frames.csv`, a row for every frame shown, on the footage's clock, so a row and a moment in the
+  movie line up. The engine's columns come from what already exists: the perf tracker's last
+  frame (`PerfTracker::last_frame`: frame, CPU, GPU, physics and render times), the renderer's
+  `RenderDevice::frame_stats` (draws, overlay quads, lights and those left out of the light budget,
+  live meshes and textures, the device's allocated memory: counts the Metal backend keeps as it
+  records a frame), the process's resident memory (Mach `task_info`), the scene's entity, body and
+  streamed counts, and the camera's world position with the scene's rebase count and total
+  (`Scene::rebase_count`, `rebase_total`), so a drift from the origin shows as it grows. The game's
+  own columns follow (`Game::diagnostics`), named on the first frame.
+- `events.csv`: the capture starting and stopping, marked moments, rebases, hitches (frames over
+  `HITCH`, 50 ms), lights starting to be left out of the budget, settings changes, resizes and
+  focus loss.
+- `session.json`: the machine (`sysctl`: model, processor, memory, OS), the engine, the view and
+  drawable, the graphics settings and the game's facts (`Game::diagnostics_info`), and, once the
+  capture stops, a summary: frame-time percentiles and the worst frames, hitches, the furthest the
+  camera got from the origin, peak memory, draws and lights, rebases and the marked moments.
+
+While no capture runs, nothing is measured and neither hook is called. The capture writes through
+buffered files on the main thread; a write that fails stops the capture and says why on stderr,
+and the game runs on.
+
 ## 5. Physics decision
 
 The engine keeps `rapier3d`, wrapped in `stickshift-physics`. The scene owns a `PhysicsWorld` next

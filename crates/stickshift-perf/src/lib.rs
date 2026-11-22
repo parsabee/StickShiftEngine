@@ -131,6 +131,23 @@ pub struct PerfSnapshot {
     pub current_memory_bytes: u64,
 }
 
+/// One frame's own times, as [`PerfTracker::last_frame`] reports them: not
+/// averaged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FrameSample {
+    /// The previous `end_frame` to this one: the frame period.
+    pub frame_time: Duration,
+    /// This frame's `begin_frame` to `end_frame`: the work inside it.
+    pub cpu_time: Duration,
+    /// The GPU time of a newly completed frame (an earlier one) reported
+    /// during this frame, if any was.
+    pub gpu_time: Option<Duration>,
+    /// Time in the physics subsystem this frame.
+    pub physics_time: Duration,
+    /// Time in the render subsystem this frame.
+    pub render_time: Duration,
+}
+
 /// Tracks CPU-side performance over a rolling window of frames.
 ///
 /// Generic over the [`Clock`] used to measure elapsed time. Use
@@ -293,6 +310,20 @@ impl<C: Clock> PerfTracker<C> {
         if self.frames.len() > WINDOW_SIZE {
             self.frames.pop_front();
         }
+    }
+
+    /// The most recently ended frame's own times, or `None` before the first
+    /// [`end_frame`](Self::end_frame). For per-frame logging, where the window
+    /// averages would smooth a hitch away.
+    #[must_use]
+    pub fn last_frame(&self) -> Option<FrameSample> {
+        self.frames.back().map(|frame| FrameSample {
+            frame_time: frame.frame_time,
+            cpu_time: frame.cpu_time,
+            gpu_time: frame.gpu_time,
+            physics_time: frame.physics_time,
+            render_time: frame.render_time,
+        })
     }
 
     /// FPS derived from the most recent frame time (0.0 if none).
@@ -595,6 +626,36 @@ mod tests {
             snap.current_fps
         );
         assert_eq!(snap.max_frame_time, Duration::from_micros(16_667));
+    }
+
+    #[test]
+    fn the_last_frame_is_its_own_times_not_the_window_average() {
+        let (mut tracker, clock) = new_pair();
+        assert_eq!(tracker.last_frame(), None);
+        // Nine quick frames, then a hitch.
+        for work in [2u32, 2, 2, 2, 2, 2, 2, 2, 2, 40] {
+            tracker.begin_frame();
+            tracker.mark_start();
+            clock.advance(MS);
+            tracker.mark_physics();
+            tracker.mark_start();
+            clock.advance(MS * (work - 1));
+            tracker.mark_render();
+            if work == 40 {
+                tracker.record_gpu_time(7, MS * 3);
+            }
+            tracker.end_frame();
+        }
+        let last = tracker.last_frame().expect("a frame");
+        assert_eq!(last.cpu_time, MS * 40);
+        assert_eq!(last.frame_time, MS * 40);
+        assert_eq!(last.physics_time, MS);
+        assert_eq!(last.render_time, MS * 39);
+        assert_eq!(last.gpu_time, Some(MS * 3));
+        assert!(
+            tracker.snapshot().avg_cpu_time < MS * 6,
+            "the average hides it"
+        );
     }
 
     #[test]

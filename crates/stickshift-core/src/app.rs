@@ -79,6 +79,7 @@ use stickshift_render_api::NullRenderer;
 
 use crate::context::Renderer;
 use crate::device::{DeviceWindow, Orientation};
+use crate::diagnostics::DiagnosticsConfig;
 use crate::driver::Loop;
 use crate::game::Game;
 use crate::input::{Key, MouseButton};
@@ -226,6 +227,13 @@ pub struct RunConfig {
     /// through [`RenderDevice::safe_area_insets`](stickshift_render_api::RenderDevice::safe_area_insets).
     /// Its pixels are the Mac's, not the device's.
     pub device: Option<DeviceWindow>,
+    /// Where [diagnostics captures](crate::diagnostics) go and what they hold,
+    /// and whether one starts at launch. The built-in Graphics menu starts and
+    /// stops them (*Start Diagnostics Capture*, ⌃⌘D) and marks moments in them
+    /// (*Mark Moment*, ⌃⌘M). Default [`DiagnosticsConfig::default`]: in
+    /// `diagnostics` under the working directory, with 720-pixel footage, none
+    /// at launch. A capture still running when the run ends is finished then.
+    pub diagnostics: DiagnosticsConfig,
 }
 
 impl Default for RunConfig {
@@ -236,6 +244,7 @@ impl Default for RunConfig {
             quit_on_escape: true,
             record: None,
             device: None,
+            diagnostics: DiagnosticsConfig::default(),
         }
     }
 }
@@ -336,6 +345,7 @@ impl<'g, 'f, G: Game> EngineApp<'g, 'f, G> {
         if let Some(recording) = config.record.clone() {
             session.record(recording);
         }
+        session.set_diagnostics(config.diagnostics.clone());
 
         Self {
             game,
@@ -382,15 +392,18 @@ impl<'g, 'f, G: Game> EngineApp<'g, 'f, G> {
         }
     }
 
-    /// Refresh the built-in menu's checkmarks, enabled states and full-screen
-    /// title.
+    /// Refresh the built-in menu's checkmarks, enabled states and the
+    /// full-screen and diagnostics titles.
     fn sync_menu(&self) {
         if let Some(menu) = &self.menu {
             let fullscreen = self
                 .window
                 .as_ref()
                 .is_some_and(|w| w.fullscreen().is_some());
-            menu.sync(&self.session.lp.graphics.current(), fullscreen);
+            menu.sync(
+                &self.session.lp.graphics.current(),
+                self.session.menu_state(fullscreen),
+            );
         }
     }
 
@@ -466,6 +479,9 @@ impl<G: Game> ApplicationHandler<EngineEvent> for EngineApp<'_, '_, G> {
         if let Some(result) = self.session.finish_recording(self.renderer.as_mut()) {
             report_recording(&result);
         }
+        // So is a diagnostics capture's footage: finish it too (the session
+        // reports it).
+        let _ = self.session.stop_diagnostics(self.renderer.as_mut());
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {

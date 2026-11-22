@@ -566,6 +566,36 @@ fn over_budget_and_invalid_lights_are_counted_not_drawn() {
     assert_eq!(scene.r.dropped_light_count(), 5);
 }
 
+#[test]
+fn frame_stats_count_the_frames_draws_and_lights_and_what_is_held() {
+    let Some(mut scene) = Scene::new() else {
+        common::no_gpu();
+        return;
+    };
+    let lamp = Light::point(Vec3::new(0.0, 1.5, -10.0), [1.0; 3], 6.0, 3.0);
+    let cube = (
+        Transform::from_position(Vec3::new(0.0, 0.5, -8.0)),
+        MaterialParams::default(),
+    );
+    scene.render(false, &[cube; 3], &vec![lamp; MAX_LIGHTS + 2], false);
+    let stats = scene.r.frame_stats().expect("the Metal backend counts");
+    // The ground and three cubes; every light handed in, the two past the
+    // limit (at least) left out.
+    assert_eq!(stats.draws, 4);
+    assert_eq!(stats.overlay_quads, 0);
+    assert_eq!(stats.lights, MAX_LIGHTS as u32 + 2);
+    assert!(stats.dropped_lights >= 2, "{}", stats.dropped_lights);
+    // What it holds: the scene's three meshes and its one texture, and the
+    // device's memory for them and the rest.
+    assert_eq!(stats.meshes, 3);
+    assert_eq!(stats.textures, 1);
+    assert!(stats.gpu_memory > 1 << 20, "{}", stats.gpu_memory);
+    // The next frame counts afresh.
+    scene.render(false, &[], &[], false);
+    let next = scene.r.frame_stats().expect("counts");
+    assert_eq!((next.draws, next.lights, next.dropped_lights), (1, 0, 0));
+}
+
 // ---------------------------------------------------------------------------
 // The golden night street
 // ---------------------------------------------------------------------------
