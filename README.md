@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="docs/images/logo.png" alt="Stick Shift Engine" width="380">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
+  <img src="docs/images/logo.svg" alt="Stick Shift Engine: a rust-red shift knob engraved with a five-speed gear pattern" width="340">
+</picture>
 
 **A Rust game engine for Apple platforms, rendering with raw Metal.**
 
@@ -258,3 +261,10 @@ Licensed under the [Apache License, Version 2.0](LICENSE). See [LICENSE](LICENSE
 
 You are free to use, modify and distribute Stick Shift Engine, including commercially, as long as you
 retain the copyright and attribution notices the license requires.
+
+The logo ([`docs/images/`](docs/images)) is a shift knob seen from above: `logo.svg` and
+`logo-dark.svg` are the full logo for light and dark backgrounds, `logo-mark.svg` the knob alone,
+`logo-icon.svg` a simpler knob for small sizes, and `logo.png` and `logo-mark.png` rasters of them.
+Its lettering is set in [Archivo](https://fonts.google.com/specimen/Archivo) and
+[JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono), both under the SIL Open Font
+License 1.1, and converted to outlines, so the files need no fonts to render.
