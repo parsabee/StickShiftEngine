@@ -11,6 +11,12 @@ API**.
 
 ### Added
 
+- **A layer's playback rate**: `Audio::set_layer_rate` glides a layer's rate (and so its pitch,
+  the two together, as on a tape) to a new one over a duration: `1.0` as recorded, `2.0` twice as
+  fast and an octave up. A glide under way is taken over from where it has got to, as a fade is.
+  `Audio::layer_rate` reads it back, in silent mode too. A rate that is not a positive, finite
+  number is ignored.
+
 - **Atmosphere**: weather's physical half, pushed with `FrameRecorder::set_atmosphere` and sticky
   like the sun. An `Atmosphere` holds:
   - a `visibility` that draws the distance fog in, as a share of the draw distance, on top of the

@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
-use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Tween};
+use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, PlaybackRate, Tween};
 
 /// The id the next [`Audio`] takes, so its handles name it.
 static NEXT_OWNER: AtomicU32 = AtomicU32::new(1);
@@ -38,6 +38,9 @@ struct Layer {
     sound: SoundHandle,
     /// The level it was last set to (or is fading to).
     volume: Volume,
+    /// The playback rate it was last set to (or is gliding to): `1.0` as
+    /// recorded, `2.0` twice as fast and an octave up.
+    rate: f64,
     /// Its `kira` handle, on a device and when the sound decoded.
     playing: Option<StaticSoundHandle>,
 }
@@ -107,11 +110,12 @@ struct Device {
 /// [`play_once`](Self::play_once) for a discrete event;
 /// [`play_looping`](Self::play_looping) and [`stop_looping`](Self::stop_looping)
 /// for the one continuous bed, typically background music;
-/// [`play_layer`](Self::play_layer), [`set_layer_volume`](Self::set_layer_volume)
-/// and [`stop_layer`](Self::stop_layer) for more loops under it, each faded on
-/// its own; and [`set_master_volume`](Self::set_master_volume) for everything at
-/// once. There is deliberately nothing else — no mixer graph, no effects, no
-/// spatialisation (all out of scope for this crate).
+/// [`play_layer`](Self::play_layer), [`set_layer_volume`](Self::set_layer_volume),
+/// [`set_layer_rate`](Self::set_layer_rate) and [`stop_layer`](Self::stop_layer)
+/// for more loops under it, each faded, and sped up or slowed, on its own; and
+/// [`set_master_volume`](Self::set_master_volume) for everything at once. There
+/// is deliberately nothing else — no mixer graph, no effects, no spatialisation
+/// (all out of scope for this crate).
 ///
 /// # Layers
 ///
@@ -119,7 +123,9 @@ struct Device {
 /// other layers: an ambient bed under the music, an engine's drone, a second
 /// drone faded in and out over it. [`play_layer`](Self::play_layer) starts one
 /// and hands back a [`LayerHandle`]; [`set_layer_volume`](Self::set_layer_volume)
-/// moves its level, over a fade of any length, while it plays; and
+/// moves its level, over a fade of any length, while it plays;
+/// [`set_layer_rate`](Self::set_layer_rate) glides its playback rate, and so its
+/// pitch, the way an engine's note rises as it revs; and
 /// [`stop_layer`](Self::stop_layer) fades it out and ends it. Unlike the loop
 /// channel, layers are not idempotent: each `play_layer` starts a new one, since
 /// the caller holds the handle that says which is which. A stopped layer's
@@ -433,6 +439,7 @@ impl Audio {
         let layer = Layer {
             sound,
             volume,
+            rate: 1.0,
             playing,
         };
         let slot = match self.layers.iter().position(Option::is_none) {
@@ -468,6 +475,31 @@ impl Audio {
         }
     }
 
+    /// Move `layer`'s playback rate to `rate` over a glide of `glide_over`
+    /// (zero for at once): `1.0` plays it as recorded, `2.0` twice as fast and
+    /// an octave up, `0.5` half as fast and an octave down. Speed and pitch go
+    /// together, as on a tape.
+    ///
+    /// A glide already under way is taken over from wherever it has got to.
+    /// The new rate is remembered (see [`layer_rate`](Self::layer_rate)) in
+    /// silent mode too. A rate that is not a positive, finite number is
+    /// ignored, as is a stopped or unknown layer.
+    pub fn set_layer_rate(&mut self, layer: LayerHandle, rate: f64, glide_over: Duration) {
+        if !(rate.is_finite() && rate > 0.0) {
+            return;
+        }
+        let Some(slot) = self.layer_slot(layer) else {
+            return;
+        };
+        let Some(playing) = self.layers[slot].as_mut() else {
+            return;
+        };
+        playing.rate = rate;
+        if let Some(sound) = &mut playing.playing {
+            sound.set_playback_rate(PlaybackRate(rate), fade(glide_over));
+        }
+    }
+
     /// Fade `layer` out over `fade` and end it. Its handle is ignored from then
     /// on. A stopped or unknown layer is ignored.
     pub fn stop_layer(&mut self, layer: LayerHandle, fade_over: Duration) {
@@ -490,6 +522,15 @@ impl Audio {
     pub fn layer_volume(&self, layer: LayerHandle) -> Option<Volume> {
         let slot = self.layer_slot(layer)?;
         self.layers[slot].as_ref().map(|playing| playing.volume)
+    }
+
+    /// The playback rate `layer` was last set to (`1.0` until
+    /// [`set_layer_rate`](Self::set_layer_rate)), or `None` if it has stopped
+    /// (or never was).
+    #[must_use]
+    pub fn layer_rate(&self, layer: LayerHandle) -> Option<f64> {
+        let slot = self.layer_slot(layer)?;
+        self.layers[slot].as_ref().map(|playing| playing.rate)
     }
 
     /// The sound `layer` loops, or `None` if it has stopped (or never was).
@@ -830,6 +871,43 @@ mod tests {
     }
 
     #[test]
+    fn a_layer_glides_to_a_rate_of_its_own_and_ignores_one_that_is_not_a_rate() {
+        let mut audio = Audio::silent();
+        let drone = audio.load(A);
+        let low = audio.play_layer(drone, Volume(-20.0));
+        let high = audio.play_layer(drone, Volume(-20.0));
+        assert_eq!(
+            audio.layer_rate(low),
+            Some(1.0),
+            "as recorded to begin with"
+        );
+
+        audio.set_layer_rate(high, 1.5, Duration::from_millis(800));
+        assert_eq!(audio.layer_rate(high), Some(1.5));
+        assert_eq!(audio.layer_rate(low), Some(1.0), "the other is not");
+        assert_eq!(
+            audio.layer_volume(high),
+            Some(Volume(-20.0)),
+            "nor its level"
+        );
+
+        for wrong in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            audio.set_layer_rate(high, wrong, Duration::ZERO);
+            assert_eq!(audio.layer_rate(high), Some(1.5), "{wrong} is not a rate");
+        }
+
+        audio.stop_layer(high, Duration::ZERO);
+        audio.set_layer_rate(high, 2.0, Duration::ZERO);
+        assert_eq!(audio.layer_rate(high), None, "a stopped layer is gone");
+        let next = audio.play_layer(drone, Volume::SILENT);
+        assert_eq!(
+            audio.layer_rate(next),
+            Some(1.0),
+            "its slot's next is as recorded"
+        );
+    }
+
+    #[test]
     fn a_stopped_layers_handle_never_reaches_the_next_layer_in_its_slot() {
         let mut audio = Audio::silent();
         let a = audio.load(A);
@@ -878,7 +956,15 @@ mod tests {
         );
         audio.set_layer_volume(layer, Volume(-3.0), Duration::from_millis(300));
         assert_eq!(audio.layer_volume(layer), Some(Volume(-3.0)));
+        audio.set_layer_rate(layer, 1.25, Duration::from_millis(300));
+        assert_eq!(audio.layer_rate(layer), Some(1.25));
         let quiet = audio.play_layer(broken, Volume(-18.0));
+        audio.set_layer_rate(quiet, 0.8, Duration::ZERO);
+        assert_eq!(
+            audio.layer_rate(quiet),
+            Some(0.8),
+            "kept, silent, its rate too"
+        );
         assert_eq!(audio.layer_count(), 2, "a broken sound is kept, silent");
         audio.stop_layer(layer, Duration::from_millis(100));
         audio.stop_layer(quiet, Duration::ZERO);
