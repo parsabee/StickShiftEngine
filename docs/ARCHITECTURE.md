@@ -270,8 +270,8 @@ monotonic clock, variable steps) share **one** loop implementation
 ### 4b. Audio
 
 `stickshift-audio` wraps `kira` in a handful of operations — `load` a file into an opaque
-`SoundHandle`, `play_once`, `play_looping`, `stop_looping`, the layer trio `play_layer` /
-`set_layer_volume` / `stop_layer`, and `set_master_volume` — with levels in decibels (`Volume`). It is a **leaf**: its only dependency is `kira`, so `cpal`/CoreAudio reach the process
+`SoundHandle`, `play_once`, `play_looping`, `stop_looping`, the layer calls `play_layer` /
+`set_layer_volume` / `set_layer_rate` / `stop_layer`, and `set_master_volume` — with levels in decibels (`Volume`). It is a **leaf**: its only dependency is `kira`, so `cpal`/CoreAudio reach the process
 through this crate and its single engine-side consumer, `stickshift-core`. Nothing below the render seam,
 and no other engine crate, gains an audio dependency. `kira`'s feature set is trimmed the same way
 `gltf`/`image` are (`default-features = false`, only `cpal`, `cpal-realtime`, `wav`, `pcm` — the
@@ -287,8 +287,9 @@ above the seam rather than a rule each game has to remember.
 **Layers** are every other continuous sound: an ambient bed under the music, an engine's drone, a
 second drone faded in over it while the throttle is open. `play_layer` starts one alongside the loop
 channel and any other layers and returns a `LayerHandle`; `set_layer_volume` moves it to a level over
-a fade of any length (a fade under way is taken over from where it has got to); `stop_layer` fades it
-out and ends it. Layers are deliberately *not* idempotent the way the loop channel is: the caller
+a fade of any length (a fade under way is taken over from where it has got to); `set_layer_rate`
+glides its playback rate, and with it its pitch, the same way (an engine's note rising as it revs);
+`stop_layer` fades it out and ends it. Layers are deliberately *not* idempotent the way the loop channel is: the caller
 holds a handle per layer, which already says which is which. A handle names one start of its slot,
 so a stopped layer's handle never reaches whatever is layered in that slot next.
 

@@ -7,7 +7,8 @@
 //! `stickshift-audio` wraps [`kira`] in the smallest surface a game actually needs:
 //! **load a sound from a path**, **play it once**, **play it looping** on the one
 //! loop channel (the music), **layer** more loops under it that fade in and out
-//! on their own (ambience, an engine's drone), and **set the master volume**.
+//! and speed up or slow down on their own (ambience, an engine's drone rising
+//! as it revs), and **set the master volume**.
 //! That is the entire API ([`Audio`]).
 //!
 //! It is engine-generic in the strict sense: it knows nothing about what any sound
