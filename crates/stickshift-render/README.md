@@ -77,6 +77,11 @@ that shades:
   zenith/horizon colours. Physical parameters only: the seam has no notion of time
   of day, so "a summer 4pm sun" is a game's policy, expressed as angles.
 
+- `set_atmosphere(&Atmosphere)` — what the air and sky hold besides the sun: a
+  **visibility** that scales the distance fog's start and opaque depth on top of
+  the draw-distance setting (mist, rain), a **rainbow** and a **bolt of
+  lightning**, both drawn by the sky pass. The default draws nothing extra.
+
 The light direction is derived **once**, from `SunSky::direction()`, and that single
 vector both shades the geometry and places the **sun disc + glow** the sky pass
 draws — so turning the sun moves the lighting and the disc together. The sky is
@@ -84,6 +89,20 @@ still one fullscreen pass: it unprojects its own NDC through the camera's invers
 view-projection to get a per-pixel view ray, and the sun is one dot product plus two
 `smoothstep`s. Azimuth is a compass bearing with `-Z` as north and `+X` as east; the
 convention is documented and unit-tested in `stickshift-render-api`'s `sun` module.
+
+The atmosphere's rainbow and bolt reach the sky pass as a 48-byte `SkyUniforms`
+(fragment buffer 1, bound for the sky pass only, so the 256-byte light block every
+pass reads is unchanged), captured from the sticky `Atmosphere` with the light at
+the frame's first draw. The rainbow is two bows around its centre, the primary
+42° out (violet inside, red outside) and a faint secondary 51° out, each laid
+over the sky as a saturated colour as bright as the sky behind it, so it reads
+on a pale hazy sky as well as a dark one; only what is above the horizon shows.
+The bolt is a jagged path of fourteen straight strokes hashed from its seed, with
+a branch, rising from the horizon at its bearing and fading into the cloud at
+its top, its light added to the sky with a glow. Both are skipped outright when
+absent, so a clear sky stays bit-identical (every reference hash is unchanged),
+and like the sky they are drawn behind everything, so whatever stands in front
+hides them.
 
 Originally the light was written into a Metal buffer once at construction and
 never updated, so nothing above the seam could set the sun at all. It is now written

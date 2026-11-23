@@ -7,6 +7,7 @@
 use stickshift_math::glam::{Mat4, Vec3};
 use stickshift_math::Transform;
 
+use crate::atmosphere::Atmosphere;
 use crate::descriptor::MaterialParams;
 use crate::handles::{MeshHandle, PipelineHandle, TextureHandle};
 use crate::light::Light;
@@ -140,6 +141,29 @@ pub trait FrameRecorder {
     ///   including its sky pass.
     /// - Until the first call, the implementation uses the default [`SunSky`].
     fn set_sun_sky(&mut self, sun: &SunSky);
+
+    /// Set the **atmosphere** the frame is drawn through: how far one sees
+    /// through the air, and a rainbow or a bolt of lightning in the sky.
+    ///
+    /// [`Atmosphere`] is physical parameters only, like the sun: a game that
+    /// wants rain owns that policy and expresses it as a shorter
+    /// [`visibility`](Atmosphere::visibility), a darker [`SunSky`] and the
+    /// particles it emits. The visibility scales the distance fog on top of the
+    /// [render settings](crate::RenderSettings::draw_distance_scale)' draw
+    /// distance; the rainbow and the bolt are drawn by the sky pass, behind
+    /// everything.
+    ///
+    /// # Contract (ordering)
+    /// - The value is **sticky**, exactly like the sun: it persists across
+    ///   `begin_frame`/`submit` until replaced, and whatever is in effect at a
+    ///   frame's first draw (or at `submit`, for a frame with no draws) draws
+    ///   that frame.
+    /// - An atmosphere that is not [valid](Atmosphere::is_valid) is brought
+    ///   into range ([`sanitized`](Atmosphere::sanitized)).
+    /// - Until the first call, the implementation uses the default
+    ///   [`Atmosphere`]: clear air with nothing in the sky, which draws exactly
+    ///   the frame drawn before atmospheres existed.
+    fn set_atmosphere(&mut self, atmosphere: &Atmosphere);
 
     /// Add a point or spot [`Light`] to the open frame.
     ///

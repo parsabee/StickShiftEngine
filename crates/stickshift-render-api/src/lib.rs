@@ -33,6 +33,10 @@
 //!   frame through [`FrameRecorder::set_sun_sky`]. Physical parameters only: the
 //!   sun's elevation/azimuth, colour and intensity, the sky-fill level, and the
 //!   sky gradient. No time-of-day policy lives below the seam.
+//! - [`Atmosphere`] — what the air and sky hold besides the sun: how far one
+//!   sees through the air ([`visibility`](Atmosphere::visibility)), a
+//!   [`Rainbow`], a lightning [`Bolt`]; pushed per frame through
+//!   [`FrameRecorder::set_atmosphere`]. Physical parameters only, no weather.
 //! - [`Light`] / [`LightKind`] — point and spot lights, added to each frame with
 //!   [`FrameRecorder::add_light`] (up to [`MAX_LIGHTS`]); together with
 //!   [`MaterialParams::emissive`], what lights a scene after dark.
@@ -80,6 +84,7 @@
 
 #![deny(missing_docs)]
 
+pub mod atmosphere;
 pub mod descriptor;
 pub mod device;
 pub mod handles;
@@ -91,6 +96,7 @@ pub mod recorder;
 pub mod settings;
 pub mod sun;
 
+pub use atmosphere::{Atmosphere, Bolt, Rainbow, RAINBOW_RADIUS_DEG, RAINBOW_SECONDARY_RADIUS_DEG};
 pub use descriptor::{MaterialParams, PipelineKind, VertexAttribute, VertexFormat, VertexLayout};
 pub use device::{
     ColorSpace, FrameStats, GpuFrameTime, MeshData, PipelineDescriptor, RenderDevice, TextureData,
