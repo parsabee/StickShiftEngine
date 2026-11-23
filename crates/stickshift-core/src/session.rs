@@ -1000,8 +1000,8 @@ mod tests {
     use stickshift_math::glam::{Mat4, Vec3};
     use stickshift_math::Transform;
     use stickshift_render_api::{
-        EmitterHandle, EmitterParams, FrameRecorder, Light, MaterialParams, MeshData, MeshHandle,
-        NullRenderer, OverlayQuad, ParticleSystem, PipelineDescriptor, PipelineHandle,
+        Atmosphere, EmitterHandle, EmitterParams, FrameRecorder, Light, MaterialParams, MeshData,
+        MeshHandle, NullRenderer, OverlayQuad, ParticleSystem, PipelineDescriptor, PipelineHandle,
         RenderDevice, RenderSettings, SunSky, TextureData, TextureHandle,
     };
 
@@ -1119,6 +1119,9 @@ mod tests {
         }
         fn set_sun_sky(&mut self, sun: &SunSky) {
             self.inner.set_sun_sky(sun);
+        }
+        fn set_atmosphere(&mut self, atmosphere: &Atmosphere) {
+            self.inner.set_atmosphere(atmosphere);
         }
         fn add_light(&mut self, light: &Light) {
             self.inner.add_light(light);

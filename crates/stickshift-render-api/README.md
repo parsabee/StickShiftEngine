@@ -69,11 +69,19 @@ boundary. `draw_mesh` takes a [`stickshift-math`] `Transform` and a plain-data
 callers that hold one (a baked glTF node may be sheared, which a `Transform`
 cannot express).
 
-The camera (`set_view_projection` + `set_camera_position`) and the sun
-(`set_sun_sky`) are sticky and may be set before or after `begin_frame`. Each
-draw projects with the camera in effect when it is recorded. The frame's
-lighting (sky, specular and the shadow fit) uses the camera and sun in effect at
-its first draw, or at `submit` for a frame with no draws.
+The camera (`set_view_projection` + `set_camera_position`), the sun
+(`set_sun_sky`) and the atmosphere (`set_atmosphere`) are sticky and may be set
+before or after `begin_frame`. Each draw projects with the camera in effect when
+it is recorded. The frame's lighting (sky, specular and the shadow fit), its
+distance fog and what its sky holds use the camera, sun and atmosphere in effect
+at its first draw, or at `submit` for a frame with no draws.
+
+An `Atmosphere` is what the air and sky hold besides the sun: a `visibility`
+that draws the distance fog in (a share of the draw distance, on top of the
+render settings'), a `Rainbow` (its centre's elevation and azimuth, and its
+strength) and a lightning `Bolt` (its bearing, height, seed and light). Like the
+sun it is physical parameters only: weather is a game's policy. The default is
+clear air with nothing in the sky, which draws exactly what was drawn before.
 
 `add_light(&Light)` adds a point or spot light to the **open frame only**: lights
 are not sticky, and every light added before `submit` lights every draw in the

@@ -199,7 +199,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use stickshift_math::glam::{Mat4, Vec3};
 use stickshift_math::Transform;
 use stickshift_render_api::{
-    CapturedFrame, ColorSpace, EmitterHandle, EmitterParams, FrameRecorder, FrameStats,
+    Atmosphere, CapturedFrame, ColorSpace, EmitterHandle, EmitterParams, FrameRecorder, FrameStats,
     GpuFrameTime, Light, MaterialParams, MeshData, MeshHandle, OverlayFill, OverlayQuad,
     ParticleSystem, PipelineDescriptor, PipelineHandle, PipelineKind, RenderDevice, RenderSettings,
     SunSky, TextureData, TextureHandle, VertexFormat, VertexLayout, MAX_EMITTERS, MAX_LIGHTS,
@@ -223,7 +223,8 @@ use crate::shadow::{
     ShadowFit, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE_OFF,
 };
 use crate::vertex::{
-    normal_matrix, LightUniforms, MaterialUniforms, Uniforms, Vertex, UNIFORM_RING_STRIDE,
+    normal_matrix, LightUniforms, MaterialUniforms, SkyUniforms, Uniforms, Vertex,
+    UNIFORM_RING_STRIDE,
 };
 
 /// Store action for the shadow map's depth attachment: **`Store`**.
@@ -234,6 +235,18 @@ use crate::vertex::{
 /// is silent — the scene pass would sample undefined texels. Asserted where the
 /// pass descriptor is built (`configure_shadow_depth_attachment`).
 pub const SHADOW_MAP_STORE_ACTION: metal::MTLStoreAction = metal::MTLStoreAction::Store;
+
+/// The draw-distance scale `settings` ask for: their
+/// [`draw_distance_scale`](RenderSettings::draw_distance_scale), or `1` if it
+/// is not a positive finite number.
+fn draw_distance_scale(settings: &RenderSettings) -> f32 {
+    let scale = settings.draw_distance_scale;
+    if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    }
+}
 
 /// Storage mode of the shadow map: `Private` on every platform.
 ///
@@ -722,6 +735,13 @@ pub struct MetalRenderer {
     // draw-distance setting scales from these rather than compounding on the live
     // values.
     base_fog: (f32, f32),
+    // The atmosphere, as last pushed through the seam (brought into range):
+    // its visibility draws the fog in on top of the draw-distance setting, and
+    // the sky pass draws its rainbow and bolt. Sticky, like the sun.
+    atmosphere: Atmosphere,
+    // What the sky pass draws besides the gradient and the sun, captured from
+    // `atmosphere` with the light block at the frame's first draw.
+    sky: SkyUniforms,
     // Drawable pixels per logical window point: the HUD's UI scale.
     // Reported by `surface_scale`, set by `resize_surface`.
     surface_scale: f32,
@@ -1554,6 +1574,8 @@ impl MetalRenderer {
             render_settings: RenderSettings::default(),
             shadow_map_size: SHADOW_MAP_SIZE,
             base_fog: (light.fog_start, light.fog_density),
+            atmosphere: Atmosphere::default(),
+            sky: SkyUniforms::default(),
             surface_scale: 1.0,
             draws: Vec::new(),
             light,
@@ -2122,6 +2144,15 @@ impl MetalRenderer {
         // values, so it always matches the matrix this frame's draws project with.
         self.light
             .apply_camera(self.camera_position, self.view_projection);
+        // The distance fog: its look defaults, drawn in by the draw-distance
+        // setting and the atmosphere's visibility alike (in clear air, exactly
+        // what the setting alone gives). The shadow slab below follows it. And
+        // what the sky pass draws besides the gradient and the sun.
+        let scale = draw_distance_scale(&self.render_settings) * self.atmosphere.visibility;
+        let (base_start, base_density) = self.base_fog;
+        self.light.fog_start = base_start * scale;
+        self.light.fog_density = base_density / scale;
+        self.sky = SkyUniforms::from_atmosphere(&self.atmosphere);
         // Refit the sun's shadow projection to this frame's camera. The
         // light direction is the light block's own — i.e. `SunSky::direction()` as
         // applied by `set_sun_sky` — so shading, sun disc and shadows share one
@@ -2420,6 +2451,12 @@ impl MetalRenderer {
         encoder.set_render_pipeline_state(&self.sky_pipeline_state);
         encoder.set_depth_stencil_state(&self.sky_depth_stencil_state);
         encoder.set_fragment_buffer(0, Some(&self.light_ring), frame.light_offset);
+        // And the atmosphere's rainbow and bolt, captured with that light.
+        encoder.set_fragment_bytes(
+            1,
+            mem::size_of::<SkyUniforms>() as u64,
+            (&self.sky as *const SkyUniforms).cast::<c_void>(),
+        );
         encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 3);
 
         // Geometry: normal depth test, the frame's light (the same bytes the sky
@@ -3367,12 +3404,7 @@ impl RenderDevice for MetalRenderer {
         // Draw distance: scale the fog from its look defaults. Start and opaque
         // depth (`start + 2 / density`) both scale by exactly `scale`, so the fog
         // keeps hiding a streamed world whose reach the engine scaled alike.
-        let scale =
-            if settings.draw_distance_scale.is_finite() && settings.draw_distance_scale > 0.0 {
-                settings.draw_distance_scale
-            } else {
-                1.0
-            };
+        let scale = draw_distance_scale(settings);
         let (base_start, base_density) = self.base_fog;
         self.light.fog_start = base_start * scale;
         self.light.fog_density = base_density / scale;
@@ -3461,6 +3493,13 @@ impl FrameRecorder for MetalRenderer {
         // preserved). Sticky: a game with a fixed sun pushes once at load, and this
         // value is re-uploaded for every subsequent frame.
         self.light.apply_sun_sky(sun);
+    }
+
+    fn set_atmosphere(&mut self, atmosphere: &Atmosphere) {
+        // Sticky, like the sun. Folded into the frame's fog and sky pass at its
+        // first draw (`write_light_to_ring`), so a push before that, even after
+        // `begin_frame`, draws this frame.
+        self.atmosphere = atmosphere.sanitized();
     }
 
     fn add_light(&mut self, light: &Light) {

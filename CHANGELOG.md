@@ -11,6 +11,20 @@ API**.
 
 ### Added
 
+- **Atmosphere**: weather's physical half, pushed with `FrameRecorder::set_atmosphere` and sticky
+  like the sun. An `Atmosphere` holds:
+  - a `visibility` that draws the distance fog in, as a share of the draw distance, on top of the
+    render settings' (mist, rain);
+  - a `Rainbow`: its centre's elevation and azimuth, in the sun's convention, and its strength. The
+    sky pass draws a primary bow 42° out (`RAINBOW_RADIUS_DEG`) and a faint secondary 51° out
+    (`RAINBOW_SECONDARY_RADIUS_DEG`), above the horizon only;
+  - a lightning `Bolt`: its bearing, height, seed and light. The sky pass draws a jagged streak with
+    a branch, from the horizon up, behind everything.
+
+  The default is clear air with nothing in the sky, and draws exactly what was drawn before. The
+  `NullRenderer` records it (`atmosphere()`), brought into range, and lists one out of range as
+  `ProtocolViolation::InvalidAtmosphere`.
+
 - **Diagnostics capture**, for chasing down a glitch. The Graphics menu gains a last section:
   *Start Diagnostics Capture* (⌃⌘D, *Stop…* while one runs) and *Mark Moment* (⌃⌘M, enabled only
   while one runs). Each capture is a folder of its own (`diagnostics/<game>-<time>/` by default),

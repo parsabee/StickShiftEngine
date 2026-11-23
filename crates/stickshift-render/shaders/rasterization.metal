@@ -564,6 +564,184 @@ struct SkyOut {
     float2 ndc;                        // -1..1 clip position, unprojected to the view ray
 };
 
+/// What the sky pass draws besides the gradient and the sun: the frame's
+/// atmosphere's rainbow and bolt of lightning (fragment buffer 1 of the sky pass
+/// only). Mirrors the Rust `SkyUniforms` byte for byte: three `float4`s, 48
+/// bytes. All zeros draws neither, and the sky is exactly the gradient and the
+/// sun.
+struct SkyEffects {
+    float4 rainbow;    // xyz: unit vector toward the bow's centre; w: strength (0 = none)
+    float4 bolt;       // xyz: unit vector along the horizon to its bearing; w: height, radians
+    float4 boltLight;  // rgb: its light (0 = none); w: its seed
+};
+
+// ============================================================================
+// Rainbow tuning
+// ============================================================================
+
+/// The primary bow's red outer edge from its centre, in degrees (drops send the
+/// sun's light back at about 42°), and how wide its band of colour is.
+constant float RAINBOW_RADIUS = 42.0;
+constant float RAINBOW_WIDTH = 2.2;
+/// The faint secondary bow's red inner edge, its band's width, and how bright
+/// it is beside the primary.
+constant float RAINBOW_SECONDARY_RADIUS = 51.0;
+constant float RAINBOW_SECONDARY_WIDTH = 3.2;
+constant float RAINBOW_SECONDARY_GAIN = 0.35;
+/// How much of the sky a bow's colour covers through the middle of its band,
+/// at full strength. Its colour is saturated but as bright as the sky behind
+/// it (never darker than `RAINBOW_MIN_SKY`), so it reads on a pale hazy sky,
+/// where light added to the sky would only wash out to white, and on a dark
+/// one alike.
+constant float RAINBOW_COVER = 0.45;
+constant float RAINBOW_MIN_SKY = 0.12;
+/// How much brighter the sky is inside the primary bow, at full strength.
+constant float RAINBOW_INSIDE = 0.12;
+/// Over how many degrees inside the primary that brightening fades out.
+constant float RAINBOW_INSIDE_FADE = 10.0;
+/// The ray elevation (as its `y`) over which a bow fades in above the
+/// horizon: below the horizon is ground.
+constant float RAINBOW_HORIZON_FADE = 0.015;
+
+/// The bow's colours across its band, `0` its inner violet edge to `1` its
+/// outer red one: violet, blue, green, yellow, orange, red.
+constant float3 RAINBOW_HUES[6] = {
+    float3(0.40, 0.00, 0.85),
+    float3(0.00, 0.25, 1.00),
+    float3(0.00, 0.85, 0.25),
+    float3(1.00, 0.90, 0.00),
+    float3(1.00, 0.40, 0.00),
+    float3(0.90, 0.00, 0.00),
+};
+
+/// The colour `u` of the way across a bow's band, violet (`0`) to red (`1`).
+inline float3 rainbow_hue(float u) {
+    float x = clamp(u, 0.0, 1.0) * 5.0;
+    int i = min(int(x), 4);
+    return mix(RAINBOW_HUES[i], RAINBOW_HUES[i + 1], x - float(i));
+}
+
+/// How much of a bow's band is at `u` across it: `1` through its middle,
+/// fading to `0` just past either edge.
+inline float rainbow_band(float u) {
+    return smoothstep(-0.2, 0.15, u) * (1.0 - smoothstep(0.85, 1.2, u));
+}
+
+/// A bow's colour `u` across its band, saturated, as bright as `brightness`.
+inline float3 rainbow_colour(float u, float brightness) {
+    float3 hue = rainbow_hue(u);
+    return hue / max(dot(hue, float3(0.2126, 0.7152, 0.0722)), 0.15) * brightness;
+}
+
+/// `sky` along `rayDir` with a rainbow in it: each bow's colour laid over it
+/// as far as its band reaches, and the sky inside the primary a little
+/// brighter.
+inline float3 rainbow_sky(float3 rayDir, float3 sky, constant SkyEffects& fx) {
+    float angle = acos(clamp(dot(rayDir, fx.rainbow.xyz), -1.0, 1.0)) * (180.0 / M_PI_F);
+    float brightness = max(dot(sky, float3(0.2126, 0.7152, 0.0722)), RAINBOW_MIN_SKY);
+    float cover = RAINBOW_COVER * fx.rainbow.w * smoothstep(0.0, RAINBOW_HORIZON_FADE, rayDir.y);
+    float inner = RAINBOW_RADIUS - RAINBOW_WIDTH;
+    float inside = smoothstep(inner - RAINBOW_INSIDE_FADE, inner, angle)
+                 * (1.0 - smoothstep(inner, inner + 0.5, angle));
+    float3 out = sky * (1.0 + inside * RAINBOW_INSIDE * cover / RAINBOW_COVER);
+    // Primary: violet inside, red at its outer edge.
+    float u1 = (angle - inner) / RAINBOW_WIDTH;
+    out = mix(out, rainbow_colour(u1, brightness), rainbow_band(u1) * cover);
+    // Secondary: red at its inner edge, its colours the other way round.
+    float u2 = (angle - RAINBOW_SECONDARY_RADIUS) / RAINBOW_SECONDARY_WIDTH;
+    out = mix(out, rainbow_colour(1.0 - u2, brightness),
+              rainbow_band(u2) * RAINBOW_SECONDARY_GAIN * cover);
+    return out;
+}
+
+// ============================================================================
+// Lightning tuning
+// ============================================================================
+
+/// How many straight strokes a bolt's path is made of, top to bottom, and how
+/// far each may lean either way (its sideways step over its height).
+constant int BOLT_STROKES = 14;
+constant float BOLT_LEAN = 0.85;
+/// The bolt's core half-width, in radians (about two pixels across at a 60°
+/// field of view on a 1080-line frame), and its glow's e-fold.
+constant float BOLT_CORE = 0.0035;
+constant float BOLT_GLOW = 0.016;
+/// How bright the glow is beside the core, and the wide glow of the cloud the
+/// bolt lights around it (its e-fold, in radians).
+constant float BOLT_GLOW_GAIN = 0.22;
+constant float BOLT_CLOUD = 0.12;
+constant float BOLT_CLOUD_GAIN = 0.05;
+/// Over how much of its height (from its top) the bolt fades into the cloud.
+constant float BOLT_TOP_FADE = 0.18;
+/// The branch: how much of the height it runs down, how bright it is beside
+/// the main channel, and how hard it leans away from it.
+constant float BOLT_BRANCH_LENGTH = 0.32;
+constant float BOLT_BRANCH_GAIN = 0.55;
+constant float BOLT_BRANCH_DRIFT = 0.55;
+
+/// A repeatable pseudo-random number in `0..1` for stroke `k` of the bolt with
+/// seed `seed` (and a `salt` per path).
+inline float bolt_hash(float seed, float salt, float k) {
+    return fract(sin(seed * 12.9898 + salt * 4.1414 + k * 78.233) * 43758.5453);
+}
+
+/// Where a bolt's path is across, in units of its height, `t` of the way up it
+/// (`0` the horizon, `1` its top): a chain of `BOLT_STROKES` straight strokes
+/// down from its top, each leaning a random way, plus `drift` per unit down.
+inline float bolt_path(float t, float seed, float salt, float drift) {
+    float down = (1.0 - clamp(t, 0.0, 1.0)) * float(BOLT_STROKES);
+    int stroke = min(int(down), BOLT_STROKES - 1);
+    float x = 0.0;
+    for (int k = 0; k < stroke; k++) {
+        x += ((bolt_hash(seed, salt, float(k)) - 0.5) * 2.0 * BOLT_LEAN + drift)
+           / float(BOLT_STROKES);
+    }
+    float lean = (bolt_hash(seed, salt, float(stroke)) - 0.5) * 2.0 * BOLT_LEAN + drift;
+    return x + lean * (down - float(stroke)) / float(BOLT_STROKES);
+}
+
+/// How lit a pixel `d` radians across from a channel is: its core and glow.
+inline float bolt_channel(float d) {
+    return (1.0 - smoothstep(BOLT_CORE * 0.5, BOLT_CORE, d))
+         + exp(-d / BOLT_GLOW) * BOLT_GLOW_GAIN;
+}
+
+/// The light a bolt of lightning adds to the sky along `rayDir`.
+inline float3 bolt_light(float3 rayDir, constant SkyEffects& fx) {
+    float3 toward = fx.bolt.xyz;
+    float along = dot(rayDir, toward);
+    if (along <= 0.0) {
+        return float3(0.0);
+    }
+    float height = fx.bolt.w;
+    float elevation = asin(clamp(rayDir.y, -1.0, 1.0));
+    float t = elevation / height;
+    // Across: the angle from the bolt's bearing, as an arc at this height.
+    float3 right = float3(-toward.z, 0.0, toward.x);
+    float across = atan2(dot(rayDir, right), along) * cos(elevation);
+    float seed = fx.boltLight.w;
+
+    float light = 0.0;
+    float cloud = 0.0;
+    if (t > -0.02 && t < 1.0) {
+        float x = bolt_path(t, seed, 0.0, 0.0) * height;
+        float top = 1.0 - smoothstep(1.0 - BOLT_TOP_FADE, 1.0, t);
+        light += bolt_channel(abs(across - x)) * top;
+        cloud = exp(-abs(across - x) / BOLT_CLOUD) * top;
+        // The branch: off the main channel partway down, leaning away.
+        float from = 0.45 + 0.3 * bolt_hash(seed, 7.0, 0.0);
+        float side = bolt_hash(seed, 7.0, 1.0) < 0.5 ? -1.0 : 1.0;
+        if (t < from && t > from - BOLT_BRANCH_LENGTH) {
+            float start = bolt_path(from, seed, 0.0, 0.0);
+            float run = bolt_path(1.0 - (from - t), seed, 13.0, side * BOLT_BRANCH_DRIFT);
+            float xb = (start + run) * height;
+            float fade = (t - (from - BOLT_BRANCH_LENGTH)) / BOLT_BRANCH_LENGTH;
+            light += bolt_channel(abs(across - xb)) * BOLT_BRANCH_GAIN * fade;
+        }
+    }
+    return fx.boltLight.rgb * (light + cloud * BOLT_CLOUD_GAIN);
+}
+
 /// Fullscreen triangle (three verts covering the viewport, no vertex buffer).
 vertex SkyOut sky_vertex_main(uint vid [[vertex_id]]) {
     // Oversized triangle covering the whole clip volume.
@@ -592,7 +770,8 @@ inline float3 sky_view_ray(float2 ndc, constant Light& light) {
 /// + sRGB-encoded like the rest of the scene — so a blazing disc clips to white
 /// through the same ACES curve as everything else instead of blowing out.
 fragment float4 sky_fragment_main(SkyOut in [[stage_in]],
-                                  constant Light& light [[buffer(0)]]) {
+                                  constant Light& light [[buffer(0)]],
+                                  constant SkyEffects& fx [[buffer(1)]]) {
     float3 rayDir = sky_view_ray(in.ndc, light);
 
     // The gradient follows the view ray's elevation, not the pixel's height on
@@ -622,7 +801,18 @@ fragment float4 sky_fragment_main(SkyOut in [[stage_in]],
     float3 sun = light.color * light.diffuseIntensity
                * (disc * SUN_DISC_GAIN + glow * SUN_GLOW_GAIN);
 
-    return float4(present_color(sky + sun), 1.0);
+    // The atmosphere's rainbow and bolt of lightning, if it holds either. Both
+    // are skipped outright when absent, so a clear sky is bit-identical to the
+    // gradient and the sun alone.
+    if (fx.rainbow.w > 0.0) {
+        sky = rainbow_sky(rayDir, sky, fx);
+    }
+    float3 extra = float3(0.0);
+    if (fx.boltLight.r + fx.boltLight.g + fx.boltLight.b > 0.0) {
+        extra += bolt_light(rayDir, fx);
+    }
+
+    return float4(present_color(sky + sun + extra), 1.0);
 }
 
 // ============================================================================

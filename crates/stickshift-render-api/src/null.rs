@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use stickshift_math::glam::{Mat4, Quat, Vec3};
 use stickshift_math::Transform;
 
+use crate::atmosphere::Atmosphere;
 use crate::descriptor::{MaterialParams, PipelineKind};
 use crate::device::{FrameStats, MeshData, PipelineDescriptor, RenderDevice, TextureData};
 use crate::handles::{EmitterHandle, MeshHandle, PipelineHandle, TextureHandle};
@@ -115,6 +116,9 @@ pub enum ProtocolViolation {
     /// An emitter created while [`MAX_EMITTERS`] were already live. A backend
     /// hands it a handle that emits nothing.
     TooManyEmitters,
+    /// An atmosphere that is not [valid](Atmosphere::is_valid). It is still
+    /// recorded, brought into range, as a backend draws it.
+    InvalidAtmosphere,
 }
 
 /// A headless implementation of both [`RenderDevice`] and [`FrameRecorder`] that
@@ -200,6 +204,10 @@ pub struct NullRenderer {
     /// push, then sticky, so a headless test can assert *which sun* a game asked
     /// for without a GPU.
     sun_sky: Option<SunSky>,
+    /// The most recent atmosphere pushed via
+    /// [`set_atmosphere`](FrameRecorder::set_atmosphere), brought into range.
+    /// `None` until the first push, then sticky.
+    atmosphere: Option<Atmosphere>,
     /// The most recent render settings pushed via
     /// [`set_render_settings`](RenderDevice::set_render_settings). `None`
     /// until the first push, then sticky.
@@ -387,6 +395,18 @@ impl NullRenderer {
     #[must_use]
     pub fn sun_sky(&self) -> Option<SunSky> {
         self.sun_sky
+    }
+
+    /// The most recent [`Atmosphere`] recorded via
+    /// [`set_atmosphere`](FrameRecorder::set_atmosphere), brought into range as
+    /// a backend draws it.
+    ///
+    /// `None` before the first push, then sticky. Lets a headless test assert
+    /// the air and sky a game asked for: how far it sees, and any rainbow or
+    /// bolt of lightning.
+    #[must_use]
+    pub fn atmosphere(&self) -> Option<Atmosphere> {
+        self.atmosphere
     }
 
     /// The most recent [`RenderSettings`] pushed via
@@ -595,6 +615,13 @@ impl FrameRecorder for NullRenderer {
 
     fn set_sun_sky(&mut self, sun: &SunSky) {
         self.sun_sky = Some(*sun);
+    }
+
+    fn set_atmosphere(&mut self, atmosphere: &Atmosphere) {
+        if !atmosphere.is_valid() {
+            self.violations.push(ProtocolViolation::InvalidAtmosphere);
+        }
+        self.atmosphere = Some(atmosphere.sanitized());
     }
 
     fn add_light(&mut self, light: &Light) {

@@ -130,6 +130,17 @@ casters disabled. A GPU-less runner never constructs the Metal backend, so it ne
 spot lights (`FrameRecorder::add_light`), and any draw can glow with `MaterialParams::emissive`.
 Lights are shaded with clustered forward shading; §4c has the design and the budget.
 
+**Atmosphere.** Weather is a game's policy too, so the seam carries only its physical half: an
+`Atmosphere`, pushed with `FrameRecorder::set_atmosphere` and sticky like the sun. Its
+`visibility` scales the distance fog on top of the draw-distance setting, folded in when the frame
+captures its light (so mist and rain draw the fog in without touching the player's settings, and
+the shadow slab follows the fog as ever). Its `Rainbow` and lightning `Bolt` are drawn by the sky
+pass from a small uniform block of their own: a rainbow's two bows around a centre the game
+places, laid over the sky in colours as bright as the sky behind them, and a bolt's jagged path
+hashed from its seed. A storm's flash over the whole scene is the game's, through the `SunSky`'s
+sky colours and fill. The default is clear air with nothing in the sky, and draws bit for bit
+what was drawn before.
+
 **Graphics settings.** Quality settings cross the seam as plain data, like `SunSky`:
 
 - `RenderDevice::set_render_settings(&RenderSettings)` carries a `ShadowQuality` tier, a shadow

@@ -10,7 +10,7 @@
 //! offset of every alignment-sensitive field — are asserted by tests.
 
 use stickshift_math::glam::{Mat3, Mat4, Vec3};
-use stickshift_render_api::SunSky;
+use stickshift_render_api::{Atmosphere, SunSky};
 
 use crate::shadow::ShadowFit;
 
@@ -379,6 +379,47 @@ impl Default for LightUniforms {
     }
 }
 
+/// What the sky pass draws besides the gradient and the sun: an
+/// [`Atmosphere`]'s rainbow and bolt of lightning, as the sky fragment shader's
+/// `SkyEffects` reads them (fragment buffer 1 of the sky pass only).
+///
+/// Mirrors the shader's struct **byte for byte**: three `float4`s, 48 bytes.
+/// All zeros (the [default](Self::default)) draws neither, and the sky pass
+/// adds nothing to the gradient and the sun.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct SkyUniforms {
+    /// `xyz`: unit vector toward the rainbow's centre; `w`: its strength, `0`
+    /// for none. Offset 0.
+    pub rainbow: [f32; 4],
+    /// `xyz`: unit vector along the horizon toward the bolt's bearing; `w`:
+    /// its height above the horizon, in radians. Offset 16.
+    pub bolt: [f32; 4],
+    /// `rgb`: the bolt's light, all zero for none; `w`: its seed, as a float
+    /// (exact below 2²⁴, so taken modulo 65 536). Offset 32.
+    pub bolt_light: [f32; 4],
+}
+
+impl SkyUniforms {
+    /// The sky pass's view of `atmosphere`, which is taken to be in range
+    /// ([`Atmosphere::sanitized`]): a rainbow of no strength and a bolt with no
+    /// light are left out, as all zeros.
+    pub fn from_atmosphere(atmosphere: &Atmosphere) -> Self {
+        let mut sky = Self::default();
+        if let Some(rainbow) = atmosphere.rainbow.filter(|r| r.strength > 0.0) {
+            let centre = rainbow.toward_centre();
+            sky.rainbow = [centre.x, centre.y, centre.z, rainbow.strength];
+        }
+        if let Some(bolt) = atmosphere.bolt.filter(|b| b.light.iter().any(|&l| l > 0.0)) {
+            let toward = bolt.toward();
+            sky.bolt = [toward.x, toward.y, toward.z, bolt.height_deg.to_radians()];
+            let [r, g, b] = bolt.light;
+            sky.bolt_light = [r, g, b, (bolt.seed % 65_536) as f32];
+        }
+        sky
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,6 +546,57 @@ mod tests {
         ] {
             assert_eq!(offset % 16, 0, "offset {offset} is not 16-byte aligned");
         }
+    }
+
+    #[test]
+    fn sky_uniforms_match_the_shaders_layout_and_draw_nothing_by_default() {
+        use std::mem::{offset_of, size_of};
+        assert_eq!(size_of::<SkyUniforms>(), 48);
+        assert_eq!(offset_of!(SkyUniforms, rainbow), 0);
+        assert_eq!(offset_of!(SkyUniforms, bolt), 16);
+        assert_eq!(offset_of!(SkyUniforms, bolt_light), 32);
+        assert_eq!(
+            SkyUniforms::from_atmosphere(&Atmosphere::default()),
+            SkyUniforms::default()
+        );
+    }
+
+    #[test]
+    fn sky_uniforms_carry_a_rainbow_and_a_bolt_and_leave_out_unseen_ones() {
+        use stickshift_render_api::{Bolt, Rainbow};
+        let rainbow = Rainbow {
+            elevation_deg: -30.0,
+            azimuth_deg: 90.0,
+            strength: 0.5,
+        };
+        let bolt = Bolt {
+            azimuth_deg: 180.0,
+            height_deg: 30.0,
+            seed: 65_537,
+            light: [4.0, 4.0, 5.0],
+        };
+        let sky = SkyUniforms::from_atmosphere(&Atmosphere {
+            rainbow: Some(rainbow),
+            bolt: Some(bolt),
+            ..Atmosphere::default()
+        });
+        let centre = rainbow.toward_centre();
+        assert_eq!(sky.rainbow, [centre.x, centre.y, centre.z, 0.5]);
+        assert!((sky.bolt[2] - 1.0).abs() < 1e-6, "toward the south, +Z");
+        assert!((sky.bolt[3] - 30f32.to_radians()).abs() < 1e-6);
+        assert_eq!(sky.bolt_light, [4.0, 4.0, 5.0, 1.0]);
+        let unseen = SkyUniforms::from_atmosphere(&Atmosphere {
+            rainbow: Some(Rainbow {
+                strength: 0.0,
+                ..rainbow
+            }),
+            bolt: Some(Bolt {
+                light: [0.0; 3],
+                ..bolt
+            }),
+            ..Atmosphere::default()
+        });
+        assert_eq!(unseen, SkyUniforms::default());
     }
 
     #[test]
