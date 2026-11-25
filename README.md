@@ -27,9 +27,6 @@
 <img src="docs/images/night.gif" alt="The freeway at night from above its shoulder: street lights, lit windows in the buildings, and the traffic's headlight beams on the road" width="32%">
 <img src="docs/images/rain.gif" alt="Rain at night, seen from a lane at headlight height: rain streaks, light pooling on the wet road, and a semi-trailer truck passing" width="32%">
 
-<sub>The world of Offramp, a game built on Stick Shift Engine: streamed in as it goes, and
-rendered offscreen by the engine's Metal backend.</sub>
-
 </div>
 
 ---
