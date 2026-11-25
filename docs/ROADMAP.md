@@ -80,16 +80,35 @@ Engine:
   than its height on screen, so a camera looking down (a chase camera over a road) sees mostly the
   horizon colour and the fogged edge of the world meets the sky without a hard seam.
 
-## v0.3 — particles and instancing
+## v0.3 — particles, weather and devices
 
+### `v0.3.0`
+
+A frame can carry particles, a game can show its weather, and a Mac can stand in for an iPhone.
 [Milestone](https://github.com/parsabee/StickShiftEngine/milestone/2)
 
-- **GPU particles** in the engine, used for sparks, tyre smoke and weather
-  ([#85](https://github.com/parsabee/StickShiftEngine/issues/85)). The core is in: emitters through
-  a `ParticleSystem` seam trait, simulated in compute kernels and drawn instanced, additive or
-  alpha, with streaks and a floor to bounce off. Still to come: depth-sorted alpha particles, soft
-  particles where they meet geometry, and textured or flipbook particles.
+Engine:
+
+- **GPU particles** ([#85](https://github.com/parsabee/StickShiftEngine/issues/85)), used for
+  sparks, tyre smoke and weather: emitters through a `ParticleSystem` seam trait, simulated in
+  compute kernels and drawn instanced, additive or alpha, with streaks and a floor to bounce off;
+  and particles laid flat on the ground, for marks.
+- **Clear coat** for car paint and glass: the sky mirrored by Fresnel, and a glint of the sun.
+- **The atmosphere:** the distance fog drawn in for mist and rain, rainbows, and lightning.
+- **Audio layers:** loops alongside the music, each faded and its playback rate glided on its own.
+- **Recording and diagnostics:** what the window shows recorded to a movie, and a diagnostics
+  capture (footage, per-frame numbers, events and a summary) from the Graphics menu.
+- **iPhone and iPad screens on a Mac:** a window at a device's size and shape, with its safe area,
+  which now reaches the renderer.
+- **Fixes:** the floating-origin rebase keeps a winding focus near the origin, so surfaces no longer
+  draw through each other in a long session; and headlights no longer flicker in busy night scenes.
+
+## v0.4 — instancing, and particles finished
+
 - **Instanced drawing** for dense scenes ([#89](https://github.com/parsabee/StickShiftEngine/issues/89)).
+- **The rest of the particles** ([#85](https://github.com/parsabee/StickShiftEngine/issues/85)):
+  depth-sorted alpha particles, soft particles where they meet geometry, and textured or flipbook
+  particles.
 
 ## v0.9 — iOS and full Xcode, right before 1.0
 

@@ -9,146 +9,7 @@ API**.
 
 ## [Unreleased]
 
-### Added
-
-- **A layer's playback rate**: `Audio::set_layer_rate` glides a layer's rate (and so its pitch,
-  the two together, as on a tape) to a new one over a duration: `1.0` as recorded, `2.0` twice as
-  fast and an octave up. A glide under way is taken over from where it has got to, as a fade is.
-  `Audio::layer_rate` reads it back, in silent mode too. A rate that is not a positive, finite
-  number is ignored.
-
-- **Atmosphere**: weather's physical half, pushed with `FrameRecorder::set_atmosphere` and sticky
-  like the sun. An `Atmosphere` holds:
-  - a `visibility` that draws the distance fog in, as a share of the draw distance, on top of the
-    render settings' (mist, rain);
-  - a `Rainbow`: its centre's elevation and azimuth, in the sun's convention, and its strength. The
-    sky pass draws a primary bow 42° out (`RAINBOW_RADIUS_DEG`) and a faint secondary 51° out
-    (`RAINBOW_SECONDARY_RADIUS_DEG`), above the horizon only;
-  - a lightning `Bolt`: its bearing, height, seed and light. The sky pass draws a jagged streak with
-    a branch, from the horizon up, behind everything.
-
-  The default is clear air with nothing in the sky, and draws exactly what was drawn before. The
-  `NullRenderer` records it (`atmosphere()`), brought into range, and lists one out of range as
-  `ProtocolViolation::InvalidAtmosphere`.
-
-- **Diagnostics capture**, for chasing down a glitch. The Graphics menu gains a last section:
-  *Start Diagnostics Capture* (⌃⌘D, *Stop…* while one runs) and *Mark Moment* (⌃⌘M, enabled only
-  while one runs). Each capture is a folder of its own (`diagnostics/<game>-<time>/` by default),
-  holding:
-  - `footage.mp4`, what the window showed, at 720 pixels high by default;
-  - `frames.csv`, a row for every frame on the footage's clock: its CPU, GPU, physics and render
-    times, updates, draws, lights and lights left out of the budget, live meshes and textures, GPU
-    and process memory, entities and bodies, the camera's position and distance from the origin,
-    the rebases and where the camera would be unrebased, then columns the game adds;
-  - `events.csv`, the hitches, rebases, marked moments, settings changes, resizes and focus loss;
-  - `session.json`, the machine, the settings, the game's facts and a summary (frame-time
-    percentiles, the worst frames, peaks, the marks).
-
-  `RunConfig::diagnostics` (a `DiagnosticsConfig`) says where captures go, how high the footage is,
-  and whether one starts at launch. A game adds columns with `Game::diagnostics` and facts with
-  `Game::diagnostics_info` (both default to nothing); a host of its own uses
-  `Session::start_diagnostics`, `stop_diagnostics`, `mark_moment` and `capture_folder`.
-- **`RenderDevice::frame_stats`** (default `None`): what the last frame drew and what the backend
-  holds, as a `FrameStats`. The Metal backend and `NullRenderer` report it.
-- **`PerfTracker::last_frame`**: the latest frame's own times (`FrameSample`), not averaged.
-- **`Scene::rebase_count` and `Scene::rebase_total`**: how many floating-origin rebases there have
-  been, and the sum of their offsets in `f64`.
-
-- **Clear coat**, for car paint and glass: `MaterialParams::clearcoat` (`0.0` by default, up to
-  `1.0` for a full coat). Both lit pipelines mirror the frame's sky down the reflected view ray (its
-  horizon-to-zenith gradient, and the ground, darker, below the horizon), weighted by Fresnel: about
-  4% seen square on, all of it edge-on. They also add a tight glint of the sun. Shadows dim the
-  glint but not the sky's reflection, as the sky is still overhead in a shadow, so dark paint keeps
-  its shape in the shade, where it used to go flat black. The coat rides in the spare lane of the
-  per-draw uniform, and a draw without one shades exactly as before.
-
-### Fixed
-
-- **The floating-origin rebase keeps a winding focus near the origin.** `Scene::maybe_rebase` only
-  ever shifted along the streaming axis, so a focus that wandered off it (Offramp's road winds up to
-  60° either side of `-Z`) drifted further from the origin across it for as long as the session
-  ran. In a long session the car was over 10,000 units out. That far out, the combined
-  model-view-projection matrix each draw carries in `f32` loses enough to shift a whole object's
-  depth by tenths of a unit at a typical viewing distance. Surfaces close together then drew
-  through each other: the ground plane through the road, trees through buildings, cars through the
-  deck. `maybe_rebase` now also shifts across the axis, by whole thresholds of each world
-  component of the focus's offset from the axis's line. Only the part along the axis counts toward
-  slot indexing, as before, so streaming is unchanged.
-- **Headlights stop flickering in busy night scenes.** The Metal renderer bounded a spot light by
-  the whole sphere of its range when binning it into clusters, though a spot lights only its cone. A
-  car's headlight beam just ahead of the camera (the camera inside its range, though behind its
-  lamp) counted as covering every screen tile from the camera out, so a few of them used up most of
-  the frame's 32,768 light-to-cluster entries. Past that budget the renderer drops whole lights, and
-  which ones fit changed from frame to frame, so lights blinked on and off. Offramp's two-way roads
-  at night, with traffic both ways and more so in curves, dropped lights on up to one frame in
-  seven. A spot is now bounded by the smallest sphere around its cone (`lights::bounding_sphere`):
-  for a beam, a sphere ahead of the lamp. The same scenes use about 40% fewer entries, drop nothing,
-  and shade fewer lights per pixel; a frame that dropped nothing renders exactly as before.
-
-### Added
-
-- **iPhone and iPad mini screens**, to see a game at a device's size and shape on a Mac.
-  `stickshift_core::IPHONES` lists every iPhone from the iPhone 13 on (the 13 mini to the 2026
-  iPhone 18 Pro, 18 Pro Max and Duo, closed and open), and `IPADS` every iPad mini from 2021 on (the
-  6th generation, the A17 Pro and the 2026 A20 Pro); `DeviceScreen::all` gives them all, and
-  `DeviceScreen::find` one by its id. Each `DeviceScreen` has an id for a command line
-  (`iphone-15-pro`), its name, its year, its size in points upright, the scale it renders at, its
-  panel's pixels, and its safe-area insets upright and on its side, as UIKit reports them.
-  `RunConfig::device` takes a `DeviceWindow` (a screen and an `Orientation`), and the windowed
-  runner opens a window that many points across instead of the default one (shrunk, its shape kept,
-  to fit the main display), titled with the device and not resizable. The game sees the device's
-  points at any zoom, and its safe area.
-- **Safe areas reach the renderer**: `RenderDevice::set_safe_area_insets` sets what
-  `safe_area_insets` reports (in drawable pixels), and the session passes its host's safe area
-  (`HostEvent::SafeArea`, in points) to it whenever that or the drawable's scale changes. Before,
-  the session kept the insets to itself and every backend reported zeros, so a HUD never saw a
-  notch. The default `set_safe_area_insets` ignores them; `MetalRenderer` and `NullRenderer` keep
-  them. `RunConfig` is no longer `Eq` (a device's insets are floats).
-
-### Added
-
-- **Recording to a movie**, for diagnosing what a game did: `RunConfig::record` takes a
-  `Recording` (a path, a height such as 480 or 720, and at most how many frames a second, 60 by
-  default), and the windowed runner records what the window shows, HUD and all, to an H.264 `.mp4`
-  for the whole run, finishes it when the run ends and reports it on stderr. A host driving its own
-  `Session` records with `Session::record` and stops with `Session::finish_recording`. The movie's
-  width follows the view's shape at its first frame, rounded to even. Nothing waits on the GPU or
-  the encoder while the game runs: a frame whose capture or encoding is not ready is skipped, and
-  each frame carries the time it was shown, so the movie plays at the game's pace. No sound is
-  recorded.
-  - The render seam gains frame capture: `FrameRecorder::capture_frame(width, height, time)` asks
-    for the next frame submitted to be scaled to that size and read back, and
-    `take_captured_frames` / `finish_captures` return the `CapturedFrame`s (BGRA8) once the GPU has
-    finished them. The defaults capture nothing; `NullRenderer` makes a frame of its frame number at
-    each submit asked for. The Metal renderer scales the finished frame (four bilinear taps over
-    each pixel's footprint) into a capture texture and copies it to one of a ring of read-back
-    buffers, flagged by the frame's completion; a layer's drawables become readable from the first
-    capture asked for.
-  - A new crate, `stickshift-video`: `VideoWriter` writes BGRA8 frames, each stamped with its time,
-    to an H.264 movie through AVFoundation's `AVAssetWriter` (the system's encoder, nothing bundled),
-    dropping a frame rather than waiting long for the encoder. Off Apple platforms it reports
-    `VideoError::Unsupported`.
-  - `RunConfig` is no longer `Copy` (it holds the recording's path); it is still `Clone`.
-
-### Added
-
-- **Audio layers**: loops that play alongside the loop channel (the music) and each other, each
-  faded on its own. `Audio::play_layer(sound, volume)` starts one and returns a `LayerHandle`;
-  `set_layer_volume(layer, volume, fade)` moves it to a level over a fade (zero for at once), and
-  `stop_layer(layer, fade)` fades it out and ends it. For an ambient bed under the music, an
-  engine's drone, or a second drone faded in over it. Like the rest of `Audio`, layers work in
-  silent mode and are recorded there (`layer_count`, `layer_starts`, `layer_volume`,
-  `layer_sound`), so a game's use of them is testable without a device. A stopped layer's handle
-  is ignored, even after its slot is reused.
-
-### Added
-
-- **Flat particles**, for marks on the ground: `EmitterParams::facing` takes
-  `ParticleFacing::Flat` to lay each particle flat in the horizontal plane, a square of its size
-  turned to the heading its emitter pointed when it was made, instead of facing the camera. An
-  emitter placed just above the ground and moved along it lays a mark: tyre marks, puddles, scorch
-  marks. `ParticleFacing::Camera` is the default, so existing emitters are unchanged; a struct
-  literal of `EmitterParams` that names every field must now set `facing`.
+## [0.3.0] - 2026-11-24
 
 ### Added
 
@@ -172,6 +33,104 @@ API**.
   unknown emitter, invalid params, and emitters past the limit are protocol violations.
 - **Particle scenarios in the renderer benchmark**: 10,000 and 60,000 additive particles, and
   60,000 alpha particles, over 1,000 cubes.
+- **Flat particles**, for marks on the ground: `EmitterParams::facing` takes
+  `ParticleFacing::Flat` to lay each particle flat in the horizontal plane, a square of its size
+  turned to the heading its emitter pointed when it was made, instead of facing the camera. An
+  emitter placed just above the ground and moved along it lays a mark: tyre marks, puddles, scorch
+  marks. `ParticleFacing::Camera` is the default, so existing emitters are unchanged.
+- **Clear coat**, for car paint and glass: `MaterialParams::clearcoat` (`0.0` by default, up to
+  `1.0` for a full coat). Both lit pipelines mirror the frame's sky down the reflected view ray (its
+  horizon-to-zenith gradient, and the ground, darker, below the horizon), weighted by Fresnel: about
+  4% seen square on, all of it edge-on. They also add a tight glint of the sun. Shadows dim the
+  glint but not the sky's reflection, as the sky is still overhead in a shadow, so dark paint keeps
+  its shape in the shade, where it used to go flat black. The coat rides in the spare lane of the
+  per-draw uniform, and a draw without one shades exactly as before.
+- **Atmosphere**: weather's physical half, pushed with `FrameRecorder::set_atmosphere` and sticky
+  like the sun. An `Atmosphere` holds:
+  - a `visibility` that draws the distance fog in, as a share of the draw distance, on top of the
+    render settings' (mist, rain);
+  - a `Rainbow`: its centre's elevation and azimuth, in the sun's convention, and its strength. The
+    sky pass draws a primary bow 42° out (`RAINBOW_RADIUS_DEG`) and a faint secondary 51° out
+    (`RAINBOW_SECONDARY_RADIUS_DEG`), above the horizon only;
+  - a lightning `Bolt`: its bearing, height, seed and light. The sky pass draws a jagged streak with
+    a branch, from the horizon up, behind everything.
+
+  The default is clear air with nothing in the sky, and draws exactly what was drawn before. The
+  `NullRenderer` records it (`atmosphere()`), brought into range, and lists one out of range as
+  `ProtocolViolation::InvalidAtmosphere`.
+- **Audio layers**: loops that play alongside the loop channel (the music) and each other, each
+  faded on its own. `Audio::play_layer(sound, volume)` starts one and returns a `LayerHandle`;
+  `set_layer_volume(layer, volume, fade)` moves it to a level over a fade (zero for at once), and
+  `stop_layer(layer, fade)` fades it out and ends it. For an ambient bed under the music, an
+  engine's drone, or a second drone faded in over it. Like the rest of `Audio`, layers work in
+  silent mode and are recorded there (`layer_count`, `layer_starts`, `layer_volume`,
+  `layer_sound`), so a game's use of them is testable without a device. A stopped layer's handle
+  is ignored, even after its slot is reused.
+- **A layer's playback rate**: `Audio::set_layer_rate` glides a layer's rate (and so its pitch,
+  the two together, as on a tape) to a new one over a duration: `1.0` as recorded, `2.0` twice as
+  fast and an octave up. A glide under way is taken over from where it has got to, as a fade is.
+  `Audio::layer_rate` reads it back, in silent mode too. A rate that is not a positive, finite
+  number is ignored.
+- **Recording to a movie**, for diagnosing what a game did: `RunConfig::record` takes a
+  `Recording` (a path, a height such as 480 or 720, and at most how many frames a second, 60 by
+  default), and the windowed runner records what the window shows, HUD and all, to an H.264 `.mp4`
+  for the whole run, finishes it when the run ends and reports it on stderr. A host driving its own
+  `Session` records with `Session::record` and stops with `Session::finish_recording`. The movie's
+  width follows the view's shape at its first frame, rounded to even. Nothing waits on the GPU or
+  the encoder while the game runs: a frame whose capture or encoding is not ready is skipped, and
+  each frame carries the time it was shown, so the movie plays at the game's pace. No sound is
+  recorded.
+  - The render seam gains frame capture: `FrameRecorder::capture_frame(width, height, time)` asks
+    for the next frame submitted to be scaled to that size and read back, and
+    `take_captured_frames` / `finish_captures` return the `CapturedFrame`s (BGRA8) once the GPU has
+    finished them. The defaults capture nothing; `NullRenderer` makes a frame of its frame number at
+    each submit asked for. The Metal renderer scales the finished frame (four bilinear taps over
+    each pixel's footprint) into a capture texture and copies it to one of a ring of read-back
+    buffers, flagged by the frame's completion; a layer's drawables become readable from the first
+    capture asked for.
+  - A new crate, `stickshift-video`: `VideoWriter` writes BGRA8 frames, each stamped with its time,
+    to an H.264 movie through AVFoundation's `AVAssetWriter` (the system's encoder, nothing bundled),
+    dropping a frame rather than waiting long for the encoder. Off Apple platforms it reports
+    `VideoError::Unsupported`.
+- **Diagnostics capture**, for chasing down a glitch. The Graphics menu gains a last section:
+  *Start Diagnostics Capture* (⌃⌘D, *Stop…* while one runs) and *Mark Moment* (⌃⌘M, enabled only
+  while one runs). Each capture is a folder of its own (`diagnostics/<game>-<time>/` by default),
+  holding:
+  - `footage.mp4`, what the window showed, at 720 pixels high by default;
+  - `frames.csv`, a row for every frame on the footage's clock: its CPU, GPU, physics and render
+    times, updates, draws, lights and lights left out of the budget, live meshes and textures, GPU
+    and process memory, entities and bodies, the camera's position and distance from the origin,
+    the rebases and where the camera would be unrebased, then columns the game adds;
+  - `events.csv`, the hitches, rebases, marked moments, settings changes, resizes and focus loss;
+  - `session.json`, the machine, the settings, the game's facts and a summary (frame-time
+    percentiles, the worst frames, peaks, the marks).
+
+  `RunConfig::diagnostics` (a `DiagnosticsConfig`) says where captures go, how high the footage is,
+  and whether one starts at launch. A game adds columns with `Game::diagnostics` and facts with
+  `Game::diagnostics_info` (both default to nothing); a host of its own uses
+  `Session::start_diagnostics`, `stop_diagnostics`, `mark_moment` and `capture_folder`.
+- **`RenderDevice::frame_stats`** (default `None`): what the last frame drew and what the backend
+  holds, as a `FrameStats`. The Metal backend and `NullRenderer` report it.
+- **`PerfTracker::last_frame`**: the latest frame's own times (`FrameSample`), not averaged.
+- **`Scene::rebase_count` and `Scene::rebase_total`**: how many floating-origin rebases there have
+  been, and the sum of their offsets in `f64`.
+- **iPhone and iPad mini screens**, to see a game at a device's size and shape on a Mac.
+  `stickshift_core::IPHONES` lists every iPhone from the iPhone 13 on (the 13 mini to the 2026
+  iPhone 18 Pro, 18 Pro Max and Duo, closed and open), and `IPADS` every iPad mini from 2021 on (the
+  6th generation, the A17 Pro and the 2026 A20 Pro); `DeviceScreen::all` gives them all, and
+  `DeviceScreen::find` one by its id. Each `DeviceScreen` has an id for a command line
+  (`iphone-15-pro`), its name, its year, its size in points upright, the scale it renders at, its
+  panel's pixels, and its safe-area insets upright and on its side, as UIKit reports them.
+  `RunConfig::device` takes a `DeviceWindow` (a screen and an `Orientation`), and the windowed
+  runner opens a window that many points across instead of the default one (shrunk, its shape kept,
+  to fit the main display), titled with the device and not resizable. The game sees the device's
+  points at any zoom, and its safe area.
+- **Safe areas reach the renderer**: `RenderDevice::set_safe_area_insets` sets what
+  `safe_area_insets` reports (in drawable pixels), and the session passes its host's safe area
+  (`HostEvent::SafeArea`, in points) to it whenever that or the drawable's scale changes. Before,
+  the session kept the insets to itself and every backend reported zeros, so a HUD never saw a
+  notch. The default `set_safe_area_insets` ignores them; `MetalRenderer` and `NullRenderer` keep
+  them.
 
 ### Changed
 
@@ -181,6 +140,33 @@ API**.
 - **The Metal renderer allocates three more buffers at construction** (the particle ring, and the
   per-frame emitter table and spawn batch rings: about 4.5 MB together), so
   `MetalRenderer::allocation_count` starts at 6, not 3. Nothing more is allocated per frame.
+- **`EmitterParams` gains `facing`** (for flat particles): a struct literal of `EmitterParams`
+  that names every field must now set it.
+- **`RunConfig` is no longer `Copy` or `Eq`:** it holds a recording's path, and a device's safe-area
+  insets are floats. It is still `Clone`.
+
+### Fixed
+
+- **The floating-origin rebase keeps a winding focus near the origin.** `Scene::maybe_rebase` only
+  ever shifted along the streaming axis, so a focus that wandered off it (Offramp's road winds up to
+  60° either side of `-Z`) drifted further from the origin across it for as long as the session
+  ran. In a long session the car was over 10,000 units out. That far out, the combined
+  model-view-projection matrix each draw carries in `f32` loses enough to shift a whole object's
+  depth by tenths of a unit at a typical viewing distance. Surfaces close together then drew
+  through each other: the ground plane through the road, trees through buildings, cars through the
+  deck. `maybe_rebase` now also shifts across the axis, by whole thresholds of each world
+  component of the focus's offset from the axis's line. Only the part along the axis counts toward
+  slot indexing, as before, so streaming is unchanged.
+- **Headlights stop flickering in busy night scenes.** The Metal renderer bounded a spot light by
+  the whole sphere of its range when binning it into clusters, though a spot lights only its cone. A
+  car's headlight beam just ahead of the camera (the camera inside its range, though behind its
+  lamp) counted as covering every screen tile from the camera out, so a few of them used up most of
+  the frame's 32,768 light-to-cluster entries. Past that budget the renderer drops whole lights, and
+  which ones fit changed from frame to frame, so lights blinked on and off. Offramp's two-way roads
+  at night, with traffic both ways and more so in curves, dropped lights on up to one frame in
+  seven. A spot is now bounded by the smallest sphere around its cone (`lights::bounding_sphere`):
+  for a beam, a sphere ahead of the lamp. The same scenes use about 40% fewer entries, drop nothing,
+  and shade fewer lights per pixel; a frame that dropped nothing renders exactly as before.
 
 ## [0.2.2] - 2026-11-18
 
@@ -872,7 +858,8 @@ workspace version and are not published to crates.io.
   crash WAVs were generated for this project and dedicated CC0 1.0. The HUD font is OFL. See
   `games/playable-demo/README.md`.
 
-[Unreleased]: https://github.com/parsabee/StickShiftEngine/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/parsabee/StickShiftEngine/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/parsabee/StickShiftEngine/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/parsabee/StickShiftEngine/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/parsabee/StickShiftEngine/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/parsabee/StickShiftEngine/compare/v0.1.0...v0.2.0
