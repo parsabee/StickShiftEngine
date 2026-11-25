@@ -23,10 +23,12 @@
 [Roadmap](docs/ROADMAP.md) ·
 [Contributing](#contributing)
 
-<img src="docs/images/demo.gif" alt="Offramp, a game built on Stick Shift Engine: a yellow sports car changing lanes through traffic on an elevated three-lane freeway between city buildings, with real-time shadows and horizon fog" width="600">
+<img src="docs/images/buildings.gif" alt="An elevated freeway curving between downtown towers on a sunny afternoon, traffic on it, the buildings casting real-time shadows, the far blocks fading into haze" width="32%">
+<img src="docs/images/night.gif" alt="The freeway at night from above its shoulder: street lights, lit windows in the buildings, and the traffic's headlight beams on the road" width="32%">
+<img src="docs/images/rain.gif" alt="Rain at night, seen from a lane at headlight height: rain streaks, light pooling on the wet road, and a semi-trailer truck passing" width="32%">
 
-<sub>Built on Stick Shift Engine, driven by a scripted autopilot and rendered offscreen by the
-engine's Metal backend.</sub>
+<sub>The world of Offramp, a game built on Stick Shift Engine: streamed in as it goes, and
+rendered offscreen by the engine's Metal backend.</sub>
 
 </div>
 
