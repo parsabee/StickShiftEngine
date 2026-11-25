@@ -41,7 +41,7 @@ its loop, world, streaming, physics, audio and rendering. See the [roadmap](docs
 
 > [!NOTE]
 > Stick Shift Engine is **under active development**. The current release is
-> [`v0.2.2`](https://github.com/parsabee/StickShiftEngine/releases/tag/v0.2.2). A game uses the engine from source, as Cargo git dependencies pinned to a release tag (see
+> [`v0.3.0`](https://github.com/parsabee/StickShiftEngine/releases/tag/v0.3.0). A game uses the engine from source, as Cargo git dependencies pinned to a release tag (see
 > [Using the engine in a game](#using-the-engine-in-a-game)). The public API may change between
 > releases (see [CHANGELOG.md](CHANGELOG.md)). macOS is the supported platform today; iOS support
 > is planned for v0.9, right before 1.0 ([#2](https://github.com/parsabee/StickShiftEngine/issues/2)).
@@ -159,8 +159,8 @@ commit, with `rev`); every engine crate names the same one:
 
 ```toml
 [dependencies]
-stickshift-core = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.2" }
-stickshift-scene = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.2.2" }
+stickshift-core = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.3.0" }
+stickshift-scene = { git = "https://github.com/parsabee/StickShiftEngine", tag = "v0.3.0" }
 ```
 
 [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) goes from an empty crate to a game the engine
@@ -180,8 +180,9 @@ and rustdoc. The prototype's provenance is recorded in [docs/ARCHITECTURE.md](do
 | `v0.1.0` | GPU frame timing and a renderer benchmark, release builds with precompiled shaders, and fixes for every bug the beta audit found |
 | `v0.2.0` | Point and spot lights and emissive materials, a host-driven loop (`Session`) with a core that builds for iOS, and the engine as Rust crates only |
 | `v0.2.1` | Imported glTF material names, and a moving sun keeps its highlights and shadows steady |
-| `v0.2.2` (current) | The sky grades by elevation, so the world meets the horizon without a seam |
-| `v0.3` | Planned: GPU particles and instanced drawing |
+| `v0.2.2` | The sky grades by elevation, so the world meets the horizon without a seam |
+| `v0.3.0` (current) | GPU particles and marks on the ground, clear coat, the atmosphere (fog, rainbows, lightning), audio layers, recording to a movie and diagnostics capture, and iPhone and iPad screens on a Mac |
+| `v0.4` | Planned: instanced drawing, and the rest of the particles |
 | `v0.9` | Planned: iOS and full Xcode support, right before 1.0 ([#2](https://github.com/parsabee/StickShiftEngine/issues/2)) |
 
 - Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md)
